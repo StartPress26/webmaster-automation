@@ -1,0 +1,37 @@
+{
+  "checked_at": "2026-10-25T15:36:56.810030+09:00",
+  "endpoint": "https://api.indexnow.org/indexnow",
+  "method": "POST",
+  "url_count": 1,
+  "submitted_urls": [
+    "https://otteru.vercel.app/"
+  ],
+  "http_status": 200,
+  "meaning": "URL 접수 성공",
+  "response_body_empty": true,
+  "retry_after": null,
+  "indexing_confirmed": false,
+  "previous_test": {
+    "http_status": 202,
+    "meaning": "URL 접수·키 확인 대기"
+  },
+  "preflight": {
+    "checked_at": "2026-10-25T15:36:40.888557+09:00",
+    "target_url": "https://otteru.vercel.app/",
+    "key_file_status": 200,
+    "key_file_content_matches": true,
+    "target_status": 200,
+    "final_url": "https://otteru.vercel.app/",
+    "robots_meta": [
+      "index,follow"
+    ],
+    "x_robots_tag": null,
+    "canonical_urls": [
+      "https://otteru.vercel.app"
+    ],
+    "ready_to_submit": true
+  },
+  "record_updated_at": "2026-10-25T15:58:30+09:00",
+  "verification_status": "submission_api_verified",
+  "delivery_evidence": "IndexNow 공통 엔드포인트의 접수 응답. 개별 검색엔진의 수집·색인 완료를 확인한 것은 아님."
+}

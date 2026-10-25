@@ -1,0 +1,14 @@
+.env
+.env.*
+!.env.example
+.secrets/
+.venv/
+.cache/
+__pycache__/
+.pytest_cache/
+*.pyc
+.DS_Store
+
+# DB 설계 자료는 로컬에만 보관
+db/
+docs/database.md

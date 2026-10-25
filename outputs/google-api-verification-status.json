@@ -1,0 +1,80 @@
+{
+  "target_site": "https://otteru.vercel.app/",
+  "authentication": "success",
+  "verified_google_api_operations": {
+    "ownership": {
+      "operation": "google.siteVerification.insert",
+      "http_status": 200,
+      "succeeded": true,
+      "site": {
+        "type": "SITE",
+        "identifier": "https://otteru.vercel.app/"
+      }
+    },
+    "registration": {
+      "operation": "google.sites.add",
+      "http_status": 204,
+      "succeeded": true,
+      "property_check": {
+        "http_status": 200,
+        "site_url": "https://otteru.vercel.app/",
+        "permission_level": "siteOwner"
+      }
+    },
+    "sitemap": {
+      "operation": "google.sitemaps.submit",
+      "checked_at_utc": "2026-10-25T06:28:13.497537+00:00",
+      "http_status": 204,
+      "succeeded": true,
+      "sitemap_check": {
+        "http_status": 200,
+        "path": "https://otteru.vercel.app/sitemap.xml",
+        "isPending": true,
+        "lastSubmitted": "2026-10-25T06:28:13.282Z",
+        "lastDownloaded": null,
+        "errors": "0",
+        "warnings": "0"
+      }
+    },
+    "inspection": {
+      "operation": "google.urlInspection.index.inspect",
+      "url": "https://otteru.vercel.app/",
+      "checked_at_utc": "2026-10-25T06:28:39.469217+00:00",
+      "http_status": 200,
+      "api_request_succeeded": true,
+      "index_status": {
+        "verdict": "NEUTRAL",
+        "coverageState": "Google에는 아직 알려지지 않은 URL입니다.",
+        "robotsTxtState": "ROBOTS_TXT_STATE_UNSPECIFIED",
+        "indexingState": "INDEXING_STATE_UNSPECIFIED",
+        "lastCrawlTime": null,
+        "pageFetchState": "PAGE_FETCH_STATE_UNSPECIFIED",
+        "googleCanonical": null,
+        "userCanonical": null,
+        "crawledAs": null
+      },
+      "inspection_result_link": "https://search.google.com/search-console/inspect?resource_id=https://otteru.vercel.app/&id=9Jl1_FqYiGvdUY30PBmifw&utm_medium=link&utm_source=api"
+    }
+  },
+  "pending": [
+    "대표 URL의 실제 수집·색인 변화 후속 관측"
+  ],
+  "record_updated_at": "2026-10-25T15:58:30+09:00",
+  "verification_status": "completed_for_recorded_scope",
+  "latest_observed_at": "2026-10-25T06:28:39.469217+00:00",
+  "related_verification": {
+    "bing": {
+      "verification_status": "completed_for_recorded_scope",
+      "ownership_verified": true,
+      "evidence_file": "bing-api-verification-status.json",
+      "last_observed_at": "2026-10-25T06:47:48.766191+00:00"
+    },
+    "indexnow": {
+      "http_status": 200,
+      "meaning": "URL 접수 성공",
+      "indexing_confirmed": false,
+      "evidence_file": "indexnow-api-test-result.json",
+      "last_observed_at": "2026-10-25T15:36:56.810030+09:00"
+    }
+  }
+}

@@ -1,0 +1,85 @@
+{
+  "target_site": "https://otteru.vercel.app/",
+  "authentication_method": "api_key",
+  "results": {
+    "initial_sites": {
+      "operation": "bing.GetUserSites",
+      "http_status": 200,
+      "api_request_succeeded": true,
+      "target_matches": [],
+      "target_present": false
+    },
+    "registration": {
+      "operation": "bing.AddSite",
+      "http_status": 200,
+      "api_request_succeeded": true,
+      "confirmation": {
+        "http_status": 200,
+        "target_matches": [
+          {
+            "url": "https://otteru.vercel.app/",
+            "is_verified": false,
+            "verification_code_available": true
+          }
+        ]
+      }
+    },
+    "ownership": {
+      "operation": "bing.VerifySite",
+      "checked_at_utc": "2026-10-25T06:47:01.725272+00:00",
+      "http_status": 200,
+      "verified": true,
+      "confirmation": {
+        "http_status": 200,
+        "target_matches": [
+          {
+            "url": "https://otteru.vercel.app/",
+            "is_verified": true
+          }
+        ]
+      }
+    },
+    "sitemap": {
+      "operation": "bing.SubmitFeed",
+      "checked_at_utc": "2026-10-25T06:47:33.892068+00:00",
+      "http_status": 200,
+      "api_request_succeeded": true,
+      "sitemap_url": "https://otteru.vercel.app/sitemap.xml"
+    },
+    "url_info": {
+      "operation": "bing.GetUrlInfo",
+      "url": "https://otteru.vercel.app/",
+      "checked_at_utc": "2026-10-25T06:47:48.766191+00:00",
+      "http_status": 200,
+      "api_request_succeeded": true,
+      "url_info": {
+        "Url": "https://otteru.vercel.app/",
+        "HttpStatus": 0,
+        "IsPage": true,
+        "DiscoveryDate": "/Date(1792911600000)/",
+        "LastCrawledDate": "/Date(1792910307000)/",
+        "DocumentSize": 0,
+        "AnchorCount": 0
+      },
+      "discovered_at_utc": "2026-10-25T07:00:00+00:00",
+      "last_crawled_at_utc": "2026-10-25T06:38:27+00:00",
+      "index_status": "unknown",
+      "note": "IsPage와 API HTTP 200만으로 색인 완료를 확정하지 않습니다."
+    }
+  },
+  "ownership_verified": true,
+  "index_status": "unknown",
+  "note": "API 호출·소유 확인·제출 성공과 색인 완료는 별개입니다.",
+  "record_updated_at": "2026-10-25T15:58:30+09:00",
+  "verification_status": "completed_for_recorded_scope",
+  "latest_observed_at": "2026-10-25T06:47:48.766191+00:00",
+  "pending": [
+    "대표 URL의 실제 색인 여부 후속 확인"
+  ],
+  "not_tested": [
+    "Bing OAuth를 이용한 고객 계정 위임 인증"
+  ],
+  "data_quality_notes": [
+    "저장된 DiscoveryDate가 조회 시각보다 미래이므로 이벤트 순서·지연시간 계산에 사용하지 않습니다."
+  ]
+}

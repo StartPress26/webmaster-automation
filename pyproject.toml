@@ -1,0 +1,17 @@
+[project]
+name = "webmaster-automation"
+version = "0.1.0"
+description = "검색엔진 공식 API 검증"
+requires-python = ">=3.12"
+dependencies = [
+    "google-auth-oauthlib>=1.2,<2",
+    "google-auth[requests]>=2.29,<3",
+    "python-dotenv>=1,<2",
+]
+
+[dependency-groups]
+dev = ["pytest>=8,<10"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
