@@ -2,7 +2,7 @@
 
 StartPress 내부 운영용 검색엔진 사이트 등록·발행 알림·색인 모니터링 프로젝트입니다.
 
-현재 Google·Bing·IndexNow의 공식 API 검증을 마쳤고, 본제품 개발 전 단계입니다.
+현재 Google·Bing·IndexNow의 공식 API 검증을 마쳤고, FastAPI 기본 앱을 구현했습니다.
 API 접수 성공과 실제 검색엔진 색인 완료는 별도로 관리합니다.
 
 ## 개발 환경
@@ -16,6 +16,20 @@ python -m pytest -q
 
 새 환경 생성과 고정 버전 의존성 설치 방법은 [환경 안내](docs/environment.md)를 참고하세요.
 `pyproject.toml`과 `uv.lock`은 의존성 명세·잠금 기록으로 유지합니다.
+
+## 개발 서버 실행
+
+프로젝트 루트에서 실행합니다.
+
+```bash
+conda activate startpress
+python -m uvicorn app.main:app --reload
+```
+
+- 상태 확인: http://127.0.0.1:8000/health → `{"status":"ok"}`
+- API 문서: http://127.0.0.1:8000/docs
+
+`/health`는 앱의 응답 여부를 확인합니다. DB나 검색엔진 API 연결은 검사하지 않습니다.
 
 ## 인증 설정
 
