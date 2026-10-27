@@ -9,6 +9,7 @@ dependencies = [
     "fastapi[standard]>=0.115,<1",
     "google-auth-oauthlib>=1.2,<2",
     "google-auth[requests]>=2.29,<3",
+    "httpx>=0.28,<1",
     "python-dotenv>=1,<2",
     "sqlalchemy[asyncio]>=2.1,<3",
 ]
