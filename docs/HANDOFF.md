@@ -1,5 +1,64 @@
 # 작업 인계 문서
 
+## 현재 세션 인계 요약 — IndexNow / 2026-10-27
+
+이 절과 마지막 상태가 아래의 과거 스냅샷보다 우선한다. Google 세션의 구현·보류 기록은 그대로 보존한다.
+
+### 완료된 작업
+
+- [x] `app/engines/indexnow/schemas.py`: Pydantic 불변 요청·응답, 공통 `IndexNowKey`·`IndexNowUrl`, 키 형식·호스트·적용 경로·URL 개수 검사, 중복 제거. 별도 types.py·validation.py는 schemas.py로 통합했다.
+- [x] `client.py`: 외부에서 주입받은 httpx.AsyncClient로 공통 엔드포인트에 POST. urls→urlList, key_location→keyLocation 변환. 연결 10초, 읽기·쓰기·풀 대기 각각 30초. 리다이렉트·자체 재시도 없음. 200 접수 성공, 202 키 확인 중, 다른 HTTP 응답 실패. 타임아웃·통신 오류는 별도 예외이며 접수 여부를 단정하지 않는다.
+- [x] Alembic `0002`로 engine_registrations에 nullable TEXT `indexnow_key`, `indexnow_key_location` 추가. 로컬 개발 DB 적용, 기존 데이터 보존·모델 일치 확인.
+- [x] 사이트 폼·SiteCreate에 선택 키 설정 추가. 둘 다 생략 가능, 입력 시 두 값 필수. sites 저장값에서 두 필드를 제외하고 `services/engine_registration.py`에서 Naver·Bing 행을 생성한다. 같은 세션·트랜잭션을 사용하고 엔진 설정 실패 시 사이트도 롤백한다. 등록 상태는 unknown이며 실제 소유 확인을 의미하지 않는다.
+- [x] PostgreSQL 통합 포함 전체 테스트 **284 passed**, JavaScript 구문 검사·git diff --check 통과. DB 없는 테스트는 **230 passed, 54 deselected**. 서로 다른 테스트 범위의 수치를 합산하지 않는다.
+- [x] Notion의 DB 컬럼 표·설정 운영 규칙·사용자 입력 항목을 갱신했다. ‘개인용’ 연결을 사용하며 문서 주소는 아래 요구사항 원문을 따른다.
+
+### 실제 Vercel 블로그 검증 및 남아 있는 데이터
+
+- 대상: `https://otteru.vercel.app/`. 별도 블로그 저장소는 `/Users/kim-yudam/Desktop/study/sideProject/nextjs-notion-starter-kit`이다.
+- 기존 `public/e142bcd0c702707f9db3194cd5ee9dd0.txt`를 재사용했다. 운영 파일 HTTP 200, UTF-8 텍스트·키 일치·로컬 파일과 일치를 확인했다. 새 파일 배포나 새 키 생성은 하지 않았다.
+- **2026-10-27 19:09 KST** 테스트 실행에서 실제 앱의 POST /clients·POST /sites를 ASGITransport로 호출했다. 사이트 API 201 후 별도 DB 세션으로 Naver·Bing 설정을 재조회하고 기존 IndexNowClient로 메인 URL을 공통 엔드포인트에 **한 번 제출해 HTTP 200·accepted**를 확인했다.
+- 개발 DB에는 고객사 **김유담 개인 블로그 테스트**, 사이트 **유담 블로그**가 남아 있다. 사용자의 실제 테스트 요청으로 생성한 데이터이므로 임의로 삭제·중복 생성하지 않는다.
+- client_id: `a6eb3bdc-215f-48a5-b2b3-eab3b51af806`, site_id: `7d337e4c-bbd1-4172-8b4c-58fe77312943`.
+- Naver·Bing registration_status는 unknown으로 유지했다. site_engine_statuses에 제출 결과를 저장하지 않았다. 실제 테스트 결과는 `outputs/indexnow-live-test-2026-10-27.json`에 있으며 키·토큰 값은 포함하지 않는다.
+- 이 실험은 테스트용 실행으로 DB 조회와 외부 제출을 연결했다. **DB 설정 조회→제출 전용 제품 서비스·API·화면 버튼이 구현된 것은 아니다.** 실제 색인 완료나 Naver/Bing 각각의 수집 완료를 확인한 것도 아니다.
+
+### 진행 중인 작업과 다음 구현 순서
+
+1. 사용자가 제시한 네 커밋 구성을 승인해 `codex/indexnow-integration` 브랜치에서 실행했다. 아래 커밋 기록을 확인한다. 원격 push는 요청하지 않았고 실행하지 않았다.
+2. 기존 사이트의 IndexNow 설정 추가·변경 API·화면. 두 엔진 설정은 하나의 트랜잭션에서 함께 갱신하고 이미 확인된 등록 상태를 unknown으로 되돌리지 않는다.
+3. 사이트 ID로 DB의 URL·두 엔진 설정을 읽는 제출 서비스와 POST /sites/{site_id}/indexnow 같은 API·화면 버튼. 키 누락·설정 불일치는 전송 전에 차단한다. 같은 이벤트를 엔진별로 중복 제출하지 않는다.
+4. 제출 결과의 저장 의미·오류 처리 계약을 먼저 정한다. 작업 재시도·관측 이력이 없는 현재 테이블만으로 정확히 한 번 실행이나 엔진별 색인 완료를 보장하지 않는다.
+5. 실제 키 파일 설치 확인을 제품화할 때는 대상 URL·리다이렉트·DNS/IP 검증과 SSRF 방어를 별도 구현한다. 현재 등록 스키마는 형식·호스트·경로만 검사하며 외부 URL을 요청하지 않는다.
+6. 개별 글 등록과 부모 설정 조회, Google 등록·검사 결과의 DB 연동, 워커·예약·이력은 별도 후속 작업이다. Google 절의 보류 요청을 유지한다.
+
+### 승인한 커밋 구성과 실행 기록
+
+1. `646155b` — `[feat] IndexNow 공통 제출 클라이언트와 스키마 구현`: app/engines/indexnow/, tests/test_indexnow_client.py, tests/test_indexnow_schemas.py, pyproject.toml, uv.lock.
+2. `cf256d7` — `[feat] 검색엔진 등록 정보에 IndexNow 설정 컬럼 추가`: app/models/engine_registration.py, migrations/versions/0002_add_indexnow_settings.py, tests/integration/test_database_schema.py.
+3. `383965f` — `[feat] 사이트 등록 시 IndexNow 설정 함께 저장`: app/schemas/site.py, app/services/site.py, app/services/engine_registration.py, app/static/index.html, app/static/admin.js, tests/test_site_schemas.py, tests/integration/test_site_service.py, tests/integration/test_sites_api.py, docs/site-admin.md.
+4. `[docs] IndexNow 실사용 검증 결과와 작업 인계 갱신`: docs/HANDOFF.md, outputs/indexnow-live-test-2026-10-27.json. 이 인계 파일을 담은 문서 커밋이며 SHA는 git log에서 확인한다. 다른 세션의 진행 기록도 보존했다.
+
+- 현재 작업 브랜치는 `codex/indexnow-integration`이다. 기존 main의 `1765f5b`에서 분기했으며 원격 push는 하지 않았다.
+- 제외: 빈 app/engines/naver.py·bing.py·brave.py, 로컬 ERD 이미지·프롬프트, .env·.secrets/·캐시. 전체 git add를 사용하지 않고 파일별로 선별한다.
+- 커밋 메시지는 한국어 `[타입] 제목`, Git 작성자 유지, 공동 작성자 트레일러 없음. main/master 직접 push 금지.
+
+## 사이트 등록과 IndexNow 설정 저장 연결 — 2026-10-27
+
+- 등록 화면과 `SiteCreate`에 선택 입력 `indexnow_key`, `indexnow_key_location`을 추가했다. 둘 다 생략할 수 있지만 설정 시에는 함께 입력하며 기존 IndexNow 스키마로 형식·호스트·경로를 검사한다.
+- `services/engine_registration.py`의 `create_indexnow_registrations()`를 사이트 서비스에서 같은 DB 세션으로 호출한다. 키 설정이 있을 때만 Naver·Bing 행을 생성하고 `registration_status=unknown`으로 저장한다.
+- `site.py`가 전체 트랜잭션을 관리하며 새 서비스는 별도로 커밋하지 않는다. 엔진 저장 오류 시 사이트와 설정이 함께 롤백된다. 사이트 응답·목록에는 키를 반환하지 않는다.
+- 외부 키 파일 접근 확인·실제 엔진 등록·IndexNow 제출·기존 사이트의 키 설정 변경은 아직 연결하지 않았다. 아래 과거 기록의 ‘설정 저장 API 미구현’보다 이 상태가 최신이다.
+- PostgreSQL 통합을 포함한 전체 테스트 284개 통과. 화면 확인 단계에서는 실제 개발 데이터를 추가하지 않았다. 이후 실사용 테스트에서 추가한 고객사·사이트는 최상단 기록을 따른다.
+
+## IndexNow DB 구조 업데이트 — 2026-10-27
+
+- `engine_registrations`에 `indexnow_key`, `indexnow_key_location` nullable TEXT 컬럼을 추가했다. 별도 테이블이나 sites 컬럼은 추가하지 않았다.
+- 로컬 PostgreSQL에 Alembic `0002`를 적용했고 기존 네 테이블의 데이터 보존과 모델 일치를 확인했다. 아래 과거의 `0001(head)` 기록보다 이 상태가 최신이다.
+- Naver·Bing 행에는 같은 설정을 저장하고 Google·Brave는 NULL을 사용한다. 개별 글은 부모 사이트의 등록 정보를 조회하고 host는 사이트 URL에서 추출한다.
+- 두 엔진의 키 동시 갱신은 이후 서비스에서 하나의 트랜잭션으로 구현해야 한다. 초기 DB 변경 당시에는 모델·마이그레이션만 추가했으며, 이후 POST /sites의 설정 저장 연결까지 완료했다. 키 생성·배포 API는 아직 없다.
+- PostgreSQL 스키마 통합 테스트 16개 통과. Notion의 engine_registrations 컬럼 표와 운영 규칙도 갱신했다.
+
 ## Google 엔진 진행·추후 할 일 — 2026-10-27
 
 이 절은 Google 엔진에 관한 아래 과거의 미구현·빈 파일 기록보다 우선한다. DB·관리 화면 작업은 별도 세션에서 진행하며 해당 파일을 덮어쓰지 않는다.
@@ -28,30 +87,32 @@
 
 ## 최신 추가 진행 — 2026-10-27
 
-- 메인 사이트 등록 **스키마·서비스·라우터·DB 검증 완료**. 사이트 API와 프론트 화면은 별도 로컬 커밋으로 정리한다. 아래 2026-10-26 기록의 미구현·다음 단계 설명보다 이 기록을 우선한다.
+- 메인 사이트 등록 **스키마·서비스·라우터·DB 검증 완료**. 사이트 API는 `139af94`, 프론트 화면은 `58f4514`로 로컬 main에 별도 커밋했다. 원격 푸시는 하지 않았다. 아래 2026-10-26 기록의 미구현·다음 단계 설명보다 이 기록을 우선한다.
 - `app/services/site.py`: `create_site()`는 하나의 트랜잭션에서 고객사 존재를 확인하고 `target_type="site"`, `parent_site_id=None`으로 저장한다. 고객사 조회 시 키 공유 잠금으로 저장 전 삭제를 방지한다.
 - 없는 고객사는 `SiteClientNotFoundError`, 동일 고객사·정규화 URL 중복은 `DuplicateSiteError`로 구분한다. `uq_sites_client_url` 대상 `ON CONFLICT DO NOTHING`으로 동시 중복도 처리하며, 다른 DB 오류는 숨기지 않는다.
 - `list_sites()`는 필수 `client_id`와 `target_type="site"`로 필터링하고 생성 시각·ID 정렬, limit·offset을 지원한다. 대상 고객사의 메인 사이트가 없으면 빈 튜플이다.
-- `tests/integration/test_site_service.py`에 저장·서버 지정값·true/false/null·롤백·고객사 분리·글 제외·페이지 분할·동시 등록 검증 7개를 추가했다. 임시 PostgreSQL DB에서 전체 **64개 테스트 통과**.
+- `tests/integration/test_site_service.py`에 저장·서버 지정값·true/false/null·롤백·고객사 분리·글 제외·페이지 분할·동시 등록 검증 7개를 추가했다. 사이트 서비스 구현 당시 임시 PostgreSQL DB 검증을 통과했다. 최종 커밋 기준 수치는 아래 81개·82개 기록을 따른다.
 - 실행: `RUN_POSTGRES_TESTS=1 PYTHONNOUSERSITE=1 PYTHONDONTWRITEBYTECODE=1 /opt/miniconda3/envs/startpress/bin/python -m pytest -q -p no:cacheprovider`. 직접 Python 실행 시에도 사용자 전역 패키지 충돌을 막기 위해 `PYTHONNOUSERSITE=1`을 지정한다.
 - 검증을 위해 Docker Desktop과 기존 PostgreSQL 컨테이너를 시작했다. 테스트는 별도 임시 DB만 생성·삭제하며 개발 DB 데이터는 변경하지 않았다.
 - `app/api/sites.py`를 `app/main.py`에 연결했다. `POST /sites`는 등록 성공 시 201, 고객사 없음은 404, 동일 고객사·URL 중복은 409를 반환한다. `GET /sites`는 UUID `client_id` 필수, limit 1~100(기본 100), offset 0 이상(기본 0)이다. 없는 고객사의 목록은 200과 빈 items다.
-- `tests/integration/test_sites_api.py`에서 실제 앱에 임시 DB 세션을 주입해 등록 후 별도 연결의 DB 저장, 201·404·409·422, 고객사 분리, 글 제외, 페이지 분할, 빈 목록, OpenAPI·`/docs`를 검증했다. 전체 **81개 테스트 통과**로 5단계의 오류 응답·DB 저장 검증도 수행했다.
+- `tests/integration/test_sites_api.py`에서 실제 앱에 임시 DB 세션을 주입해 등록 후 별도 연결의 DB 저장, 201·404·409·422, 고객사 분리, 글 제외, 페이지 분할, 빈 목록, OpenAPI·`/docs`를 검증했다. 사이트 API 커밋 `139af94`의 스테이징 스냅샷을 별도 임시 디렉터리에 내보내 **81개 테스트 통과**를 확인했다. 프론트·다른 세션의 미추적 엔진 파일 없이 독립 검증했다.
 - **프론트 화면 구현 완료**: `/`에서 `app/static/index.html`을 제공하며 CSS·JS는 `/static/`으로 제공한다. 프레임워크 추가 없이 기존 FastAPI API를 동일 출처에서 호출한다. 고객사 추가 대화상자, 고객사 선택, 6개 필드 사이트 등록, 고객사별 메인 사이트 목록·페이지 조회, 필드별 오류·성공 안내를 지원한다. 고객사 목록은 API 페이지를 모두 읽어 선택지로 제공한다.
-- 브라우저에서 별도 임시 DB로 고객사 추가→자동 선택, 사이트 등록→목록 갱신, 빈 입력·중복 오류, 390px 모바일 배치를 검증했다. 미리보기용 예시 데이터는 개발 DB에 넣지 않았다. 관리 화면 제공 검증을 포함한 전체 **82개 테스트 통과**, JS 구문 검사 통과. 관련 안내는 `docs/site-admin.md`에 기록했다.
-- **다음 작업**: 팀의 실제 사용 피드백에 따라 입력 흐름을 조정한다. API 기능은 실제 검색엔진 등록까지 수행하지 않으며, 현재는 로컬 DB 저장·조회 범위다.
-- 사이트 스키마·서비스·라우터·테스트는 사이트 API 커밋에, 관리 화면·정적 자산·화면 테스트·사용 안내는 프론트 커밋에 포함한다. 다른 세션의 `app/engines/`와 관련 테스트 및 로컬 ERD 자료는 커밋에서 제외한다. 작성자는 기존 Git 설정을 유지하며 공동 작성자 트레일러와 원격 푸시는 추가하지 않는다.
+- 브라우저에서 별도 임시 DB로 고객사 추가→자동 선택, 사이트 등록→목록 갱신, 빈 입력·중복 오류, 390px 모바일 배치를 검증했다. 미리보기용 예시 데이터는 개발 DB에 넣지 않았다. 프론트 커밋 `58f4514`의 스테이징 스냅샷을 별도 임시 디렉터리에 내보내 **82개 테스트 통과**, JS 구문 검사 통과를 확인했다. 이 수치는 다른 세션의 미추적 엔진 테스트를 포함한 현재 작업 트리 전체 수치가 아니다. 관련 안내는 `docs/site-admin.md`에 기록했다.
+- **남은 작업**: 개별 글 등록 API·화면, 엔진 결과의 DB 저장·조회 연결, 주기적 상태 확인. 구체적인 우선순위는 아래 다음 작업 절을 따른다. API 기능은 실제 검색엔진 등록까지 수행하지 않으며, 현재는 로컬 DB 저장·조회 범위다.
+- 사이트 스키마·서비스·라우터·테스트는 사이트 API 커밋에, 관리 화면·정적 자산·화면 테스트·사용 안내는 프론트 커밋에 포함했다. 다른 세션의 `app/engines/`와 관련 테스트 및 로컬 ERD 자료는 커밋에서 제외한다. 작성자는 기존 Git 설정을 유지하며 공동 작성자 트레일러와 원격 푸시는 추가하지 않는다.
 
-최종 갱신일: 2026-10-26 (Asia/Seoul)
+최종 갱신일: 2026-10-27 (Asia/Seoul)
 프로젝트: StartPress 검색엔진 등록·발행 알림·색인 모니터링 자동화
 작업 디렉터리: `/Users/kim-yudam/Desktop/study/sideProject/webmaster_automation`
 
 ## 가장 먼저 확인할 사항
 
-1. **개발 환경은 Miniconda의 `startpress`다. 프로젝트 내부 venv는 사용하지 않는다.**
-2. **현재 브랜치는 `main`이다. DB 구성과 고객사 API는 이미 커밋됐다. 사용자 요청으로 이번 설명 주석·규칙·인계 문서도 로컬 main에 커밋하며 원격 푸시는 하지 않는다. main/master 직접 푸시 금지는 유지한다.**
-3. 0단계 API 검증, FastAPI 기본 앱, Docker PostgreSQL, DB 모델·초기 마이그레이션, 고객사 등록·목록 API까지 완료했다. 메인 사이트 등록은 스키마·URL 검증만 작성했으며 미커밋이다. 화면·워커는 아직 없다.
-4. 실제 색인 완료와 API 요청 성공은 별개다. 저장된 결과는 각 호출 당시의 관측이며 현재 상태를 의미하지 않는다.
+1. **개발 환경은 Miniconda `startpress`다. `.venv`를 만들거나 `uv sync`·`uv run`을 실행하지 않는다.** 직접 Python을 실행할 때도 `PYTHONNOUSERSITE=1`을 지정한다.
+2. **현재 브랜치는 codex/indexnow-integration**이다. Google 구현 `1765f5b`를 기준으로 승인한 IndexNow 변경을 네 커밋으로 나눴다. main/master 직접 push 금지는 유지하며 이번에도 원격 push는 하지 않았다.
+3. DB 4개 테이블, 고객사·메인 사이트 등록/목록 API, 고객사 추가·사이트 등록 관리 화면까지 완료했다. 개별 글 등록과 엔진 결과의 DB 연결, 워커·스케줄러는 아직 없다.
+4. **Google 구현은 별도 세션에서 `1765f5b`로 커밋했다. IndexNow는 현재 작업 브랜치의 커밋으로 정리했다.** 이 문서의 Google 진행 절과 다른 세션의 변경을 보존한다. `pyproject.toml`·`uv.lock`, 엔진 관련 미추적 테스트도 임의로 되돌리거나 전체 add로 커밋하지 않는다.
+5. 실제 색인 완료와 API 요청 성공은 별개다. 저장된 결과는 각 호출 당시 관측이다. DB 최신 상태 4개 테이블만으로 작업·재시도·관측 이력이 관리되지는 않는다.
+6. 관리 화면은 <http://127.0.0.1:8000/>이다. 이번 인계 확인 시 로컬 서버가 실행 중이었다. 현재 관리 화면의 등록은 DB 저장이며 검색엔진 등록을 자동 실행하지 않는다.
 
 ## 목표와 합의된 방향
 
@@ -63,7 +124,7 @@
 
 공식 API를 중심으로 구현한다. 브라우저 조작으로 등록·검사 기능을 대신하지 않는다. 브라우저는 최초 계정 설정·OAuth 로그인·동의에 사용했다. 파일 배포와 계정 권한 등 API 외부의 준비 단계는 별도로 관리해야 한다.
 
-추천 설계는 FastAPI + PostgreSQL + Celery/Redis이며, 내부 화면은 Jinja2/HTMX로 작게 시작하는 방향이다. 현재 FastAPI 기본 앱과 로컬 Docker PostgreSQL 18.6은 구현·실행 검증을 마쳤다. Redis·Celery·스케줄러·웹 화면은 아직 설치·구현하지 않았다.
+백엔드는 FastAPI + PostgreSQL이다. 관리 화면은 별도 빌드 없이 HTML·CSS·JavaScript를 FastAPI에서 제공하는 방식으로 구현했다. Jinja2/HTMX는 초기 검토안이며 현재 사용하지 않는다. Celery/Redis·스케줄러는 후속 검토 대상이며 아직 구현하지 않았다.
 
 사용자는 개발자로 성장하기 위한 설명과 단계별 진행을 선호한다. 한국어로 간결하게 설명하고, 코드는 타입 힌팅과 읽기 쉬운 구조를 사용한다. 사용자가 묻는 개념은 난이도에 맞춰 설명한다.
 
@@ -141,9 +202,11 @@ PYTHONDONTWRITEBYTECODE=1 conda run --no-capture-output -n startpress python -m 
 - [x] 실제 HTTP로 `/clients` 조회·OpenAPI·`/docs` 응답 확인. 개발 서버 재시작 후 정상 동작 확인.
 - [x] DB 설정·연결 코드의 한국어 설명 주석과 `get_db()` 가독성 개선.
 - [x] AGENTS.md에 모든 함수·메서드 앞 간단한 한국어 주석 작성 규칙 추가.
-- [x] 실제 DB의 sites 컬럼·제약을 읽기 전용으로 확인하고 메인 사이트 스키마·URL 검증 작성. 해당 구현은 미완성이므로 커밋 제외.
+- [x] 메인 사이트 스키마·URL 검증·저장/조회 서비스·라우터·실제 DB 검증 완료 (`139af94`).
+- [x] 고객사 추가·선택, 사이트 등록·목록 화면과 모바일 배치, 사용 안내 완료 (`58f4514`).
+- [x] Notion DB 설계와 4개 모델 비교, 실제 DB의 Alembic 0001(head)·모델 차이 없음 확인. Notion 그 조회 단계에서는 본문을 수정하지 않았으며 이후 IndexNow 세션에서 DB 컬럼과 사용자 입력·구현 상태를 업데이트했다.
 
-## API 검증 결과와 실제 한계
+## 0단계 API 검증 결과와 실제 한계 — 2026-10-25 관측
 
 ### Google
 
@@ -195,55 +258,49 @@ PYTHONDONTWRITEBYTECODE=1 conda run --no-capture-output -n startpress python -m 
 - `google_probe.py`는 **검증용 실행 도구**다. `auth`, `sites` 명령만 있다.
 - `auth`: `.env`의 OAuth JSON을 읽고 사용자 동의 후 토큰 저장·기존 토큰 재사용.
 - `sites`: 저장된 토큰으로 Google 사이트 목록 조회.
-- 소유 확인·사이트맵 제출·색인 검사·Bing 요청은 개별 Python 실행으로 검증했다. 제품용 재실행 워크플로로 구현돼 있다고 가정하면 안 된다.
+- 0단계 소유 확인·사이트맵 제출·색인 검사·Bing 요청은 개별 Python 실행으로 검증했다. 현재 Google 어댑터의 구현 범위는 문서 상단 Google 엔진 진행 절을 따른다. 엔진과 DB·관리 화면의 연결 완료로 해석하지 않는다.
 - 테스트 4개는 인증파일 경로 제한, 공식 인증 엔드포인트 검증, 토큰 저장 권한, 결과 요약 시 다른 사이트·오류 본문 제외를 검증한다.
-- FastAPI 기본 앱(`/health`), 비동기 DB 연결·세션, 4개 SQLAlchemy 모델, Alembic 초기 마이그레이션, 고객사 생성·목록 API를 구현했다. 워커·스케줄러·웹 화면은 아직 없다.
+- FastAPI 기본 앱(`/health`), 비동기 DB 연결·세션, 4개 SQLAlchemy 모델, Alembic 초기 마이그레이션, 고객사·메인 사이트 생성/목록 API와 웹 관리 화면을 구현했다. 워커·스케줄러는 아직 없다.
 - 고객사 API는 `app/schemas/client.py` → `app/api/clients.py` → `app/services/client.py` → 요청별 DB 세션으로 연결된다. 등록 성공은 201, 입력 오류는 422다. 목록은 생성 시각·ID 순이며 limit(1~100, 기본 100)·offset(0 이상)을 지원한다.
 - 고객사 서비스는 `session.begin()` 안에서 저장·응답 변환을 수행하고 정상 종료 시 커밋한다. `get_db()` 자체는 커밋하지 않고 세션 제공·정리를 담당한다.
 
-## 진행 중인 작업 — 메인 사이트 등록 (커밋 제외)
+## 메인 사이트 등록 — 완료
 
 - [x] 1단계: `app/schemas/site.py`에 SiteCreate·SiteRead·SiteList 작성.
-- [x] 2단계: HTTP·HTTPS URL 검증·정규화, 저장 문자열의 UTF-8 2,048바이트 제한 적용.
-- [ ] 3단계: 고객사 존재 확인·메인 사이트 저장·목록 조회 서비스.
-- [ ] 4단계: POST /sites·GET /sites 라우터 및 앱 연결.
-- [ ] 5단계: 201·404·409·422 응답 및 PostgreSQL 통합 테스트.
-- [ ] 이후: 고객사 선택·사이트 등록 화면.
+- [x] 2단계: HTTP·HTTPS URL 정규화, UTF-8 2,048바이트 제한 적용.
+- [x] 3단계: 고객사 확인·메인 사이트 저장·목록 조회 서비스.
+- [x] 4단계: POST /sites·GET /sites 라우터 및 앱 연결.
+- [x] 5단계: 201·404·409·422 응답과 실제 PostgreSQL 저장·동시 중복·목록 분리 검증.
+- [x] 고객사 추가·선택, 사이트 등록 폼과 고객사별 목록, 모바일 배치.
 
-작성한 요청 스키마는 client_id·name·url·owner_type 필수, cms_type·can_edit_site 선택이다.
+요청 필드는 총 6개다. client_id·name·url·owner_type은 필수, cms_type·can_edit_site는 선택이다.
 can_edit_site는 엄격한 true/false/null만 허용한다. target_type·parent_site_id·is_active는
-사용자가 보낼 수 없게 막았다. 서비스 구현 시 target_type="site", parent_site_id=None을
-서버에서 설정해야 한다. SiteRead는 메인 사이트만 표현한다.
+사용자가 보낼 수 없고 서버·DB가 지정한다. SiteRead는 메인 사이트만 표현한다.
 
 URL은 호스트·스킴을 정규화하고 `/blog/` 경로와 쿼리는 유지한다. 잘못된 스킴·호스트,
-공백·제어 문자·역슬래시·사용자 인증정보·프래그먼트(#...)를 거부한다. 외부 URL 접속이나
-고객사 존재·중복 검사는 아직 하지 않는다. 이는 URL 형식 검증이며 SSRF 방어 완료를 뜻하지 않는다.
+공백·제어 문자·역슬래시·인증정보·프래그먼트를 거부한다. 등록 시 해당 URL에 접속하지 않는다.
+외부 URL 접근 기능의 SSRF 방어가 완료됐다는 의미는 아니다.
 
-`app/schemas/site.py`, `tests/test_site_schemas.py`는 사용자 요청에 따라 **미추적 로컬 파일로 보존**한다.
-새 체크아웃에는 없을 수 있으므로 다음 세션에서 존재 여부를 확인한다. 미완성이라는 이유로 삭제하지 않는다.
+화면은 기존 API를 동일 출처로 호출한다. 고객사 목록은 100개씩 끝까지 읽고 사이트 목록은
+6개씩 표시한다. 등록 실패 시 입력을 유지하며 오류를 해당 필드에 표시한다. 고객사 추가 후
+자동 선택하고 사이트 등록 성공 시 목록을 갱신한다. 사용법은 [site-admin.md](site-admin.md).
+브라우저 검증용 별도 임시 DB는 정리했고 개발 DB에 예시 데이터를 저장하지 않았다.
 
-## 다음에 해야 할 작업
+## 진행 중인 작업과 다음에 해야 할 작업
 
-1. **메인 사이트 등록의 3단계 서비스부터 이어서 구현한다.** 로컬 SiteCreate/Read/List와 Site 모델을 먼저 확인한다. 트랜잭션 안에서 고객사 존재를 확인하고 저장하며, 없는 고객사는 404, 동일 고객사·정규화 URL 중복은 409로 처리한다. 동시 등록 충돌도 DB 제약에 맞춰 처리한다.
-2. POST /sites와 GET /sites?client_id=...를 연결한다. 목록은 target_type="site"만 조회하고 고객사 필터·limit·offset을 지원한다. 서비스·라우터·오류 응답·실제 DB 저장 테스트가 완료된 뒤 site 작업을 별도 커밋한다.
-3. 이후 고객사 선택 화면·사이트 등록 폼과 개별 글 추가를 구현한다. client_id는 모든 URL에서 필수다. 글 추가 시 부모를 조회해 고객사·소유 구분을 서버에서 채우는 기존 입력 흐름을 따른다. 외부 URL 접근 기능을 추가할 때 사이트 제어 범위와 SSRF 방어를 별도로 검증한다.
-4. 검증용 Google 코드와 응답을 참고해 엔진별 실제 어댑터를 구현한다. `app/engines/` 파일의 존재만으로 API 연동 구현 완료라고 판단하지 않는다.
-5. URL 변경 이벤트 → 제출 작업 저장 → IndexNow 공통 통지 → Google 상태 조회를 연결한다. Naver/Bing에 같은 변경을 중복 전송하지 않도록 실행 경로별 중복 방지를 별도로 구현한다. 현재 4개 테이블만으로 제출·재시도·관측 이력이 관리되는 것은 아니다.
-6. 이후 상태 이력·작업 큐·스케줄러·재시도·대시보드를 추가한다. API 오류를 미색인으로 치환하지 않으며 외부 제출의 정확히 한 번 실행을 보장한다고 가정하지 않는다.
-7. 미커밋 site 작업·빈 엔진 파일·로컬 ERD 자료를 보존한다. 이후 개발은 작업 브랜치·PR을 기본으로 하고, 이번 로컬 main 커밋 요청을 main 직접 푸시 승인으로 해석하지 않는다. 공동 작성자 트레일러를 넣지 않는다.
+최상단의 현재 세션 인계 요약에 우선순위·미구현 범위·커밋 계획을 정리했다. IndexNow 제출 클라이언트와 사이트 등록 시 설정 저장은 완료했고, 기존 사이트 설정 변경·제출 전용 서비스/API·결과 저장은 아직 없다. 개별 글 등록·예약·이력은 후속 작업이며 Google 절의 보류 요청을 유지한다.
 
-## Git 상태 — DB·고객사 API 커밋 완료
+## Git 상태 — 기존 커밋과 IndexNow 작업 브랜치
 
-- 원격: `https://github.com/StartPress26/webmaster-automation.git`.
-- 초기 main 업로드는 과거의 사용자 요청으로 완료했다. 현재 Git 연결이나 초기 업로드를 다시 실행할 필요는 없다.
-- 기존 원격 이력이 없는 것을 확인한 뒤 로컬 Git을 초기화하고 `origin`을 연결했다.
-- 주요 기존 커밋: `dd30267` 초기 구성, `9f47662` DB 모델·마이그레이션, `9099c96` 고객사 등록·목록 API. 현재 브랜치는 main이다.
-- 사용자 요청으로 설명 주석·가독성 개선·주석 규칙과 최신 인계를 로컬 main에 두 커밋으로 정리한다. 실제 마지막 SHA와 origin 대비 상태는 `git log -3 --oneline`, `git status -sb`로 확인한다.
-- 커밋 제외: `app/schemas/site.py`, `tests/test_site_schemas.py`(미완성 site 구현), `app/engines/*.py`(0바이트 자리표시자), `outputs/startpress-db-erd.png`, `outputs/db-erd-prompt.txt`(로컬 DB 설계 자료).
-- 사용자 요청에 따라 DB 설계 자료는 업로드에서 제외하고 로컬에만 보관한다.
-- `.env`, `.secrets/`, 가상환경·캐시는 제외한다. `.env.example`에는 비밀값 없이 설정 항목과 경로만 둔다.
-- 최신 커밋과 원격 동기화 여부는 `git log -1 --oneline`, `git status -sb`로 확인한다.
-- 현재는 main/master에 직접 푸시하지 않고 작업 브랜치·PR을 사용한다. 과거의 초기 업로드 요청을 새 main 푸시의 승인으로 해석하지 않는다.
+- 브랜치: codex/indexnow-integration. 원격: `https://github.com/StartPress26/webmaster-automation.git`.
+- `139af94` — `[feat] 메인 사이트 등록 및 목록 조회 API 구현`: 스키마·서비스·라우터·앱 연결·사이트 테스트·API 단계 인계. 프론트 없이 독립 검증 81개 통과.
+- `58f4514` — `[feat] 고객사 선택 및 사이트 등록 관리 화면 구현`: 정적 HTML/CSS/JS·화면 제공·화면 테스트·사용 안내·프론트 단계 인계. 독립 검증 82개 및 JS 구문 검사 통과.
+- 작성자는 기존 Git 설정을 유지했고 공동 작성자 트레일러는 없다. 두 커밋 모두 로컬 main에만 생성했으며 원격 푸시는 하지 않았다.
+- 이전 주요 커밋: `9f47662` DB 모델·마이그레이션, `9099c96` 고객사 API, `d359a15` 설명 주석·세션 흐름, `eb9fd2c` 이전 인계.
+- 최신 기존 커밋은 Google 구현 `1765f5b`다. 현재 IndexNow 커밋 기록은 최상단 목록을 따른다. 실제 git status를 다시 확인하고 다른 세션의 변경을 보존한다.
+- 로컬 전용 제외 자료: `outputs/startpress-db-erd.png`, `outputs/db-erd-prompt.txt`. 전체 add로 함께 커밋하지 않는다.
+- `docs/HANDOFF.md`에는 다른 세션의 Google 진행 기록과 이번 갱신을 함께 보존해 문서 커밋에 포함했다. 과거 버전으로 되돌리지 않는다.
+- `.env`, `.secrets/`, 가상환경·캐시는 커밋하지 않는다. 원격 상태는 git status -sb로 확인하되 이번 작업에서 새 fetch·push는 하지 않는다.
 
 별도 블로그 저장소 `/Users/kim-yudam/Desktop/study/sideProject/nextjs-notion-starter-kit`에는 공개 검증 파일을 배포했다.
 
@@ -277,7 +334,7 @@ URL은 호스트·스킴을 정규화하고 `/blog/` 경로와 쿼리는 유지�
 - 주소: `127.0.0.1:5432` — 로컬 컴퓨터에서만 접속하도록 바인딩.
 - DB 이름·사용자: `webmaster`. 실제 비밀번호는 `.env`에 무작위 생성·저장했으며 출력하지 않았다.
 - 데이터 볼륨: `webmaster-automation_postgres_data`, 컨테이너 경로 `/var/lib/postgresql`.
-- 이전 DB 인계에서 컨테이너 healthy와 Alembic `0001 (head)`를 확인했다. 이번 작업에서는 실제 sites 컬럼·제약을 읽기 조회로 확인했고, 테스트용 별도 DB에 마이그레이션을 적용해 검증했다.
+- 현재 개발 DB는 Alembic `0002 (head)`다. IndexNow 컬럼 적용 시 기존 네 테이블의 데이터 보존과 모델 일치를 확인했다. 통합 테스트의 되돌리기·재적용은 임시 DB에서만 실행했다.
 - 기본 실행은 `docker compose up -d --wait db`, 일반 종료는 `docker compose stop db`다.
 - 데이터 볼륨을 삭제하는 종료 명령은 사용하지 않는다. 초기화 이후 비밀번호는 .env 값만 바꿔도 DB에 반영되지 않는다.
 
@@ -285,7 +342,7 @@ URL은 호스트·스킴을 정규화하고 `/blog/` 경로와 쿼리는 유지�
 
 1. `clients`: id(UUID), name, manager_name(선택), created_at.
 2. `sites`: 메인 사이트와 개별 글을 모두 저장. client_id는 필수이고 target_type은 site/page다. 글의 parent_site_id는 같은 테이블의 메인 사이트를 참조한다. URL은 이 테이블에 저장하며 상태 테이블에 중복 저장하지 않는다.
-3. `engine_registrations`: 메인 사이트·엔진별 등록과 소유권 확인을 한 상태로 관리. main_site_id는 메인 사이트만 참조한다.
+3. `engine_registrations`: 메인 사이트·엔진별 등록과 소유권 확인 및 IndexNow 키·파일 주소를 관리. main_site_id는 메인 사이트만 참조한다. Naver·Bing에 같은 설정을 저장하며 글은 부모를 통해 조회한다.
 4. `site_engine_statuses`: 메인 홈페이지와 글 URL 각각의 엔진별 제출·수집·색인 최신 상태를 저장.
 
 업무 테이블 외에 Alembic이 `alembic_version`을 생성했다. 따라서 public 테이블 조회에 총 5개가 보이는 것은 정상이다.
@@ -314,12 +371,16 @@ URL은 호스트·스킴을 정규화하고 `/blog/` 경로와 쿼리는 유지�
 
 - `app/core/config.py`: frozen Settings, 프로세스 환경변수 우선, 비밀번호가 repr·설정 오류에 노출되지 않도록 처리.
 - `app/core/database.py`: SQLAlchemy 비동기 연결 풀·요청별 AsyncSession·종료 정리. 커밋은 서비스 계층에서 명시한다.
-- `app/main.py`: `/health`와 고객사 라우터 연결, lifespan에서 사용한 DB 연결 풀 정리.
+- `app/main.py`: `/health`, 고객사·사이트 라우터, `/` 관리 화면, `/static/` 자산 제공. lifespan에서 사용한 DB 연결 풀 정리.
 - `app/api/clients.py`, `app/services/client.py`: 고객사 등록·목록 요청 처리와 DB 저장·조회.
+- `app/schemas/site.py`, `app/api/sites.py`, `app/services/site.py`: 메인 사이트 입력 검증·등록·고객사별 목록과 서비스 예외의 HTTP 변환.
+- `app/static/`: 고객사 추가·사이트 등록 관리 화면. 추가 프론트 프레임워크나 빌드 과정은 없다.
 - `app/models/`: Base와 4개 모델. 관계는 외래키로 정의했으며 ORM relationship 편의 속성은 아직 없다.
 - `alembic.ini`: 경로·로그 설정만 저장. 연결 주소나 비밀번호를 넣지 않는다.
 - `migrations/env.py`: .env와 Base.metadata 연결. 테스트는 Config.attributes로 임시 DB URL을 주입한다.
 - `migrations/versions/0001_create_tracking_tables.py`: 테이블·인덱스·제약·검증 트리거 생성과 downgrade.
+- `migrations/versions/0002_add_indexnow_settings.py`: engine_registrations에 IndexNow 키·파일 주소 컬럼 추가.
+- `app/services/engine_registration.py`: 같은 DB 세션으로 Naver·Bing 설정 저장. 독립 커밋하지 않는다.
 - `db/schema.sql`은 과거 8개 테이블 보관본이다. 최신 적용에 사용하지 않는다는 주석을 추가했다. 현재 기준은 모델과 Alembic이다.
 - 트리거·함수는 autogenerate가 자동으로 관리하지 않는다. 변경 시 새 마이그레이션에 직접 작성하고 통합 테스트한다.
 
@@ -338,28 +399,36 @@ psql 안에서 `\dt`, `\d sites`로 테이블과 제약을 볼 수 있다.
 
 ### 검증 기록
 
-이번 종료 작업에서 커밋 대상 기준으로 기본·기존 Google 테스트 8개와 PostgreSQL 통합
-테스트 19개(고객사 API 6개 포함)를 재실행해 **27 passed**를 확인했다.
-미커밋 site 스키마 테스트는 앞선 구현 검증에서 **30 passed**였고, 당시 DB 없는 전체
-기본 테스트는 **38 passed**였다. site 테스트는 이번 커밋 대상 검증 명령에서 제외했다.
-- `alembic current`: 0001 (head).
-- `alembic check`: No new upgrade operations detected.
-- FastAPI용 실제 get_db 세션으로 SELECT 1 성공.
-- 기존 `/health`: HTTP 200, status=ok.
-- compileall·git diff --check 통과, pip check: No broken requirements found.
+- 사이트 API 커밋 스냅샷: **81 passed**. 프론트 커밋 스냅샷: **82 passed**. 각각 인덱스 내용을 별도 임시 디렉터리로 내보내 검증했으며, 다른 세션의 미추적 엔진·테스트는 포함하지 않았다.
+- `node --check app/static/admin.js`, `git diff --check` 통과.
+- 실제 PostgreSQL 임시 DB에서 커밋·중복·동시 등록·고객사별 조회·글 제외·서버 지정값·true/false/null·롤백·HTTP 응답을 확인했다.
+- 브라우저에서 별도 임시 DB로 고객사 추가/자동 선택, 등록/목록 갱신, 빈 입력·URL 중복 안내와 390px 모바일 배치를 확인했다. 브라우저 경고·오류 로그는 없었다.
+- 2026-10-27 읽기 확인: `alembic current`는 0001(head), `alembic check`는 No new upgrade operations detected.
+- 다른 세션의 Google 테스트 86개 통과 기록은 상단 해당 절을 따른다. 프로젝트 전체 또는 위 82개와 합산한 수치로 표현하지 않는다.
 
 ```bash
-# 커밋된 코드의 기본·DB 통합 테스트 (미커밋 site 테스트 제외)
-RUN_POSTGRES_TESTS=1 conda run -n startpress python -m pytest -q tests/test_google_probe.py tests/test_database_config.py tests/integration
+# 임시 PostgreSQL DB를 생성·검증·정리합니다. 외부 검색엔진 API는 호출하지 않습니다.
+RUN_POSTGRES_TESTS=1 PYTHONNOUSERSITE=1 PYTHONDONTWRITEBYTECODE=1 /opt/miniconda3/envs/startpress/bin/python -m pytest -q -p no:cacheprovider
 
-# 로컬 site 작업까지 포함한 DB 없는 테스트
-conda run -n startpress python -m pytest -q -m 'not integration'
+# DB 없이 기본 테스트만 실행합니다.
+PYTHONNOUSERSITE=1 PYTHONDONTWRITEBYTECODE=1 /opt/miniconda3/envs/startpress/bin/python -m pytest -q -m 'not integration' -p no:cacheprovider
 ```
 
-통합 테스트는 개발 DB를 지우지 않는다. UUID 이름의 임시 DB를 생성해 초기 마이그레이션,
-중복 상태 차단, 잘못된 부모 참조 차단, 글의 등록 정보 차단, 부모 유형 변경 차단,
-삭제 제한, NULL 보존, downgrade/upgrade와 모델 일치를 검증한 뒤 자신이 만든 임시 DB만 삭제한다.
-이를 위해 로컬 계정에 CREATE DATABASE 권한이 필요하다.
+통합 테스트는 개발 DB를 지우지 않는다. UUID 이름의 임시 DB를 만들고 자신이 만든 DB만
+삭제한다. 로컬 계정에 CREATE DATABASE 권한이 필요하다. 다른 세션이 테스트를 추가 중이므로
+현재 작업 트리 전체 테스트 수는 위 커밋 스냅샷 수보다 늘어날 수 있다.
+
+### 관리 화면 실행
+
+```bash
+docker compose up -d --wait db
+PYTHONNOUSERSITE=1 /opt/miniconda3/envs/startpress/bin/python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+```
+
+이번 인계 확인 시 이미 127.0.0.1:8000에 개발 서버가 실행 중이었다. 중복 실행 전에 포트를
+확인한다. 서버는 `.env` 또는 프로세스 환경변수의 DB에 연결하며 화면 등록은 실제 저장이다.
+검증용 8001 서버와 임시 DB는 정리했다. 관리 화면은 [로컬 화면](http://127.0.0.1:8000/),
+API 문서는 [Swagger UI](http://127.0.0.1:8000/docs)에서 확인한다.
 
 ### ERD 이미지
 
@@ -388,6 +457,17 @@ conda run -n startpress python -m pytest -q -m 'not integration'
 | [../app/api/clients.py](../app/api/clients.py) | 고객사 등록·목록 라우터 |
 | [../app/services/client.py](../app/services/client.py) | 고객사 저장·조회 트랜잭션 |
 | [clients-api.md](clients-api.md) | 고객사 API 사용·검증 안내 |
+| [site-admin.md](site-admin.md) | 관리 화면 실행·사용·검증 안내 |
+| [../app/schemas/site.py](../app/schemas/site.py) | 사이트 요청·응답·URL 검증 |
+| [../app/api/sites.py](../app/api/sites.py) | 메인 사이트 등록·목록 라우터 |
+| [../app/services/site.py](../app/services/site.py) | 사이트 저장·조회와 중복 처리 |
+| [../app/static/index.html](../app/static/index.html) | 관리 화면 폼·대화상자·목록 |
+| [../app/static/admin.css](../app/static/admin.css) | 반응형 배치·포커스 스타일 |
+| [../app/static/admin.js](../app/static/admin.js) | API 호출·목록 갱신·오류 안내 |
+| [../tests/test_site_schemas.py](../tests/test_site_schemas.py) | 사이트 스키마 테스트 |
+| [../tests/integration/test_site_service.py](../tests/integration/test_site_service.py) | 사이트 저장·동시 중복 테스트 |
+| [../tests/integration/test_sites_api.py](../tests/integration/test_sites_api.py) | 사이트 HTTP·DB 통합 테스트 |
+| [../tests/test_admin_page.py](../tests/test_admin_page.py) | 관리 화면·정적 파일 응답 테스트 |
 | [../tests/integration/test_clients_api.py](../tests/integration/test_clients_api.py) | 실제 DB 커밋·API 검증 |
 | [../alembic.ini](../alembic.ini) | 마이그레이션 실행 설정 |
 | [../migrations/versions/0001_create_tracking_tables.py](../migrations/versions/0001_create_tracking_tables.py) | 초기 4개 테이블·검증 트리거 |
@@ -402,7 +482,7 @@ conda run -n startpress python -m pytest -q -m 'not integration'
 | [../outputs/indexnow-api-test-result.json](../outputs/indexnow-api-test-result.json) | IndexNow 최종 200 및 과거 202 이력 |
 
 요구사항 원문: [Notion — Indexing 자동화](https://app.notion.com/p/Indexing-4034977b8e6980c2b41cc0e5a841c914).
-기존 인계 기록에는 2026-10-26 19:03 KST에 **Notion 연결 도구의 `fetch`로 본문 조회 성공**한 것으로 남아 있다. 이번 인계 갱신에서는 Notion을 재조회하지 않았다. 과거의 404를 영구적인 접근 불가로 간주하지 않는다. 다음 세션에서도 위 링크 또는 페이지 ID `4034977b-8e69-80c2-b41c-c0e5a841c914`로 조회한다. 접근 권한은 달라질 수 있으므로 실패하면 검증 보고서와 이 문서의 요구사항을 우선 참고한다.
+2026-10-27 이 세션에서 Notion 연결 도구 fetch로 다시 조회했다. 조회 결과의 마지막 편집 시각은 2026-10-26 19:03 KST였다. 연결 이름 `Notion`에서는 404였지만 `개인용` 연결에서 StartPress HQ / 개발 아래 페이지를 조회했다. 한 연결의 404를 페이지 자체의 접근 불가로 단정하지 않는다. 다음 세션에서도 위 링크 또는 ID `4034977b-8e69-80c2-b41c-c0e5a841c914`로 조회한다. 그 조회 단계에서는 본문을 수정하지 않았으며 이후 IndexNow 세션에서 DB 컬럼과 사용자 입력·구현 상태를 업데이트했다.
 
 조회한 원문에는 요구사항 1·2·3, 엔진별 자동화 조사, DB 설계(`clients`, `sites`, `engine_registrations`, `site_engine_statuses`), ‘사용자가 처음 넣어줘야 하는 정보’가 포함되어 있다. 입력 흐름은 다음과 같다.
 
@@ -410,21 +490,19 @@ conda run -n startpress python -m pytest -q -m 'not integration'
 - 메인 사이트 등록: 고객사 이름 목록에서 선택하되 서버에는 `client_id` 전달. 사이트 이름·URL·소유 구분과 선택적인 플랫폼·인증 파일/태그 설치 가능 여부 입력. 설치 가능 여부는 가능/불가능/모름을 `true`/`false`/`NULL`로 저장.
 - 개별 글 등록: 등록된 메인 사이트 상세에서 ‘글 추가’로 제목·URL 입력. 선택한 부모 ID를 요청에 포함하고, 서버가 부모에서 고객사·소유 구분을 가져와 `target_type=page`로 설정.
 
-Notion은 요구사항·설계 자료다. 실제 구현·적용 여부는 아래 최신 DB 구현 상태와 코드·Alembic 버전을 기준으로 확인한다. 원문의 브라우저 자동화 제안은 이 문서의 공식 API 중심 합의와 구분한다. 이번 확인에서는 Notion 본문 수정이나 연결·권한 변경을 수행하지 않았다.
+Notion은 요구사항·설계 자료다. 실제 구현·적용 여부는 이 문서의 최신 구현 상태와 코드·Alembic 버전을 기준으로 확인한다. 원문의 브라우저 자동화 제안은 이 문서의 공식 API 중심 합의와 구분한다. 초기 조회 이후 IndexNow 세션에서 DB 컬럼·입력 항목·저장 구현 상태를 수정했다. 연결·권한은 변경하지 않았다.
 
 ## 마지막 상태
 
-- 갱신일: **2026-10-26 / Asia/Seoul**.
+- 갱신일: **2026-10-27 / Asia/Seoul**.
 - 작업 디렉터리: `/Users/kim-yudam/Desktop/study/sideProject/webmaster_automation`.
-- 현재 브랜치: **main** — 사용자가 로컬 main 커밋을 명시적으로 요청했다.
-- 기존 기능 커밋: **9099c96** — `[feat] 고객사 등록 및 목록 조회 API 구현`.
-- 설명 주석·규칙 커밋: **d359a15** — `[refactor] DB 세션 생성 흐름과 한국어 주석 규칙 정리`. 이 인계 문서를 담은 후속 커밋의 SHA는 `git log -1 --oneline`으로 확인한다.
-- origin: `https://github.com/StartPress26/webmaster-automation.git`.
-- 종료 커밋 구성: `[refactor] DB 세션 생성 흐름과 한국어 주석 규칙 정리`(AGENTS.md·config.py·database.py), `[docs] 고객사 API 완료와 사이트 등록 인계 갱신`(이 문서). 원격 푸시는 하지 않는다.
-- 남기는 미추적 파일: `app/schemas/site.py`, `tests/test_site_schemas.py`, 빈 `app/engines/*.py`, 로컬 ERD 이미지·프롬프트. 삭제하거나 전체 add로 커밋하지 않는다.
-- 실행 환경: **Miniconda startpress**, .venv 사용 금지.
-- DB: **PostgreSQL 18.6 / 초기 마이그레이션 0001**. 임시 DB에서 마이그레이션 재적용·모델 일치 검증 통과.
-- 마지막 종료 검증: **기본 8 + 통합 19 = 27 tests passed**. 로컬 site 작업은 별도로 30개 테스트 통과 이력이 있다.
-- 다음 구현 단위: **메인 사이트 저장·조회 서비스(계획의 3단계)**. 로컬 미커밋 스키마·테스트를 먼저 확인한다.
+- 브랜치: **codex/indexnow-integration**, 기준 커밋 **1765f5b** — Google 구현. 마지막 기능 커밋은 **383965f**이고, 이후 이 파일을 담은 문서 커밋을 git log로 확인한다.
+- 사용자가 네 커밋 구성을 승인했다. 기능 세 커밋과 검증 보고서·인계 문서 커밋으로 정리했으며 원격 push는 하지 않았다.
+- 실행 환경: **Miniconda startpress**, 직접 실행 시 **PYTHONNOUSERSITE=1**, .venv 사용 금지.
+- DB: **PostgreSQL 18.6 / Alembic 0002(head)**. 테스트 고객사·블로그와 Naver·Bing 키 설정이 저장돼 있다.
+- 마지막 전체 검증: PostgreSQL 통합 포함 **284 passed**. 이후 실사용 테스트는 별도이며 반복 제출하지 않는다.
+- 실제 IndexNow: **2026-10-27 19:09 KST, 메인 URL 1개·1회 제출·HTTP 200 accepted**. 개별 엔진의 수집·색인 완료를 뜻하지 않는다.
+- 다음 작업: 기능 구현은 기존 사이트의 키 설정 변경 → DB 기반 제출 서비스·API·화면 버튼 → 결과 저장 흐름 순서다.
+- 보존: Google 세션 기록·기존 공개 검증 파일·로컬 ERD 자료. .env·토큰은 커밋·출력하지 않는다.
 
-새 세션에서: **‘docs/HANDOFF.md 읽고, 로컬 미커밋 site 파일을 보존하면서 Miniconda startpress 환경에서 메인 사이트 등록 서비스부터 이어서 진행해줘.’**
+새 세션에서: **‘docs/HANDOFF.md의 현재 세션 인계 요약을 읽고 이어서 진행해줘. Google은 1765f5b에 커밋됐고 IndexNow 클라이언트·설정 저장은 codex/indexnow-integration 브랜치에 커밋했어. 실제 Vercel 블로그 제출은 HTTP 200이었으며 기록된 URL을 테스트 목적으로 반복 제출하지 마. 추가 변경과 원격 push는 별도 요청 범위에 맞춰 진행해.’**

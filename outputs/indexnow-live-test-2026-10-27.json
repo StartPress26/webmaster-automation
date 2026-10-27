@@ -1,0 +1,29 @@
+{
+  "checked_at": "2026-10-27T19:09:18.453692+09:00",
+  "site_url": "https://otteru.vercel.app/",
+  "client_id": "a6eb3bdc-215f-48a5-b2b3-eab3b51af806",
+  "site_id": "7d337e4c-bbd1-4172-8b4c-58fe77312943",
+  "key_file_http_status": 200,
+  "key_file_matches": true,
+  "homepage_http_status": 200,
+  "site_registration_http_status": 201,
+  "database_settings_match": true,
+  "engine_registrations": [
+    {
+      "engine": "naver",
+      "registration_status": "unknown"
+    },
+    {
+      "engine": "bing",
+      "registration_status": "unknown"
+    }
+  ],
+  "submission_count": 1,
+  "endpoint": "https://api.indexnow.org/indexnow",
+  "note": "테스트 실행으로 DB 조회와 제출을 연결했습니다. 제출용 제품 API는 아직 없습니다. 접수 성공은 색인 완료가 아닙니다.",
+  "submission": {
+    "http_status": 200,
+    "requested_at": "2026-10-27T10:09:18.453706Z",
+    "status": "accepted"
+  }
+}
