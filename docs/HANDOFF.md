@@ -2,14 +2,19 @@
 
 ## 최신 추가 진행 — 2026-10-27
 
-- 메인 사이트 등록 스키마·서비스·라우터·DB 검증을 완료했다. 아래 2026-10-26 기록의 미구현 설명보다 이 기록을 우선한다.
-- `app/schemas/site.py`: SiteCreate·SiteRead·SiteList, HTTP·HTTPS URL 정규화와 UTF-8 2,048바이트 제한, 서버 지정 필드 입력 차단, can_edit_site의 true/false/null 구분.
-- `app/services/site.py`: 고객사 존재 확인 후 target_type="site", parent_site_id=None으로 저장한다. 고객사 키 공유 잠금과 uq_sites_client_url 대상 ON CONFLICT DO NOTHING으로 삭제 경합·동시 중복에 대응한다. 서비스 예외는 고객사 없음과 중복 URL을 구분한다.
-- `app/api/sites.py`를 `app/main.py`에 연결했다. POST /sites는 201·404·409·422를 반환하며 GET /sites는 client_id 필수, limit 1~100(기본 100), offset 0 이상(기본 0)을 지원한다. 목록은 메인 사이트만 반환하며 없는 고객사의 목록은 빈 items다.
-- 스키마 30개, 사이트 서비스 7개, 사이트 API 17개 테스트를 추가했다. 전체 81개 테스트를 임시 PostgreSQL DB에서 검증했다.
-- 검증 명령: `RUN_POSTGRES_TESTS=1 PYTHONNOUSERSITE=1 PYTHONDONTWRITEBYTECODE=1 /opt/miniconda3/envs/startpress/bin/python -m pytest -q -p no:cacheprovider`.
-- API는 고객사·사이트 정보의 DB 저장·조회 범위이며 검색엔진 등록을 실행하지 않는다. 프론트 폼은 이 API와 별도 커밋으로 정리한다.
-- 사용자 요청으로 로컬 main에 커밋한다. 다른 세션의 엔진 구현·관련 테스트, 로컬 ERD 자료는 제외하고 원격 푸시는 하지 않는다. 공동 작성자 트레일러를 추가하지 않는다.
+- 메인 사이트 등록 **스키마·서비스·라우터·DB 검증 완료**. 사이트 API와 프론트 화면은 별도 로컬 커밋으로 정리한다. 아래 2026-10-26 기록의 미구현·다음 단계 설명보다 이 기록을 우선한다.
+- `app/services/site.py`: `create_site()`는 하나의 트랜잭션에서 고객사 존재를 확인하고 `target_type="site"`, `parent_site_id=None`으로 저장한다. 고객사 조회 시 키 공유 잠금으로 저장 전 삭제를 방지한다.
+- 없는 고객사는 `SiteClientNotFoundError`, 동일 고객사·정규화 URL 중복은 `DuplicateSiteError`로 구분한다. `uq_sites_client_url` 대상 `ON CONFLICT DO NOTHING`으로 동시 중복도 처리하며, 다른 DB 오류는 숨기지 않는다.
+- `list_sites()`는 필수 `client_id`와 `target_type="site"`로 필터링하고 생성 시각·ID 정렬, limit·offset을 지원한다. 대상 고객사의 메인 사이트가 없으면 빈 튜플이다.
+- `tests/integration/test_site_service.py`에 저장·서버 지정값·true/false/null·롤백·고객사 분리·글 제외·페이지 분할·동시 등록 검증 7개를 추가했다. 임시 PostgreSQL DB에서 전체 **64개 테스트 통과**.
+- 실행: `RUN_POSTGRES_TESTS=1 PYTHONNOUSERSITE=1 PYTHONDONTWRITEBYTECODE=1 /opt/miniconda3/envs/startpress/bin/python -m pytest -q -p no:cacheprovider`. 직접 Python 실행 시에도 사용자 전역 패키지 충돌을 막기 위해 `PYTHONNOUSERSITE=1`을 지정한다.
+- 검증을 위해 Docker Desktop과 기존 PostgreSQL 컨테이너를 시작했다. 테스트는 별도 임시 DB만 생성·삭제하며 개발 DB 데이터는 변경하지 않았다.
+- `app/api/sites.py`를 `app/main.py`에 연결했다. `POST /sites`는 등록 성공 시 201, 고객사 없음은 404, 동일 고객사·URL 중복은 409를 반환한다. `GET /sites`는 UUID `client_id` 필수, limit 1~100(기본 100), offset 0 이상(기본 0)이다. 없는 고객사의 목록은 200과 빈 items다.
+- `tests/integration/test_sites_api.py`에서 실제 앱에 임시 DB 세션을 주입해 등록 후 별도 연결의 DB 저장, 201·404·409·422, 고객사 분리, 글 제외, 페이지 분할, 빈 목록, OpenAPI·`/docs`를 검증했다. 전체 **81개 테스트 통과**로 5단계의 오류 응답·DB 저장 검증도 수행했다.
+- **프론트 화면 구현 완료**: `/`에서 `app/static/index.html`을 제공하며 CSS·JS는 `/static/`으로 제공한다. 프레임워크 추가 없이 기존 FastAPI API를 동일 출처에서 호출한다. 고객사 추가 대화상자, 고객사 선택, 6개 필드 사이트 등록, 고객사별 메인 사이트 목록·페이지 조회, 필드별 오류·성공 안내를 지원한다. 고객사 목록은 API 페이지를 모두 읽어 선택지로 제공한다.
+- 브라우저에서 별도 임시 DB로 고객사 추가→자동 선택, 사이트 등록→목록 갱신, 빈 입력·중복 오류, 390px 모바일 배치를 검증했다. 미리보기용 예시 데이터는 개발 DB에 넣지 않았다. 관리 화면 제공 검증을 포함한 전체 **82개 테스트 통과**, JS 구문 검사 통과. 관련 안내는 `docs/site-admin.md`에 기록했다.
+- **다음 작업**: 팀의 실제 사용 피드백에 따라 입력 흐름을 조정한다. API 기능은 실제 검색엔진 등록까지 수행하지 않으며, 현재는 로컬 DB 저장·조회 범위다.
+- 사이트 스키마·서비스·라우터·테스트는 사이트 API 커밋에, 관리 화면·정적 자산·화면 테스트·사용 안내는 프론트 커밋에 포함한다. 다른 세션의 `app/engines/`와 관련 테스트 및 로컬 ERD 자료는 커밋에서 제외한다. 작성자는 기존 Git 설정을 유지하며 공동 작성자 트레일러와 원격 푸시는 추가하지 않는다.
 
 최종 갱신일: 2026-10-26 (Asia/Seoul)
 프로젝트: StartPress 검색엔진 등록·발행 알림·색인 모니터링 자동화
