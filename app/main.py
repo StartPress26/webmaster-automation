@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app.api.clients import router as clients_router
+from app.api.sites import router as sites_router
 from app.core.database import dispose_database
 
 
@@ -19,6 +20,7 @@ async def lifespan(_: FastAPI) -> AsyncGenerator[None, None]:
 
 app = FastAPI(title="StartPress Admin", lifespan=lifespan)
 app.include_router(clients_router)
+app.include_router(sites_router)
 
 
 @app.get("/health")

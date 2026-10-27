@@ -1,5 +1,16 @@
 # 작업 인계 문서
 
+## 최신 추가 진행 — 2026-10-27
+
+- 메인 사이트 등록 스키마·서비스·라우터·DB 검증을 완료했다. 아래 2026-10-26 기록의 미구현 설명보다 이 기록을 우선한다.
+- `app/schemas/site.py`: SiteCreate·SiteRead·SiteList, HTTP·HTTPS URL 정규화와 UTF-8 2,048바이트 제한, 서버 지정 필드 입력 차단, can_edit_site의 true/false/null 구분.
+- `app/services/site.py`: 고객사 존재 확인 후 target_type="site", parent_site_id=None으로 저장한다. 고객사 키 공유 잠금과 uq_sites_client_url 대상 ON CONFLICT DO NOTHING으로 삭제 경합·동시 중복에 대응한다. 서비스 예외는 고객사 없음과 중복 URL을 구분한다.
+- `app/api/sites.py`를 `app/main.py`에 연결했다. POST /sites는 201·404·409·422를 반환하며 GET /sites는 client_id 필수, limit 1~100(기본 100), offset 0 이상(기본 0)을 지원한다. 목록은 메인 사이트만 반환하며 없는 고객사의 목록은 빈 items다.
+- 스키마 30개, 사이트 서비스 7개, 사이트 API 17개 테스트를 추가했다. 전체 81개 테스트를 임시 PostgreSQL DB에서 검증했다.
+- 검증 명령: `RUN_POSTGRES_TESTS=1 PYTHONNOUSERSITE=1 PYTHONDONTWRITEBYTECODE=1 /opt/miniconda3/envs/startpress/bin/python -m pytest -q -p no:cacheprovider`.
+- API는 고객사·사이트 정보의 DB 저장·조회 범위이며 검색엔진 등록을 실행하지 않는다. 프론트 폼은 이 API와 별도 커밋으로 정리한다.
+- 사용자 요청으로 로컬 main에 커밋한다. 다른 세션의 엔진 구현·관련 테스트, 로컬 ERD 자료는 제외하고 원격 푸시는 하지 않는다. 공동 작성자 트레일러를 추가하지 않는다.
+
 최종 갱신일: 2026-10-26 (Asia/Seoul)
 프로젝트: StartPress 검색엔진 등록·발행 알림·색인 모니터링 자동화
 작업 디렉터리: `/Users/kim-yudam/Desktop/study/sideProject/webmaster_automation`
