@@ -30,3 +30,6 @@ class EngineRegistration(UUIDPrimaryKey, Base):
     )
     last_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     error_message: Mapped[str | None] = mapped_column(Text)
+    # Naver·Bing은 같은 IndexNow 설정을 저장하며, 다른 엔진은 NULL을 사용합니다.
+    indexnow_key: Mapped[str | None] = mapped_column(Text)
+    indexnow_key_location: Mapped[str | None] = mapped_column(Text)

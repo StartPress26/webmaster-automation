@@ -165,3 +165,38 @@ def test_migration_matches_models_and_can_round_trip(migrated_database_url: str)
     command.downgrade(config, "base")
     command.upgrade(config, "head")
     command.check(config)
+
+
+# Google·Brave 등의 기존 등록은 IndexNow 설정 없이 그대로 저장할 수 있습니다.
+@pytest.mark.anyio
+@pytest.mark.parametrize("engine", ["google", "brave"])
+async def test_indexnow_settings_default_to_null(
+    db_session: AsyncSession, sample: SampleSites, engine: str,
+) -> None:
+    row = (await db_session.execute(
+        insert(EngineRegistration)
+        .values(main_site_id=sample.main_id, engine=engine)
+        .returning(EngineRegistration.indexnow_key, EngineRegistration.indexnow_key_location)
+    )).one()
+    assert tuple(row) == (None, None)
+
+
+# 같은 설정을 두 엔진에 저장한 뒤 글의 부모를 통해 조회할 수 있습니다.
+@pytest.mark.anyio
+async def test_indexnow_settings_are_shared_through_main_site(
+    db_session: AsyncSession, sample: SampleSites,
+) -> None:
+    key = "a1b2c3d4e5f67890"
+    location = f"https://example.com/{key}.txt"
+    await db_session.execute(insert(EngineRegistration), tuple(
+        {"main_site_id": sample.main_id, "engine": engine,
+         "indexnow_key": key, "indexnow_key_location": location}
+        for engine in ("naver", "bing")
+    ))
+    rows = (await db_session.execute(
+        select(EngineRegistration.indexnow_key, EngineRegistration.indexnow_key_location)
+        .join(Site, EngineRegistration.main_site_id == Site.parent_site_id)
+        .where(Site.id == sample.page_id)
+    )).all()
+    assert len(rows) == 2
+    assert all(tuple(row) == (key, location) for row in rows)
