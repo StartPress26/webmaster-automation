@@ -26,6 +26,8 @@ def test_site_create_defaults_and_name() -> None:
     assert request.name == "유담 블로그"
     assert request.cms_type is None
     assert request.can_edit_site is None
+    assert request.indexnow_key is None
+    assert request.indexnow_key_location is None
     assert "target_type" not in request.model_dump()
     assert "parent_site_id" not in request.model_dump()
 
@@ -98,3 +100,26 @@ def test_site_read_from_orm_and_list_serialization() -> None:
     assert payload["items"][0]["target_type"] == "site"
     assert payload["items"][0]["parent_site_id"] is None
     assert SiteList(items=()).model_dump(mode="json") == {"items": []}
+
+
+# 키 설정은 두 값을 함께 받고 호스트와 디렉터리 적용 범위를 검사합니다.
+@pytest.mark.parametrize("changes", [
+    {"indexnow_key": "a1b2c3d4"},
+    {"indexnow_key_location": "https://example.com/key.txt"},
+    {"indexnow_key": "bad", "indexnow_key_location": "https://example.com/key.txt"},
+    {"indexnow_key": "a1b2c3d4", "indexnow_key_location": "https://other.test/key.txt"},
+    {"indexnow_key": "a1b2c3d4", "indexnow_key_location": "https://example.com/other/key.txt"},
+    {"indexnow_key": "a1b2c3d4", "indexnow_key_location": "https://example.com/key.txt#fragment"},
+])
+def test_invalid_indexnow_settings(changes: dict[str, object]) -> None:
+    with pytest.raises(ValidationError):
+        make_request(**changes)
+
+
+# 루트와 블로그 폴더의 정상 키 파일 주소를 받고 키를 객체 출력에서 숨깁니다.
+@pytest.mark.parametrize("location", ["https://example.com/key.txt", "https://example.com/blog/key.txt"])
+def test_valid_indexnow_settings(location: str) -> None:
+    request = make_request(indexnow_key="a1b2c3d4", indexnow_key_location=location)
+    assert request.indexnow_key == "a1b2c3d4"
+    assert request.indexnow_key_location == location
+    assert "a1b2c3d4" not in repr(request)

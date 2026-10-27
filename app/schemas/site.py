@@ -1,7 +1,8 @@
 """메인 사이트 등록 요청과 조회 응답입니다."""
 
 from datetime import datetime
-from typing import Literal
+from typing import Literal, Self
+from urllib.parse import urlsplit
 from uuid import UUID
 
 from pydantic import (
@@ -11,14 +12,17 @@ from pydantic import (
     Field,
     StrictBool,
     field_validator,
+    model_validator,
 )
+
+from app.engines.indexnow.schemas import IndexNowKey, IndexNowRequest, IndexNowUrl
 
 
 class SiteCreate(BaseModel):
     """사용자가 입력하는 메인 사이트 정보입니다."""
 
     model_config = ConfigDict(
-        frozen=True, str_strip_whitespace=True, extra="forbid"
+        frozen=True, str_strip_whitespace=True, extra="forbid", hide_input_in_errors=True
     )
 
     client_id: UUID
@@ -27,6 +31,8 @@ class SiteCreate(BaseModel):
     owner_type: Literal["internal", "client"]
     cms_type: str | None = None
     can_edit_site: StrictBool | None = None
+    indexnow_key: IndexNowKey | None = Field(default=None, repr=False)
+    indexnow_key_location: IndexNowUrl | None = None
 
     # HTTP·HTTPS 주소를 검증하고, DB에 저장할 문자열의 바이트 길이를 제한합니다.
     @field_validator("url")
@@ -49,6 +55,21 @@ class SiteCreate(BaseModel):
         if len(normalized.encode("utf-8")) > 2048:
             raise ValueError("URL은 정규화 후 UTF-8 기준 2,048바이트 이하여야 합니다.")
         return normalized
+
+    # 키·파일 주소의 동시 입력과 메인 사이트에 대한 적용 범위를 검증합니다.
+    @model_validator(mode="after")
+    def validate_indexnow_settings(self) -> Self:
+        if self.indexnow_key is None and self.indexnow_key_location is None:
+            return self
+        if self.indexnow_key is None or self.indexnow_key_location is None:
+            raise ValueError("IndexNow 키와 키 파일 주소를 함께 입력하세요.")
+        IndexNowRequest(
+            host=urlsplit(self.url).hostname or "",
+            key=self.indexnow_key,
+            key_location=self.indexnow_key_location,
+            urls=(self.url,),
+        )
+        return self
 
 
 class SiteRead(BaseModel):

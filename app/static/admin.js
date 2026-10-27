@@ -23,7 +23,7 @@ const siteForm = /** @type {HTMLFormElement} */ (element('#site-form'));
 const clientSelect = /** @type {HTMLSelectElement} */ (element('#client-id'));
 const dialog = /** @type {HTMLDialogElement} */ (element('#client-dialog'));
 const clientForm = /** @type {HTMLFormElement} */ (element('#client-form'));
-const fieldTargets = Object.freeze({client_id: ['#client-id', '#client-error'], name: ['#site-name', '#name-error'], url: ['#site-url', '#url-error']});
+const fieldTargets = Object.freeze({client_id: ['#client-id', '#client-error'], name: ['#site-name', '#name-error'], url: ['#site-url', '#url-error'], indexnow_key: ['#indexnow-key', '#indexnow-key-error'], indexnow_key_location: ['#indexnow-key-location', '#indexnow-location-error']});
 
 /** 응답 본문과 상태를 보존해 입력 오류를 화면에 연결합니다. */
 class ApiError extends Error {
@@ -226,13 +226,19 @@ async function submitSite(event) {
   const form = new FormData(siteForm);
   const name = String(form.get('name') ?? '').trim();
   const url = String(form.get('url') ?? '').trim();
+  const indexnowKey = String(form.get('indexnow_key') ?? '').trim() || null;
+  const indexnowLocation = String(form.get('indexnow_key_location') ?? '').trim() || null;
   if (!state.selected) fieldError('client_id', '사이트를 등록할 고객사를 선택해 주세요.');
   if (!name) fieldError('name', '사이트 이름을 입력해 주세요.');
   if (!/^https?:\/\//i.test(url)) fieldError('url', 'http:// 또는 https://로 시작하는 주소를 입력해 주세요.');
+  if (indexnowLocation && !indexnowKey) fieldError('indexnow_key', '키 파일에 들어 있는 키를 함께 입력해 주세요.');
+  if (indexnowKey && !indexnowLocation) fieldError('indexnow_key_location', '키 파일 주소를 함께 입력해 주세요.');
+  if (indexnowKey && !/^[a-fA-F0-9-]{8,128}$/.test(indexnowKey)) fieldError('indexnow_key', '8~128자의 a~f, A~F, 숫자, 하이픈으로 입력해 주세요.');
+  if (indexnowLocation && !/^https?:\/\//i.test(indexnowLocation)) fieldError('indexnow_key_location', 'http:// 또는 https://로 시작하는 키 파일 주소를 입력해 주세요.');
   const invalid = siteForm.querySelector('[aria-invalid="true"]');
   if (invalid instanceof HTMLElement) { invalid.focus(); return; }
   const edit = form.get('can_edit_site');
-  const payload = Object.freeze({client_id: state.selected, name, url, owner_type: form.get('owner_type'), cms_type: String(form.get('cms_type') ?? '').trim() || null, can_edit_site: edit === 'unknown' ? null : edit === 'true'});
+  const payload = Object.freeze({client_id: state.selected, name, url, owner_type: form.get('owner_type'), cms_type: String(form.get('cms_type') ?? '').trim() || null, can_edit_site: edit === 'unknown' ? null : edit === 'true', indexnow_key: indexnowKey, indexnow_key_location: indexnowLocation});
   state = Object.freeze({...state, submitting: true});
   for (const input of siteForm.querySelectorAll('input, select, button')) input.setAttribute('disabled', '');
   element('#submit-site span').textContent = '사이트를 등록하고 있어요…';
@@ -257,7 +263,7 @@ async function submitSite(event) {
           fieldError(field, message);
         }
       }
-      if (!siteForm.querySelector('[aria-invalid="true"]')) notice('#submit-error', '입력값을 확인한 후 다시 등록해 주세요.');
+      if (!siteForm.querySelector('[aria-invalid="true"]')) notice('#submit-error', '입력값을 확인해 주세요. IndexNow 설정은 키와 파일 주소를 함께 입력하고, 파일 주소의 호스트와 적용 경로가 등록할 사이트에 맞는지 확인해 주세요.');
     } else {
       notice('#submit-error', error instanceof Error ? error.message : '등록하지 못했어요. 다시 시도해 주세요.');
     }

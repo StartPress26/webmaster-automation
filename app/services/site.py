@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.client import Client
 from app.models.site import Site
 from app.schemas.site import SiteCreate, SiteRead
+from app.services import engine_registration
 
 
 class SiteClientNotFoundError(Exception):
@@ -34,7 +35,10 @@ async def create_site(session: AsyncSession, data: SiteCreate) -> SiteRead:
         site = (
             await session.scalars(
                 insert(Site)
-                .values(**data.model_dump(), target_type="site", parent_site_id=None)
+                .values(
+                    **data.model_dump(exclude={"indexnow_key", "indexnow_key_location"}),
+                    target_type="site", parent_site_id=None,
+                )
                 # DB가 동시 요청까지 판정하며, 다른 제약 오류는 그대로 전달합니다.
                 .on_conflict_do_nothing(constraint="uq_sites_client_url") # 같은 고객사에 대해서 같은 URL 또 저장 막기
                 .returning(Site)
@@ -42,6 +46,11 @@ async def create_site(session: AsyncSession, data: SiteCreate) -> SiteRead:
         ).one_or_none()
         if site is None:
             raise DuplicateSiteError("이 고객사에 이미 등록된 URL입니다.")
+        if data.indexnow_key is not None and data.indexnow_key_location is not None:
+            await engine_registration.create_indexnow_registrations(
+                session, main_site_id=site.id, key=data.indexnow_key,
+                key_location=data.indexnow_key_location,
+            )
         result = SiteRead.model_validate(site)
     return result
 

@@ -10,9 +10,11 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlalchemy.pool import NullPool
 
 from app.models.site import Site
+from app.models.engine_registration import EngineRegistration
 from app.schemas.client import ClientCreate
 from app.schemas.site import SiteCreate, SiteRead
 from app.services.client import create_client
+from app.services import engine_registration
 from app.services.site import (
     DuplicateSiteError,
     SiteClientNotFoundError,
@@ -135,3 +137,64 @@ async def test_concurrent_duplicate_has_one_winner(
     async with site_sessions() as session:
         ids = (await session.scalars(select(Site.id).where(Site.client_id == site_client_id))).all()
         assert len(ids) == 1
+
+
+# 사이트와 두 엔진 설정이 별도 연결에서도 같은 값으로 조회돼야 합니다.
+async def test_indexnow_settings_are_committed_with_site(
+    site_sessions: async_sessionmaker[AsyncSession], site_client_id: UUID,
+) -> None:
+    async with site_sessions() as session:
+        created = await create_site(session, site_request(
+            site_client_id, indexnow_key="a1b2c3d4",
+            indexnow_key_location="https://example.com/key.txt",
+        ))
+    async with site_sessions() as session:
+        rows = (await session.scalars(select(EngineRegistration).where(
+            EngineRegistration.main_site_id == created.id
+        ).order_by(EngineRegistration.engine))).all()
+        assert tuple(row.engine for row in rows) == ("bing", "naver")
+        assert all(row.indexnow_key == "a1b2c3d4" for row in rows)
+        assert all(row.indexnow_key_location == "https://example.com/key.txt" for row in rows)
+        assert all(row.registration_status == "unknown" for row in rows)
+        assert all(row.last_checked_at is None for row in rows)
+
+
+# 키를 생략한 기존 등록에서는 엔진 설정 행을 생성하지 않습니다.
+async def test_site_without_indexnow_has_no_registration(
+    site_sessions: async_sessionmaker[AsyncSession], site_client_id: UUID,
+) -> None:
+    async with site_sessions() as session:
+        created = await create_site(session, site_request(site_client_id))
+    async with site_sessions() as session:
+        assert (await session.scalars(select(EngineRegistration.id).where(
+            EngineRegistration.main_site_id == created.id
+        ))).all() == []
+
+
+# 엔진 행 저장 후 실패해도 사이트와 엔진 설정 모두 롤백돼야 합니다.
+async def test_registration_failure_rolls_back_site(
+    site_sessions: async_sessionmaker[AsyncSession], site_client_id: UUID,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original = engine_registration.create_indexnow_registrations
+    async with site_sessions() as session:
+        before_ids = frozenset(await session.scalars(select(EngineRegistration.id)))
+
+    # 실제 두 엔진 행을 저장한 뒤 오류를 발생시켜 트랜잭션 경계를 확인합니다.
+    async def fail_after_insert(
+        session: AsyncSession, *, main_site_id: UUID, key: str, key_location: str,
+    ) -> None:
+        await original(session, main_site_id=main_site_id, key=key, key_location=key_location)
+        raise RuntimeError("등록 저장 중 테스트 오류")
+
+    monkeypatch.setattr(engine_registration, "create_indexnow_registrations", fail_after_insert)
+    async with site_sessions() as session:
+        with pytest.raises(RuntimeError, match="테스트 오류"):
+            await create_site(session, site_request(
+                site_client_id, indexnow_key="a1b2c3d4",
+                indexnow_key_location="https://example.com/key.txt",
+            ))
+        assert not session.in_transaction()
+    async with site_sessions() as session:
+        assert (await session.scalars(select(Site.id).where(Site.client_id == site_client_id))).all() == []
+        assert frozenset(await session.scalars(select(EngineRegistration.id))) == before_ids

@@ -5,13 +5,14 @@ from uuid import UUID, uuid4
 
 import pytest
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import insert
+from sqlalchemy import insert, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
 from app.core.database import get_db
 from app.main import app
 from app.models.site import Site
+from app.models.engine_registration import EngineRegistration
 
 pytestmark = [pytest.mark.integration, pytest.mark.anyio]
 
@@ -85,6 +86,45 @@ async def test_site_create_is_committed(
             assert stored.parent_site_id is None
     finally:
         await engine.dispose()
+
+
+# HTTP 요청으로 사이트와 Naver·Bing 설정을 저장하고 응답에는 키를 포함하지 않습니다.
+async def test_api_creates_indexnow_registrations(
+    site_api: AsyncClient, api_client_id: str, migrated_database_url: str,
+) -> None:
+    response = await site_api.post("/sites", json=site_payload(
+        api_client_id, indexnow_key="a1b2c3d4",
+        indexnow_key_location="https://example.com/key.txt",
+    ))
+    assert response.status_code == 201
+    assert "indexnow_key" not in response.json()
+    engine = create_async_engine(migrated_database_url, poolclass=NullPool)
+    try:
+        async with AsyncSession(engine) as session:
+            rows = (await session.scalars(select(EngineRegistration).where(
+                EngineRegistration.main_site_id == UUID(response.json()["id"])
+            ))).all()
+            assert {row.engine for row in rows} == {"naver", "bing"}
+            assert all(row.indexnow_key == "a1b2c3d4" for row in rows)
+            assert all(row.registration_status == "unknown" for row in rows)
+    finally:
+        await engine.dispose()
+
+
+# 설정이 불완전하거나 호스트·경로가 다르면 사이트도 저장하지 않습니다.
+@pytest.mark.parametrize("settings", [
+    {"indexnow_key": "a1b2c3d4"},
+    {"indexnow_key_location": "https://example.com/key.txt"},
+    {"indexnow_key": "a1b2c3d4", "indexnow_key_location": "https://other.test/key.txt"},
+    {"indexnow_key": "a1b2c3d4", "indexnow_key_location": "https://example.com/other/key.txt"},
+])
+async def test_api_rejects_invalid_indexnow_settings(
+    site_api: AsyncClient, api_client_id: str, settings: dict[str, str],
+) -> None:
+    response = await site_api.post("/sites", json=site_payload(api_client_id, **settings))
+    assert response.status_code == 422
+    listing = await site_api.get("/sites", params={"client_id": api_client_id})
+    assert listing.json()["items"] == []
 
 
 # 서비스 예외가 404·409로 변환되고 실패한 요청은 목록을 바꾸지 않습니다.
