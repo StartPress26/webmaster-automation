@@ -14,7 +14,7 @@ from app.models.engine_registration import EngineRegistration
 from app.schemas.client import ClientCreate
 from app.schemas.site import SiteCreate, SiteRead
 from app.services.client import create_client
-from app.services import engine_registration
+from app.services import site as site_service
 from app.services.site import (
     DuplicateSiteError,
     SiteClientNotFoundError,
@@ -176,7 +176,7 @@ async def test_registration_failure_rolls_back_site(
     site_sessions: async_sessionmaker[AsyncSession], site_client_id: UUID,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    original = engine_registration.create_indexnow_registrations
+    original = site_service._save_indexnow_settings
     async with site_sessions() as session:
         before_ids = frozenset(await session.scalars(select(EngineRegistration.id)))
 
@@ -187,7 +187,7 @@ async def test_registration_failure_rolls_back_site(
         await original(session, main_site_id=main_site_id, key=key, key_location=key_location)
         raise RuntimeError("등록 저장 중 테스트 오류")
 
-    monkeypatch.setattr(engine_registration, "create_indexnow_registrations", fail_after_insert)
+    monkeypatch.setattr(site_service, "_save_indexnow_settings", fail_after_insert)
     async with site_sessions() as session:
         with pytest.raises(RuntimeError, match="테스트 오류"):
             await create_site(session, site_request(

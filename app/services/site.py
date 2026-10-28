@@ -7,9 +7,9 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.client import Client
+from app.models.engine_registration import EngineRegistration
 from app.models.site import Site
 from app.schemas.site import SiteCreate, SiteRead
-from app.services import engine_registration
 
 
 class SiteClientNotFoundError(Exception):
@@ -18,6 +18,22 @@ class SiteClientNotFoundError(Exception):
 
 class DuplicateSiteError(Exception):
     """같은 고객사에 동일한 URL이 이미 등록돼 있습니다."""
+
+
+# 같은 IndexNow 설정으로 Naver·Bing 행을 생성하고 커밋은 호출자에게 맡깁니다.
+async def _save_indexnow_settings(
+    session: AsyncSession, *, main_site_id: UUID, key: str, key_location: str,
+) -> None:
+    await session.execute(insert(EngineRegistration), tuple(
+        {
+            "main_site_id": main_site_id,
+            "engine": engine,
+            "registration_status": "unknown",
+            "indexnow_key": key,
+            "indexnow_key_location": key_location,
+        }
+        for engine in ("naver", "bing")
+    ))
 
 
 # 고객사를 확인한 뒤 메인 사이트를 저장하고, 성공하면 트랜잭션을 커밋합니다.
@@ -47,7 +63,7 @@ async def create_site(session: AsyncSession, data: SiteCreate) -> SiteRead:
         if site is None:
             raise DuplicateSiteError("이 고객사에 이미 등록된 URL입니다.")
         if data.indexnow_key is not None and data.indexnow_key_location is not None:
-            await engine_registration.create_indexnow_registrations(
+            await _save_indexnow_settings(
                 session, main_site_id=site.id, key=data.indexnow_key,
                 key_location=data.indexnow_key_location,
             )
