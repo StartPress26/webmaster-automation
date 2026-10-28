@@ -1,0 +1,145 @@
+{
+  "site_url": "https://otteru.vercel.app/",
+  "checked_at_utc": "2026-10-28T12:45:30.937741+00:00",
+  "new_site_full_flow": "미검증: 별도 신규 테스트 사이트와 파일 배포 필요",
+  "site_lookup": {
+    "found": true,
+    "is_verified": true
+  },
+  "existing_site_setup": {
+    "error_code": "response",
+    "message": "Bing API 요청이 실패했습니다.",
+    "http_status": 400
+  },
+  "verification_file": {
+    "http_status": 200,
+    "code_matches": true
+  },
+  "sitemap_file": {
+    "http_status": 200
+  },
+  "inspections": [
+    {
+      "site_url": "https://otteru.vercel.app/",
+      "page_url": "https://otteru.vercel.app/",
+      "index_status": "crawled",
+      "checked_at": "2026-10-28 12:45:41.271420+00:00",
+      "discovery_date": "2026-10-25 07:00:00+00:00",
+      "last_crawl_time": "2026-10-25 06:38:27+00:00",
+      "http_status": 0,
+      "is_page": true,
+      "document_size": 0
+    },
+    {
+      "site_url": "https://otteru.vercel.app/",
+      "page_url": "https://otteru.vercel.app",
+      "index_status": "crawled",
+      "checked_at": "2026-10-28 12:45:41.929452+00:00",
+      "discovery_date": "2026-10-25 07:00:00+00:00",
+      "last_crawl_time": "2026-10-25 06:38:27+00:00",
+      "http_status": 0,
+      "is_page": true,
+      "document_size": 0
+    }
+  ],
+  "operations": [
+    {
+      "operation": "GetUserSites",
+      "http_status": 200
+    },
+    {
+      "operation": "GetUserSites",
+      "http_status": 200
+    },
+    {
+      "operation": "SubmitFeed",
+      "http_status": 400
+    },
+    {
+      "operation": "GetUserSites",
+      "http_status": 200
+    },
+    {
+      "operation": "GetUrlInfo",
+      "http_status": 200
+    },
+    {
+      "operation": "GetUrlInfo",
+      "http_status": 200
+    }
+  ],
+  "diagnosis_GetFeeds": {
+    "http_status": 200,
+    "api_error_code": null,
+    "feeds": [
+      {
+        "LastCrawled": "/Date(1792910860000)/",
+        "Status": "Success",
+        "Submitted": "/Date(1792910853683)/",
+        "Url": "https://otteru.vercel.app/sitemap.xml"
+      }
+    ],
+    "field_names": [
+      "Compressed",
+      "FileSize",
+      "LastCrawled",
+      "Status",
+      "Submitted",
+      "Type",
+      "Url",
+      "UrlCount",
+      "__type"
+    ]
+  },
+  "diagnosis_SubmitFeed": {
+    "http_status": 400,
+    "api_error_code": 8
+  },
+  "sitemap_page_candidates": [
+    "https://otteru.vercel.app/yudams-blog",
+    "https://otteru.vercel.app/데이터의-부호화와-발전-rpc에서-분산-액터까지",
+    "https://otteru.vercel.app/rag-고도화2--벤치마크-생성",
+    "https://otteru.vercel.app/데이터의-부호화와-발전-데이터베이스에서-웹-서비스까지",
+    "https://otteru.vercel.app/rag-고도화1--데이터셋-구축"
+  ],
+  "additional_page_inspection": {
+    "site_url": "https://otteru.vercel.app/",
+    "page_url": "https://otteru.vercel.app/yudams-blog",
+    "index_status": "unknown",
+    "checked_at": "2026-10-28 12:46:16.857879+00:00",
+    "discovery_date": null,
+    "last_crawl_time": null,
+    "http_status": 0,
+    "is_page": true,
+    "document_size": 0
+  },
+  "submit_feed_error_detail": {
+    "http_status": 400,
+    "api_error_code": 8,
+    "message": "ERROR!!! Error occured while trying to submit the sitemap"
+  },
+  "article_inspection": {
+    "site_url": "https://otteru.vercel.app/",
+    "page_url": "https://otteru.vercel.app/데이터의-부호화와-발전-rpc에서-분산-액터까지",
+    "index_status": "unknown",
+    "checked_at": "2026-10-28 12:46:53.647707+00:00",
+    "discovery_date": null,
+    "last_crawl_time": null,
+    "http_status": 0,
+    "is_page": true,
+    "document_size": 0
+  },
+  "unit_tests": {
+    "passed": 233,
+    "real_network": false
+  },
+  "live_validation_summary": {
+    "site_and_ownership": "passed",
+    "verification_file_matches": "passed",
+    "existing_sitemap_status": "Success",
+    "sitemap_resubmission": "failed: HTTP 400 / ErrorCode 8; cause unresolved",
+    "main_page_inspection": "passed: crawled",
+    "article_inspection": "passed: unknown",
+    "new_site_registration_and_resume": "not tested"
+  }
+}
