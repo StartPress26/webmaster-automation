@@ -1,8 +1,162 @@
 # 작업 인계 문서
 
-## 현재 세션 인계 요약 — IndexNow / 2026-10-27
+## 현재 세션 인계 요약 — 공통 로그인 스키마·세션 저장소 / 2026-10-29
 
-이 절과 마지막 상태가 아래의 과거 스냅샷보다 우선한다. Google 세션의 구현·보류 기록은 그대로 보존한다.
+**새 세션은 이 절부터 읽는다.** 아래 과거 기록의 브랜치·미구현·검증 상태보다 이 절과 맨 아래 마지막 상태가 우선한다. 사용자는 오늘 작업을 마무리하며 인계 문서 작성 후, 아래 계획의 **1·4·5번을 하나의 커밋으로 묶어 작업 브랜치에 push하도록 승인**했다. 네이버 probe·AI 탐색 실험은 제외하고 테스트는 재실행하지 않는다. 공통 저장소 단위 테스트 파일은 4번 범위에 포함한다.
+
+### 사용자 의도와 확정한 구조
+
+- 사용자는 개발 개념과 필드를 하나씩 이해하며 진행하기를 원한다. 한국어로 간결하게 설명하고, 요청하지 않은 다음 기능까지 구현하지 않는다.
+- 여러 사이트에서 사용할 공통 브라우저 로그인 계층을 `app/browser/`에 만든다. 네이버·Google·Bing·Brave 중 브라우저 로그인이 필요한 기능은 같은 저장소를 재사용할 수 있다. 기존 공식 API·OAuth 인증까지 교체하는 작업은 아니다.
+- Python Playwright를 직접 사용한다. Playwright MCP가 필수인 구조가 아니며 사용자가 브라우저를 미리 열 필요도 없다.
+- `runtime.py` → `browser_manager.py` 분리를 논의했으나 **지금은 별도 관리 파일을 만들지 않고 login_agent.py에서 브라우저 수명까지 관리**하기로 했다.
+- 엔진이 로그인 에이전트로 로그인된 `Page`를 얻고, 같은 `Page`를 고정 조회 코드가 사용한다. 조회가 끝난 뒤 브라우저가 종료되어야 한다. `async with login_agent.authenticated_page(...) as page:`는 설명용 구상이며 아직 실제 API가 아니다.
+- 로그인 완료는 AI의 선언이 아니라 사이트별 코드로 검증한다. 주소·허용 호스트·성공 판정·인증정보 입력·캡차 제출 규칙은 사이트별로 제공한다.
+- 제품의 공통 코드가 실험용 `browser_bot_test`나 루트 `naver_probe.py`를 import하지 않도록 한다. 서비스용 Playwright·AI HTTP 처리는 비동기로 작성하고 `input()`으로 요청을 막지 않는다.
+
+### 완료된 작업
+
+- [x] `app/browser/` 파일 생성. **schemas.py와 session.py는 구현 완료**, `__init__.py`, `model_client.py`, `login_agent.py`는 아직 0바이트다.
+- [x] Pydantic 불변 스키마 3개 구현·검증·보안 검토·최종 코드 리뷰 완료. 사용자에게 완료 보고했다.
+- [x] `SessionStore` 구현·테스트·보안 검토·최종 코드 리뷰 완료. 사용자에게 완료 보고했다.
+- [x] 독립 AI 브라우저 실험에서 비밀번호 수정 후 캡차 확인·재로그인·서치어드바이저 콘솔·대상 사이트 진입에 성공했다. 제품 공통 로그인 에이전트 구현 완료를 뜻하지 않는다.
+
+### 스키마 — app/browser/schemas.py
+
+| 타입 | 필드 |
+| --- | --- |
+| `LoginPolicy` | `start_url`, `allowed_hosts: tuple[str, ...]`, `goal`, `max_steps=25`, `max_login_attempts=3`, `timeout_seconds=180.0` |
+| `LoginResult` | `status: authenticated/requires_user/failed`, `reason`, `steps=0`, `login_attempts=0` |
+| `SessionKey` | `site`, `account_id` |
+
+- 세 모델 모두 `frozen=True`, `extra='forbid'`, `hide_input_in_errors=True`다.
+- 정책은 기본 포트 HTTPS·인증정보 없는 시작 주소, 정확한 호스트 목록, 시작 호스트의 허용 목록 포함, 비공백 목표, 유한한 양수 시간과 양수 횟수를 검증한다.
+- `goal`은 프롬프트의 일부이며 로그인 성공 판정 함수와 다르다. 인증정보 입력 함수·성공 판정 함수는 후속 사이트별 인터페이스로 전달한다.
+- `SessionKey.site`는 DB 사이트 UUID가 아니라 `naver` 같은 로그인 서비스 식별자다. `account_id`는 로그인 ID·비밀번호 대신 계정별 내부 식별자다. 두 필드 모두 ASCII 영숫자·하이픈·밑줄, 최대 64자로 제한한다.
+- `LoginResult.reason`은 안전한 사유를 받는 계약이며 스키마 자체가 비밀값을 자동 마스킹하지는 않는다. AI 동작 스키마는 아직 제품 코드에 추가하지 않았다.
+
+### 세션 저장소 — app/browser/session.py
+
+- `SessionStore(root_dir=...)`는 불변 dataclass이며 기본 저장 위치는 프로젝트의 `.secrets/browser_sessions/{site}/{account_id}.json`이다.
+- `load(key) -> StorageState | None`: 파일이 없으면 None, 손상·접근 오류는 예외로 구분한다.
+- `save(key, state) -> None`: 최소 cookies/origins 목록 구조를 검증하고 추가 필드(IndexedDB 등)는 보존한다. 같은 폴더의 임시 파일을 쓴 뒤 원자적으로 교체한다.
+- `delete(key) -> None`: 해당 계정 파일만 삭제하며 파일이 없어도 정상 종료한다.
+- `SessionStoreError.code`는 `unsafe_path`, `invalid_state`, `io`다. 인증값이나 원본 JSON·OS 예외를 메시지에 넣지 않는다.
+- 전용 폴더는 0700, 파일은 0600. 심볼릭 링크·하드 링크·일반 파일이 아닌 경로를 거부하고 읽을 때 `O_NOFOLLOW`를 사용한다. 저장 실패 시 기존 파일을 유지하고 임시 파일을 정리한다.
+- 리뷰에서 단독 유니코드 서로게이트 저장 문제를 발견해 `ensure_ascii=True`로 보존하도록 수정하고 회귀 테스트를 추가했다.
+- **인증 상태 보관만 담당**한다. JSON으로 저장해도 세션의 유효기간은 연장되지 않는다. 서버 측 로그인 유효성은 후속 로그인 에이전트가 확인해야 한다.
+- 현재 파일 I/O는 동기식이다. 비동기 에이전트에 연결할 때 필요하면 `asyncio.to_thread`로 호출한다. 동일 계정의 동시 로그인·저장은 호출자가 조정한다. 저장소 상위 디렉터리는 신뢰하는 로컬 프로세스가 관리하는 전제이며 다중 프로세스 잠금은 아직 없다.
+- 실제 로그인 브라우저에서 추출한 상태를 이 새 저장소로 저장·복원하는 통합은 아직 구현하지 않았다.
+
+### 실제 네이버 실험의 최종 결과
+
+- 대상은 공개 사이트 `https://otteru.vercel.app/`. 학교 게이트웨이는 `https://factchat-cloud.mindlogic.ai/v1/gateway`, 키 변수명은 `KONKUK_AI_API_KEY`. 키·ID·비밀번호 값은 문서에 적지 않는다.
+- 사용자 지정 `kupi/src/generate.ts`에서 호출 방식을 확인했다. 실험 기본 모델은 `deepseek-v4.1-flash`, Chat Completions를 사용한다. `--model kimi-k3` 등을 지원하고 GPT는 Responses를 사용한다.
+- 캡차 전용 화면에는 ID/PW 칸이 없고 `input#captcha`와 `확인` 버튼이 있다. 프롬프트가 캡차 뒤 `login`을 다시 호출하던 버그를 `확인` click으로 수정했다. 폼 목적지는 `/nidlogin.rcaptcha`다.
+- 캡차 확인 뒤 네이버가 로그인 화면으로 돌려보내며 “다시 로그인해 주세요.”를 표시하는 흐름을 실제 확인했다. 이후 계정 오류는 사용자가 잘못된 비밀번호를 확인하고 수정한 뒤 해소됐다. 이전 추측만으로 봇 차단·캡차 오답을 단정하지 않는다.
+- 최신 성공 실험은 18단계, 콘솔 접속 확인, 대상 사이트 선택, 마지막 동작 `done`이었다. 최종 모델 보고는 “수집 정보가 없습니다”, 노출/클릭·사이트 진단 정보 없음이었다. **색인 수 0이나 미색인 확정으로 해석하지 않는다.**
+- 모델이 요약·수집 현황 사이를 반복 이동하기도 해 제품에서는 로그인만 AI로, 이후 조회는 고정 Playwright 코드로 구현하기로 했다.
+- 로컬 `.secrets/browser_bot_test/trace.json`, `result.json`은 최신 실행으로 덮어쓰는 민감 자료다. 커밋하지 않는다. 공개 도메인 일부가 로그인 ID와 겹쳐 `[REDACTED]`로 보일 수 있다.
+- 사용자가 실험 중단을 요청한 이후 실제 네이버 접속·유료 AI 호출은 다시 하지 않았다. 이번 인계에서도 실행하지 않았다. 새 SessionStore와 실제 로그인봇은 아직 연결되지 않았다.
+
+### 검증 상태
+
+- `schemas.py`: 정상 생성·기본값·잘못된 입력·불변성 **17개 검사 통과**, 최종 코드 리뷰 발견 사항 없음. 전용 pytest 파일은 아직 없다.
+- 새 `tests/test_browser_session.py`는 **25개 통과**. 기존 `test_naver_probe.py` 비브라우저 6개와 합쳐 최근 실행은 **31 passed, 2 deselected**다.
+- 실행 명령: `/private/tmp/webmaster-browser-test-venv/bin/python -m pytest tests/test_browser_session.py tests/test_naver_probe.py -q -k 'not login_button'`. 제외된 2개는 기존 실제 Chromium 버튼 테스트다.
+- 독립 `browser_bot_test/test_agent.py`는 마지막 코드 변경 후 **28 passed**였다. 기본 pytest testpaths 밖이므로 별도로 경로를 지정해야 한다. 이번 인계에서 재실행한 수치가 아니다.
+- 프로젝트 전체·PostgreSQL 통합 테스트는 이번 공통 browser 작업에서 다시 실행하지 않았다. 과거 전체 284 passed 등의 수치를 현재 전체 검증으로 해석하지 않는다.
+- `git diff --check`는 수정한 코드·테스트 범위에서 통과했다. 이번 인계에서는 문서만 갱신하며 테스트를 다시 돌리지 않았다.
+
+### 다음에 할 일
+
+1. 사용자가 구현 재개를 요청하면 `model_client.py`의 입력·출력·설정 방식을 간결하게 설명하고 다음 범위를 정한다. 스키마와 세션 저장소를 미완료로 되돌아가 재작성할 필요가 없다.
+2. 비동기 AI 클라이언트를 구현한다. 학교 API 주소·모델·키는 설정에서 읽으며 네이버 로그인 선택자나 인증정보를 하드코딩하지 않는다.
+3. 공통 `login_agent.py`를 구현한다. 브라우저 수명, 저장 상태 복원, 실제 로그인 유효성 확인, 필요 시 AI 실행, 성공 후 저장, 같은 Page 제공을 연결한다. 직접 인증이 필요하면 requires_user 결과를 반환한다.
+4. 네이버 어댑터로 성공 판정·로컬 인증정보 입력·캡차 선택자를 제공해 첫 로그인과 다음 실행의 세션 재사용을 검증한다. 성공 선언만 믿거나 CAPTCHA와 일반 로그인을 혼동하지 않는다.
+5. 네이버 엔진의 고정 색인 현황 조회·서비스·DB/API 연결은 별도 단계로 진행한다. `app/engines/naver.py`는 현재 IndexNowClient 주입 구조만 있고 `app/services/index_status.py`는 빈 파일이다.
+
+### 커밋 범위 — 사용자 최종 승인
+
+기준 커밋은 **78819fa — [feat] Bing 등록 및 URL 수집 상태 조회 구현**이며, 현재 브랜치는 **codex/browser-login-foundation**이다. 아래 표는 처음 제안한 분할 계획이고, 최종적으로 **1·4·5번만 한 커밋으로 묶어 push**한다. 2·3번은 로컬에 남긴다. 커밋 메시지는 `[feat] 공통 브라우저 로그인 스키마와 인증 상태 저장소 구현`을 사용한다.
+
+| 순서 | 커밋 메시지 제안 | 포함 파일 |
+| --- | --- | --- |
+| 1 | `[chore] 브라우저 자동화를 위한 Playwright 의존성 추가` | `pyproject.toml`, `uv.lock` |
+| 2 | `[feat] 네이버 로그인과 인증 상태 검증 도구 추가` | `naver_probe.py`, `tests/test_naver_probe.py` |
+| 3 | `[test] AI 브라우저 탐색 실험과 검증 기록 추가` | `browser_bot_test/`의 소스·테스트·문서·`.env.example` |
+| 4 | `[feat] 공통 로그인 스키마와 인증 상태 저장소 구현` | `app/browser/` 5개 파일, `tests/test_browser_session.py` |
+| 5 | `[docs] 브라우저 로그인 작업 인계 문서 갱신` | `docs/HANDOFF.md` |
+
+- 3번 실험은 루트 `naver_probe.py`를 사용하므로 2번 뒤에 둔다. 4번은 Playwright 타입을 사용하므로 1번에 의존한다. 빈 login_agent/model_client 파일은 사용자가 요청한 구조이며 구현 완료로 설명하지 않는다.
+- 이전에 사용자가 네이버 엔진 초안을 커밋하지 않도록 요청한 기록을 보존한다. **`app/engines/naver.py`, 빈 `app/engines/brave.py`, 빈 `app/services/index_status.py`, 로컬 ERD 자료 `outputs/db-erd-prompt.txt`, `outputs/startpress-db-erd.png`는 이 계획에서 제외**한다.
+- `.env`, `.secrets/`, 인증 JSON·토큰·쿠키, 임시 환경, 캐시는 제외한다. `git add .`로 일괄 스테이징하지 않는다.
+- 실제 커밋 전에 변경 범위·비밀값 포함 여부·필요 검증을 확인한다. 프로젝트 규칙대로 한국어 `[타입] 제목`, Git에 설정된 작성자 유지, **Co-Authored-By 트레일러 없음**. main/master 직접 push 금지.
+- 최종 승인 범위는 의존성 2개 파일, app/browser/ 5개 파일, tests/test_browser_session.py, docs/HANDOFF.md다. 새 테스트 실행은 생략하며 위 테스트 수치는 이전 실행 결과다. 최종 커밋·원격 상태는 `git log -1`과 브랜치 upstream으로 확인한다.
+
+### 관련 파일·환경
+
+- `app/browser/schemas.py`: 공통 정책·결과·세션 키. `app/browser/session.py`: 인증 상태 파일 저장소.
+- `tests/test_browser_session.py`: 저장·읽기·삭제·오류·파일 권한·계정 분리·서로게이트 보존 검증.
+- `app/browser/model_client.py`, `login_agent.py`: 다음 구현 대상, 현재 빈 파일.
+- `browser_bot_test/agent.py`, `README.md`, `INVESTIGATION.md`, `test_agent.py`: 동기식 독립 실험 자료. 성공 후 최신 결론은 이 절이 우선한다.
+- `naver_probe.py`, `tests/test_naver_probe.py`: 기존 네이버 로그인·비공개 파일 검증 참고 자료.
+- `pyproject.toml`, `uv.lock`: Playwright 의존성이 포함된 미커밋 변경.
+- 검증용 임시 환경은 `/private/tmp/webmaster-browser-test-venv/`다. 다음 세션에 남아 있다고 보장하지 않는다. 프로젝트 영구 환경으로 합의한 것이 아니며 기존 Miniconda 안내는 하단과 `docs/environment.md`를 참고한다.
+- 기존 미커밋 작업은 보존한다. 최종 승인한 파일만 명시적으로 스테이징·커밋·push하고, 네이버 probe·AI 실험·엔진 초안·ERD 자료는 로컬에 남긴다.
+
+## 과거 세션 인계 요약 — 서비스 정리·발행 알림 / 2026-10-28
+
+이 절은 2026-10-28 당시 기록이다. 최신 브라우저 작업·브랜치·검증 상태는 최상단의 2026-10-29 요약을 따른다. Google의 구현·보류 요청과 기존 실사용 검증 기록은 보존한다.
+
+### 완료된 작업과 커밋
+
+- [x] `bf1ae01` — `[refactor] IndexNow 설정 저장을 사이트 서비스로 통합`
+  - `services/engine_registration.py`의 `create_indexnow_registrations()`를 `services/site.py`의 내부 함수 `_save_indexnow_settings()`로 이동하고 기존 서비스 파일을 삭제했다.
+  - 이 함수는 메인 사이트에 사용할 Naver·Bing 키 설정 행을 저장한다. 새 글 등록이나 외부 IndexNow 제출 함수가 아니다.
+  - `create_site()`의 같은 세션·트랜잭션에서 두 행을 저장하며, 오류 시 사이트까지 롤백하는 동작을 유지했다. 통합 테스트의 오류 주입 위치도 변경했다.
+  - `models/engine_registration.py`는 유지했다. `EngineRegistration` / `engine_registrations`와 이름이 일관되고 엔진별 등록·소유 확인 상태와 설정을 나타내므로 모델까지 합치거나 이름을 변경하지 않는다. DB 구조 변경·마이그레이션은 없다.
+- [x] `d43823e` — `[feat] 공통 IndexNow 발행 알림 서비스 구현`
+  - `services/publication.py`에 `async notify_published_urls(request: IndexNowRequest, *, client: IndexNowClient) -> IndexNowResult` 구현.
+  - 기존 클라이언트의 `submit(request)`를 한 번 await하고 결과·통신 예외를 그대로 전달한다. 검증·URL 중복 제거는 기존 요청 스키마를 재사용한다.
+  - 클라이언트 생성·종료는 호출자가 담당한다. 자동 재시도나 Naver·Bing별 중복 전송은 하지 않는다.
+  - **현재는 검증된 요청을 전송하는 진입점만 구현했다. 새 글 DB 저장, 부모 설정 조회, API·화면 연결, 제출 결과 DB 저장은 아직 없다.**
+- [x] `NaverEngine` 불변 구조를 `app/engines/naver.py`에 작성했으나, 사용자가 Naver를 커밋하지 말라고 요청하여 미추적 상태로 남겼다. `IndexNowClient`를 주입받는 구조만 있고 알림 메서드는 없다.
+- [x] `app/services/index_status.py`를 빈 파일로 생성했다. 이 파일도 커밋하지 않았다.
+
+### 합의한 서비스 역할
+
+| 파일 | 최종적으로 담당할 업무 | 현재 구현 범위 |
+| --- | --- | --- |
+| `client.py` | 고객사 관리 | 생성·목록 조회 |
+| `site.py` | 메인 사이트 저장·검색엔진 등록·소유 확인 | 사이트 생성·목록과 IndexNow 설정 저장. 실제 엔진 등록 연결은 후속 |
+| `publication.py` | 개별 글 저장·발행 알림 | 검증된 요청으로 공통 IndexNow 알림만 구현 |
+| `index_status.py` | 상태 조회·결과 저장 | 빈 파일 |
+
+- 호출 방향은 API → 서비스 → 엔진/클라이언트다. 엔진이 서비스를 호출하지 않는다.
+- 발행 알림은 NaverEngine·BingEngine을 거치지 않고 공통 IndexNowClient로 한 번 전송한다. 사이트 등록·조회 등 엔진 전용 기능은 해당 엔진이 담당한다.
+- DB 저장과 외부 요청은 하나의 DB 트랜잭션으로 함께 롤백할 수 없다. 후속 연결 시 글 저장 후 제출 오류를 처리하는 계약을 먼저 정한다.
+- 사용자는 학습을 위해 기능을 단계별로 설명하고 진행하는 방식을 선호한다. Naver 1번·3번은 이번 세션에서 구현하지 않았으며 브라우저 자동화도 시작하지 않았다.
+
+### 검증 결과
+
+- 서비스 통합: `test_site_service.py`·`test_sites_api.py` PostgreSQL 통합 **32 passed**, `test_site_schemas.py`·`test_admin_page.py` **39 passed**. 관련 범위 합계 71개이며 전체 테스트 수가 아니다.
+- 발행 알림: `test_publication_service.py`·`test_indexnow_client.py`·`test_indexnow_schemas.py` **72 passed**. 공통 엔드포인트의 단일 전송, 중복 URL 제거, 200·202·429·500 응답, 통신 오류 시 재시도 없음·예외 전파와 클라이언트 수명을 검증했다.
+- 각 변경의 코드 리뷰 발견 사항 없음. `git diff --check` 통과. 이번 세션에 실제 외부 IndexNow 제출은 하지 않았다.
+- 로컬 Docker Desktop과 기존 PostgreSQL 컨테이너를 시작해 검증했다. 통합 테스트는 전용 임시 DB를 생성·삭제했고 개발 데이터는 변경하지 않았다. 관리 웹 서버 실행 여부는 이번 세션에서 확인하지 않았다.
+
+### 다음 작업과 보존 사항
+
+1. 사용자의 다음 단계 요청에 맞춰 개별 글 입력 스키마·DB 저장, 부모 메인 사이트 설정 조회와 발행 알림 연결을 구현한다. 부모 확인·호스트/경로 검증·키 누락 및 Naver/Bing 설정 불일치는 전송 전에 처리한다.
+2. 제출 결과의 저장 의미·실패 처리·재시도 계약을 정한 뒤 API와 화면을 연결한다. IndexNow 접수를 엔진별 수집·색인 완료로 저장하지 않는다.
+3. 기존 사이트의 키 설정 추가·변경, Google·Bing 등록 및 상태 조회 서비스 연결, 워커·예약은 여전히 후속 작업이다. Google 신규 사이트 전체 실사용 검증의 보류 요청은 유지한다.
+- 현재 브랜치 `codex/publication-service`, HEAD `d43823e`. 이번 작업은 `main`의 `3198962`에서 분기했고, 요청받은 위 두 커밋만 생성했다. 원격 push는 하지 않았다.
+- 미추적 보존 대상: `app/engines/naver.py`, `bing.py`, `brave.py`, `app/services/index_status.py`, `tests/test_bing_engine.py`, `outputs/db-erd-prompt.txt`, `outputs/startpress-db-erd.png`. Bing 작업·테스트는 다른 작업 내용이므로 임의 수정·일괄 커밋하지 않는다.
+- 이번 인계 문서 갱신은 아직 커밋하지 않았다. 추가 커밋·push는 별도 요청 범위에 따른다.
+
+## 과거 세션 인계 요약 — IndexNow / 2026-10-27
+
+아래는 2026-10-27 당시 기록이다. 현재 서비스 파일 위치·브랜치·진행 상황은 최상단의 2026-10-28 요약을 따른다.
 
 ### 완료된 작업
 
@@ -101,14 +255,14 @@
 - **남은 작업**: 개별 글 등록 API·화면, 엔진 결과의 DB 저장·조회 연결, 주기적 상태 확인. 구체적인 우선순위는 아래 다음 작업 절을 따른다. API 기능은 실제 검색엔진 등록까지 수행하지 않으며, 현재는 로컬 DB 저장·조회 범위다.
 - 사이트 스키마·서비스·라우터·테스트는 사이트 API 커밋에, 관리 화면·정적 자산·화면 테스트·사용 안내는 프론트 커밋에 포함했다. 다른 세션의 `app/engines/`와 관련 테스트 및 로컬 ERD 자료는 커밋에서 제외한다. 작성자는 기존 Git 설정을 유지하며 공동 작성자 트레일러와 원격 푸시는 추가하지 않는다.
 
-최종 갱신일: 2026-10-27 (Asia/Seoul)
+최종 갱신일: 2026-10-28 (Asia/Seoul)
 프로젝트: StartPress 검색엔진 등록·발행 알림·색인 모니터링 자동화
 작업 디렉터리: `/Users/kim-yudam/Desktop/study/sideProject/webmaster_automation`
 
 ## 가장 먼저 확인할 사항
 
 1. **개발 환경은 Miniconda `startpress`다. `.venv`를 만들거나 `uv sync`·`uv run`을 실행하지 않는다.** 직접 Python을 실행할 때도 `PYTHONNOUSERSITE=1`을 지정한다.
-2. **현재 브랜치는 codex/indexnow-integration**이다. Google 구현 `1765f5b`를 기준으로 승인한 IndexNow 변경을 네 커밋으로 나눴다. main/master 직접 push 금지는 유지하며 이번에도 원격 push는 하지 않았다.
+2. **현재 브랜치는 codex/publication-service**, HEAD는 `d43823e`다. 서비스 통합·공통 발행 알림 두 커밋을 생성했다. main/master 직접 push 금지를 유지하며 원격 push는 하지 않았다.
 3. DB 4개 테이블, 고객사·메인 사이트 등록/목록 API, 고객사 추가·사이트 등록 관리 화면까지 완료했다. 개별 글 등록과 엔진 결과의 DB 연결, 워커·스케줄러는 아직 없다.
 4. **Google 구현은 별도 세션에서 `1765f5b`로 커밋했다. IndexNow는 현재 작업 브랜치의 커밋으로 정리했다.** 이 문서의 Google 진행 절과 다른 세션의 변경을 보존한다. `pyproject.toml`·`uv.lock`, 엔진 관련 미추적 테스트도 임의로 되돌리거나 전체 add로 커밋하지 않는다.
 5. 실제 색인 완료와 API 요청 성공은 별개다. 저장된 결과는 각 호출 당시 관측이다. DB 최신 상태 4개 테이블만으로 작업·재시도·관측 이력이 관리되지는 않는다.
@@ -494,15 +648,18 @@ Notion은 요구사항·설계 자료다. 실제 구현·적용 여부는 이 �
 
 ## 마지막 상태
 
-- 갱신일: **2026-10-27 / Asia/Seoul**.
+- 갱신일: **2026-10-29 / Asia/Seoul**.
 - 작업 디렉터리: `/Users/kim-yudam/Desktop/study/sideProject/webmaster_automation`.
-- 브랜치: **codex/indexnow-integration**, 기준 커밋 **1765f5b** — Google 구현. 마지막 기능 커밋은 **383965f**이고, 이후 이 파일을 담은 문서 커밋을 git log로 확인한다.
-- 사용자가 네 커밋 구성을 승인했다. 기능 세 커밋과 검증 보고서·인계 문서 커밋으로 정리했으며 원격 push는 하지 않았다.
+- 브랜치: **codex/browser-login-foundation**. 기준 커밋은 **78819fa — [feat] Bing 등록 및 URL 수집 상태 조회 구현**이며 이번 통합 커밋은 `git log -1`로 확인한다.
+- 최종 사용자 요청으로 의존성·공통 browser·단위 테스트 파일·인계 문서를 한 커밋으로 묶어 작업 브랜치에 push한다. 나머지 로컬 변경은 제외하며 테스트는 다시 실행하지 않는다.
 - 실행 환경: **Miniconda startpress**, 직접 실행 시 **PYTHONNOUSERSITE=1**, .venv 사용 금지.
+- 이번 브라우저 실험의 별도 임시 검증 환경: `/private/tmp/webmaster-browser-test-venv/`. 프로젝트의 영구 실행 환경으로 합의한 것은 아니다.
 - DB: **PostgreSQL 18.6 / Alembic 0002(head)**. 테스트 고객사·블로그와 Naver·Bing 키 설정이 저장돼 있다.
-- 마지막 전체 검증: PostgreSQL 통합 포함 **284 passed**. 이후 실사용 테스트는 별도이며 반복 제출하지 않는다.
+- 과거 전체 검증: PostgreSQL 통합 포함 **284 passed**. 이번 세션은 서비스 통합 관련 32개+39개, 발행 알림·IndexNow 관련 72개를 각각 검증했다. 현재 전체 테스트를 다시 실행한 수치는 아니다.
+- 위 서비스 테스트 수치는 이전 세션 기록이다. 브라우저 실험은 **28 passed**, 공통 스키마는 **17개 검사·최종 리뷰 완료**, 인증 상태 저장소는 기존 probe와 합쳐 **31 passed, 2 deselected**다. 스키마 전용 pytest 파일과 프로젝트 전체 재검증은 아직 없다.
 - 실제 IndexNow: **2026-10-27 19:09 KST, 메인 URL 1개·1회 제출·HTTP 200 accepted**. 개별 엔진의 수집·색인 완료를 뜻하지 않는다.
-- 다음 작업: 기능 구현은 기존 사이트의 키 설정 변경 → DB 기반 제출 서비스·API·화면 버튼 → 결과 저장 흐름 순서다.
+- 실제 네이버 실험: 비밀번호 수정 후 로그인·콘솔·대상 사이트 진입 성공. 최종 모델 보고는 수집 정보 없음이며 색인 수 0·미색인 확정이 아니다. 공통 SessionStore 구현은 완료했지만 실제 로그인봇과의 저장·복원 연결은 아직 없다.
+- 다음 작업: 공통 `model_client.py`를 설명하고 구현한 뒤 `login_agent.py`에서 브라우저 수명·인증 상태 복원·로그인·같은 Page 제공을 연결한다. 스키마와 session.py는 완료 상태다. 과거 후속 작업을 사용자의 현재 요청보다 앞서 실행하지 않는다.
 - 보존: Google 세션 기록·기존 공개 검증 파일·로컬 ERD 자료. .env·토큰은 커밋·출력하지 않는다.
 
-새 세션에서: **‘docs/HANDOFF.md의 현재 세션 인계 요약을 읽고 이어서 진행해줘. Google은 1765f5b에 커밋됐고 IndexNow 클라이언트·설정 저장은 codex/indexnow-integration 브랜치에 커밋했어. 실제 Vercel 블로그 제출은 HTTP 200이었으며 기록된 URL을 테스트 목적으로 반복 제출하지 마. 추가 변경과 원격 push는 별도 요청 범위에 맞춰 진행해.’**
+새 세션에서: **‘docs/HANDOFF.md 최상단의 2026-10-29 요약을 읽고 이어서 진행해줘. 공통 로그인봇을 app/browser에 만드는 중이며 스키마 3개와 SessionStore는 구현·검증·리뷰 완료야. 다음은 model_client.py, 그다음 login_agent.py이고 두 파일은 아직 비어 있어. browser_manager.py는 지금 별도로 만들지 않기로 했어. 기존 미커밋 작업을 보존하고 기능은 한 단계씩 설명해줘. 최종 승인된 의존성·공통 browser·인계 문서는 한 커밋으로 작업 브랜치에 push하는 범위야. 네이버 probe와 AI 실험 등 제외한 로컬 파일을 추가 커밋하지 마.’**
