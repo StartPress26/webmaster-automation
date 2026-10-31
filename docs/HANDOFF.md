@@ -1,8 +1,205 @@
 # 작업 인계 문서
 
-## 현재 세션 인계 요약 — AI 로그인봇 구현·네이버 실로그인 / 2026-10-31
+## 현재 세션 인계 요약 — 네이버 색인 조회 연결·실제 전체 흐름 검증 / 2026-10-31
 
-**새 세션은 이 절부터 읽는다.** 이 절과 맨 아래 마지막 상태가 과거의 파일 경로·미구현·승인 기록보다 우선한다. 사용자는 제안한 **기능·문서 2개 커밋을 현재 `feat/ai-login-bot` 브랜치에 만들고 push하도록 승인**했다. 기능 커밋은 `1c5467b`이며 문서 커밋과 최종 원격 상태는 `git log -2` 및 upstream으로 확인한다. PR 생성이나 기존 브랜치 삭제는 요청하지 않았다.
+**네이버 작업은 이 절부터 읽는다.** 이번 사용자 요청은 인계 문서 갱신과 커밋 계획 수립이다. **캡차 답을 다시 덮어쓰는 문제는 분석만 했고, 수정은 다음 작업으로 미뤘다.** 이후 사용자가 **현재 브랜치에 push**하도록 승인했다. 아래 네이버 범위만 4개 커밋으로 나눠 origin/feat/ai-login-bot에 반영하며 새 실로그인은 실행하지 않는다. Google·Bing·Discord 관련 병행 작업은 아래 기록을 보존하며 네이버 변경과 섞어 자동 구현·커밋하지 않는다.
+
+### 완료된 작업
+
+- [x] `app/engines/naver.py`의 `NaverEngine`에 `NaverLoginSite`, `SessionKey`, 모델, `SessionStore`를 주입하고 `async get_site_summary(site_url)`에서 제품 로그인봇을 호출하도록 연결했다. 기존 사용되지 않던 `IndexNowClient` 의존성은 제거했다. 발행 알림은 기존 공통 IndexNow 경로를 유지한다.
+- [x] 최초 `_select_site()` 방식은 사용자 요청에 따라 **`_open_index_status()` 고정 이동 방식으로 교체**했다. 현재 사이트 선택 링크·메뉴를 차례로 클릭하는 방식이 아니다.
+- [x] 실제 사용자가 열어둔 네이버 탭의 DOM과 주소를 확인했다. 로그인 후 `https://searchadvisor.naver.com/console/site/check/inspection?site=<등록 사이트 URL>`로 직접 이동 → `input[type="text"]`에 URL 입력 → 이름이 정확히 `확인`인 버튼 클릭 → 판정 메시지 대기 순서로 동작한다. 인증 콜백을 거쳐 돌아오는 경우도 최종 경로까지 기다린다.
+- [x] 실제 DOM에서 `.v-card__text.primary--text`가 판정 메시지와 안내 문구의 두 요소임을 확인했다. `_read_site_summary()`는 **첫 번째 판정 메시지만** 읽고 `NaverSiteSummary(site_url, checked_at, text)`로 반환한다. `checked_at`은 UTC다. 상세 표의 날짜·수집 여부·응답 코드·색인 여부를 구조화해 추출하는 기능은 아직 없다.
+- [x] 사이트 URL 정규화·현재 화면의 사이트 쿼리 일치·잘못된 이동·재로그인 필요·결과 대기 초과·기존 판정 잔존을 검사한다. 입력 URL은 HTTP(S)이며 인증정보·쿼리·프래그먼트를 허용하지 않는다. 판정 메시지를 수치 0이나 미색인으로 임의 변환하지 않는다.
+- [x] `NaverLoginSite.name/policy`를 `LoginSite` Protocol과 같은 읽기 전용 property로 수정했다. `_policy`는 클래스 내부 공유 값이다. Google 구현에도 동일한 타입 수정이 보이며 해당 파일 전체는 병행 작업의 신규 파일이다.
+- [x] 실제 로그인 페이지가 `/oauth2.0/authorize`에 표시되는 것을 확인해 네이버 준비 대기·계정 오류 감지가 이 경로와 `/nidlogin.login`을 모두 인식하도록 수정했다. `wait_until_ready()`의 기존 조건 대기와 공통 전체 시간 제한을 유지한다.
+- [x] 사용자 지시에 따라 `AGENTS.md`와 `.cursor/rules/bot-execution-records.mdc`에 실제 봇 실행 기록 규칙을 추가했다. 실행별 파일·행동 결과·민감값 제거한 human 사유·로그인 전후 구분을 남긴다. **제품에 영구 자동 파일 로거를 추가한 것은 아니다.** 아래 실제 실행은 임시 실행기의 계측으로 기록했다.
+
+### 현재 실행 흐름
+
+```text
+NaverEngine.get_site_summary(site_url)
+  → authenticated_page(...)
+    → 상태 복원 → 화면 준비 대기 → 인증 판정 → 필요하면 AI 로그인
+    → 인증 상태 저장 → 같은 Page 제공
+  → _open_index_status(page, site_url)
+    → 전용 경로 이동 → URL 입력 → 확인 → 판정 대기
+  → _read_site_summary(page)
+    → 네이버 판정 메시지·입력 URL·UTC 시각 반환
+  → 브라우저 종료
+```
+
+현재 `site_url` 하나를 등록 사이트 선택 키와 검사 URL로 함께 사용한다. 실제로 검증한 대상은 등록된 메인 사이트 URL이다. 개별 글을 검사하려면 등록 사이트 URL과 검사 대상 URL을 별도 매개변수로 구분하는 후속 설계가 필요하다. 서비스·DB·API 연결은 아직 없다.
+
+### 실제 검증과 실행 기록
+
+1. 구조 분석을 위해 저장 상태 복원을 시도했으나 콘솔 인증을 확인하지 못했다. 사용자 요청으로 제품 로그인봇을 실행했고, 첫 분석 시도는 **11단계에서 human으로 종료**됐다. 로그인 성공 전이며 사이트 선택은 실행되지 않았다. 이 당시 사유를 보존하지 않아 원인을 확정하지 않는다.
+2. 사용자 제공 스크린샷과 이미 열린 Chrome의 인증된 탭에서 색인 확인 화면을 읽었다. 검증용 새 탭에서도 고정 주소 진입 → URL 입력 → 확인을 수행해 **‘문서가 성공적으로 색인됐습니다. 해당 문서를 검색할 수 있습니다.’** 표시를 확인했다. 기존 사용자 탭은 유지하고 추가 검증 탭만 닫았다. `수집 요청`은 누르지 않았다.
+   - 기록: `.secrets/bot_runs/naver_index_structure_nsavqsla.jsonl`.
+3. 사용자가 로그인봇 호출까지 포함한 테스트를 요청해 **제품 `get_site_summary()`를 실제로 한 번 호출**했다. 모델·사이트·실행 동작을 가짜로 대체하지 않았으며 임시 실행기는 원래 함수를 위임하는 기록 래퍼만 사용했다.
+   - **2026-10-31 20:06:37~20:07:32 KST**, 기존에 구체적으로 승인된 학교 게이트웨이 `https://factchat-cloud.mindlogic.ai/v1/gateway`의 `deepseek-v4.1-flash` 사용.
+   - **AI 14회 호출 후 콘솔 인증 성공 → 고정 Playwright로 색인 확인 → 위 성공 판정 메시지 반환 → 브라우저 컨텍스트 종료** 확인.
+   - 로그인 이후 AI 호출은 **0회**다. `수집 요청`·사이트 등록·설정 변경은 하지 않았다.
+   - 기록: `.secrets/bot_runs/naver_get_site_summary_6f2y2aka.jsonl`. 실제 ID/PW·키·쿠키·입력 답·원문 AI 요청/응답·이미지는 보관하지 않았다. 알려진 인증정보 포함 여부 false, 파일 0600·폴더 0700을 확인했다.
+   - 임시 실행기: `/private/tmp/webmaster_naver_engine_e2e.py`. 저장소 커밋 대상이 아니다. 실제 AI·네이버 요청을 실행하므로 단순 조회용 파일로 오해해 재실행하지 않는다.
+
+### 알려진 문제 — 캡차 재입력, 다음 작업으로 보류
+
+사용자는 **처음 올바른 캡차 답을 입력했다가 AI가 다른 답으로 바꿔 틀리는 장면**을 관찰했다고 말했다.
+
+기록에서 확인한 순서는 다음과 같다.
+
+| 단계 | 시각(KST) | 기록된 행동 |
+| --- | --- | --- |
+| 5 | 20:06:50 | ‘정답을 입력해 주세요’ 입력칸에 fill 실행 완료 |
+| 6 | 20:06:59 | 같은 번호·표시 이름의 입력칸에 다시 fill 실행 완료 |
+| 7 | 20:07:07 | 확인 버튼 click 실행 완료 |
+
+- **첫 확인 클릭 전에 두 번 입력**한 것은 확인된다. 서버가 첫 답을 오답 판정해서 재입력한 순서는 아니다.
+- 답과 이미지·문제 지문을 보존하지 않았으므로 첫 답의 정오, 두 입력값이 실제로 달랐는지, 그 사이 문제가 변경됐는지는 기록만으로 확정할 수 없다. 사용자의 관찰과 로그로 확인된 사실을 구분한다.
+- 구조적 원인: `_run_login()`의 history는 `{"action":"fill","outcome":"실행 완료"}`만 보존해 **어떤 입력칸을 채웠는지** 다음 호출에 전달하지 않는다. `_observe_page()`도 구조화된 입력값 대신 `has_value`만 제공한다. 단 스크린샷에서는 입력 텍스트가 보일 수 있으므로 ‘AI가 이전 값을 절대 볼 수 없다’고 표현하지 않는다.
+- 모델 요청은 시스템 메시지와 현재 사용자 요청으로 구성되며 과거 대화 전체가 유지되는 구조가 아니다. 현재 `SYSTEM_PROMPT`에는 ‘입력 완료 후 재입력보다 확인 우선’ 규칙이 없고 `_execute_action()`은 후속 fill로 기존 값을 덮어쓸 수 있다. **모델이 정확히 왜 다른 답을 판단했는지에 대한 내부 추론은 알 수 없다.**
+- **후속 보완안, 미구현**: 이력에 안전한 대상 식별·입력 완료 여부·실행 결과를 전달한다. 오류나 문제 변경이 없으면 재입력보다 제출을 우선하도록 지시하고 동일 필드의 불필요한 덮어쓰기를 검사한다. 비밀번호·OTP·캡차 답을 원문으로 로그에 남기는 방식은 사용하지 않는다. 입력값이 있다는 이유만으로 정당한 수정까지 무조건 차단하지 않도록 한다.
+- 회귀 테스트: 문제 변경·오류가 없는 입력 완료 상태에서 확인으로 진행, 실제 문제 변경·오류 상태에서는 수정 가능, 입력/스크린샷 보호, URL/DOM 전환 시 과거 행동 폐기.
+- 사용자가 **이 수정은 다음에 하도록 보류**했다. 이번 인계 요청에서는 프롬프트·이력·실행 코드를 고치지 않는다.
+
+### 검증 상태
+
+- 최종 네이버 엔진 범위: `tests/test_naver_engine.py` **19 passed in 6.28s**. 실제 DOM 기준 로컬 문서로 고정 이동·입력/확인·판정/안내 분리·인증 콜백·잘못된 도착·기존 결과 잔존·대기 초과·잘못된 URL·컨텍스트 종료를 검증했다.
+- 네이버 OAuth 화면 대응 범위: `tests/test_login_bot_naver.py` **20 passed** 기록. 다른 범위의 결과이므로 19개와 합쳐 전체 테스트 통과 수로 표현하지 않는다.
+- Google·네이버 property 수정 관련 **47 passed**는 당시 스냅샷 결과다. 병행 세션의 **137 passed**도 당시 별도 범위 결과이며 이후 엔진 변경까지 전부 재검증한 수치가 아니다.
+- 인계 문서 갱신 당시에는 테스트를 재실행하지 않았다. 이후 사용자 push 승인에 따라 스테이징 스냅샷을 임시 폴더에 분리해 **1번 커밋 관련 7개 파일 112 passed in 13.69s**, **2번 커밋 엔진 테스트 19 passed in 7.02s**를 추가 확인했다. 병행 Google 파일·README·설정·실험 파일이 없어도 통과했다. 실제 봇·프로젝트 전체·DB 통합 테스트를 다시 실행한 것은 아니다. `git diff --cached --check`와 알려진 실제 키·비밀번호의 스테이징 파일 포함 여부 검사도 통과했다.
+
+### 다음에 해야 할 작업
+
+1. 사용자가 재개를 요청하면 위 **캡차 반복 덮어쓰기 문제**부터 작은 범위로 설명하고 보완·회귀 테스트한다. 이번 커밋에 미구현 수정이 포함된 것처럼 기록하지 않는다.
+2. 계측은 현재 임시 실행기에 있으므로 제품의 재사용 가능한 기록 훅·로거가 필요할지 정한다. 모든 실제 실행에서는 현재 기록 규칙을 먼저 적용한다.
+3. 상세 판정 표 구조화, 등록 사이트/개별 검사 URL 분리, `app/services/index_status.py`·DB/API 연결은 별도 단계로 진행한다.
+4. 기존 미해결인 IndexedDB 인증 상태 수집·Playwright가 거부하는 복원 상태 처리·human 대기/재개를 보존한다. Google/Bing/Discord 후속은 아래 병행 작업 기록대로 별도로 진행한다.
+
+### 커밋 구성과 실행 상태 — 사용자 push 승인
+
+브랜치 **feat/ai-login-bot**, 기준 커밋 **feb8e0a**. 사용자가 아래 네이버 범위의 현재 브랜치 push를 승인했다. 생성된 코드·규칙 커밋은 **5b52f15**(1번), **e8e4ce0**(2번), **f1ba2c3**(3번)이다. 이 문서를 4번 커밋으로 작성하고 push한다. 4번 커밋 해시는 `git log -1`, 원격 반영 결과는 upstream과 원격 브랜치 SHA로 확인한다.
+
+| 순서 | 커밋 메시지 | 포함 파일 |
+| --- | --- | --- |
+| 1 | `[fix] 로그인 화면 준비 대기와 네이버 인증 타입 보완` | `app/login_bot/login_agent.py`, `app/login_bot/sites/base.py`, `app/login_bot/sites/naver.py`, `tests/test_browser_login_agent.py`, `tests/test_login_bot_ai_flow.py`, `tests/test_login_bot_naver.py` |
+| 2 | `[feat] 로그인봇을 이용한 네이버 색인 상태 조회 구현` | `app/engines/naver.py`, `tests/test_naver_engine.py` |
+| 3 | `[chore] 브라우저 봇 실행 기록 규칙 추가` | `AGENTS.md`, `.cursor/rules/bot-execution-records.mdc` |
+| 4 | `[docs] 네이버 전체 조회 검증과 캡차 재입력 후속 작업 정리` | `docs/HANDOFF.md` |
+
+- 1번에는 네이버 property·OAuth 경로와 기존 초기 로딩 대기 변경이 함께 들어간다. 공통 Protocol과 가짜 사이트 구현 테스트를 같이 커밋해 중간 상태의 계약 불일치를 피한다.
+- 2번은 1번에 의존한다. 실제 조회 결과 메시지 반환까지 구현됐으며 이전 `_select_site()`나 미구현 `_read_site_summary()` 초안이 현재 상태인 것으로 설명하지 않는다.
+- 3번은 **실행 기록 규칙**이며 제품에 영구 자동 로깅 기능을 구현한 커밋이 아니다. 4번은 실제 성공과 미수정 캡차 문제를 함께 기록한다.
+- **이번 네이버 커밋에서 제외하고 보존**: 병행 작업의 `app/login_bot/sites/google.py`, `tests/test_login_bot_google.py`, `.env.example`, `README.md`; 기존 `CLAUDE.md`, `naver_probe.py`, `tests/test_naver_probe.py`, `browser_bot_test/`, `app/engines/brave.py`, 빈 `app/services/index_status.py`, ERD 로컬 자료. Google 쪽 변경은 별도 승인 범위에서 별도 커밋으로 정리한다.
+- `.env`, `.secrets/`, 실행 기록·인증 JSON·쿠키·토큰·임시 실행기는 제외한다. `.env.example`은 실제 `.env`와 다르지만 이번 계획에서는 병행 작업 범위라 제외한다. `git add .` 금지.
+- 승인 범위 파일만 명시적으로 스테이징하고 커밋 간 의존성을 확인했다. 별도 스냅샷 테스트·공백 검사·알려진 비밀값 포함 여부 검사를 통과했다. 브랜치 변경·force push·다른 작업 커밋은 하지 않는다. 기존 변경을 되돌리지 않는다.
+- 한국어 `[타입] 제목`, Git 작성자 유지, Co-Authored-By 없음. main/master 직접 push 금지. 새 브랜치를 만들 때는 `feat/`, `fix/` 등의 접두사를 사용하며 `codex/`를 새로 쓰지 않는다.
+
+
+## 병행 세션 기록 — 세션 대기 수정·Google 어댑터·Discord 2차 인증 논의 / 2026-10-31
+
+**새 세션은 이 절부터 읽는다.** 이 절과 맨 아래 마지막 상태가 아래 과거 기록보다 우선한다. 이번 요청은 **인계 문서 업데이트만**이며, 다음 세션에서 Discord 2차 인증 연동을 이어간다. 이번 변경의 커밋·push·실제 Google/Bing 로그인은 요청받거나 수행하지 않았다. 아래 과거 네이버 실로그인 전송 승인을 Google/Bing 또는 새 실행의 포괄 승인으로 해석하지 않는다.
+
+### 사용자 의도와 이번 결정
+
+- 사용자는 학습을 위해 코드 위치·동작을 이해하며 단계별로 진행한다. 한국어로 간결하게 설명하고 다음 기능을 앞서 구현하지 않는다.
+- 목표: 기존 네이버 공통 AI 로그인봇에 Google Search Console과 Bing Webmaster Tools 로그인을 추가한다.
+- **Bing은 Microsoft가 아니라 Google 계정으로 로그인한다.** Google과 Bing은 최종 성공 판정·세션을 사이트별로 분리한다. Bing 브라우저 어댑터는 아직 구현하지 않았다.
+- 세션 복원 직후 false 문제는 캡차 후 재로그인 문제가 아니다. 저장 세션을 다음 실행에서 복원했지만 화면 렌더링 전에 인증 여부를 판단하는 문제였다.
+- 고정 1초 sleep 대신 **인증된 콘솔 또는 로그인 화면이 준비될 때까지 조건 대기**하도록 수정했다.
+- 사용자 인증 대기 기능은 처음에는 범위가 커져 보류했고 Google 어댑터를 먼저 구현했다. 이후 사용자가 **human 단계에서 Discord로 인증 코드를 받고 로그인을 재개하는 흐름**을 제안했다. 구현은 다음 세션으로 미뤘다.
+- 사용자 전제: 로그인 계정에 **비밀번호가 반드시 있다**고 보고, 생체 인증·패스키가 먼저 나오면 취소 → 다른 방법으로 인증 → 비밀번호를 선택한다. 이는 후속 구현 요구사항이며 현재 goal·코드에 모두 반영된 상태가 아니다. 네이티브 인증창 취소는 현재 Playwright Page 조작만으로 지원하지 않는다.
+- 캡차처럼 화면으로 해결할 수 있는 검증은 **AI가 직접 풀고 입력·확인**하도록 Google의 goal에 명시했다. 실제 캡차 해결 성공을 검증한 것은 아니다.
+
+### 완료된 작업과 코드 상태
+
+1. **초기 화면 준비 대기**
+   - `app/login_bot/sites/base.py`: `LoginSite.wait_until_ready(page) -> None` 계약 추가.
+   - `app/login_bot/login_agent.py`: `_ensure_login()`에서 `page.goto(..., wait_until="domcontentloaded")` 다음에 `await site.wait_until_ready(page)` 호출. 그 뒤 인증 판정·AI 진입.
+   - `app/login_bot/sites/naver.py`: 인증 콘솔 또는 ID/PW 입력칸을 0.1초 간격으로 확인. 공통 `asyncio.timeout(site.policy.timeout_seconds)` 안에서 실행되어 전체 제한 시간을 따른다.
+   - 관련 가짜 사이트 구현·지연 렌더링·대기 만료 테스트 보완. 준비 전 AI 호출을 막는다.
+2. **Google 로그인 어댑터**
+   - 신규 `app/login_bot/sites/google.py`: `GoogleLoginSite`, 불변 dataclass, 인증정보 외부 주입.
+   - 시작 주소 `https://search.google.com/search-console`, 허용 호스트 `search.google.com`, `accounts.google.com`.
+   - 계정 선택·ID/PW 단계·추가 인증·자동화 차단·소개 화면에서 AI로 넘길 준비 상태를 판정한다.
+   - 인증 판정은 Search Console 경로(소개 `/about` 제외) + 표시된 Google 계정 메뉴 + 한국어/영어 콘솔·초기 시작 화면 문구를 조합한다. 사이트 없는 계정의 welcome 화면도 고려한다.
+   - Google 로그인 호스트의 표시된 계정 오류만 감지한다. 기존 공식 API/OAuth 코드는 교체하지 않았다.
+   - **실제 Google 계정으로 선택자·로그인·세션 재사용을 검증하지 않았다.** 로컬 테스트 성공을 실로그인 성공으로 표현하지 않는다.
+   - 신규 테스트 `tests/test_login_bot_google.py`: 계약·성공/오인 방지·계정 오류·준비 대기·지연 콘솔·human 종료·ID 다음 PW 입력 후 콘솔 복귀를 검증한다. 화면 이동 모의 응답은 JavaScript navigation을 사용한다.
+3. **환경변수 필드**
+   - `.env`와 `.env.example`에 `GOOGLE_LOGIN_ID`, `GOOGLE_LOGIN_PASSWORD` 추가. Search Console 및 후속 Bing Google 로그인에 사용할 계정이다. 기존 값은 보존했다. 이후 사용자의 실제 입력 여부는 확인하지 않았다.
+   - `.env`에 누락된 `BROWSER_BOT_BASE_URL`, `BROWSER_BOT_MODEL`, `BROWSER_BOT_API_KEY_ENV` 기본 설정도 추가했다. 기존 `KONKUK_AI_API_KEY` 항목을 유지했다.
+   - `.env.example`은 AI 계정정보·화면 전송 안내와 네이버·Google 인증정보 필드를 포함한다.
+   - `load_model_settings()`는 AI 설정을 읽지만 **Google 계정정보를 읽어 LoginCredentials/GoogleLoginSite에 주입하는 영구 실행 코드·CLI·API 연결은 아직 없다.** `.env` 작성만으로 로그인 기능이 실행되지는 않는다.
+   - 기존 `GOOGLE_OAUTH_CLIENT_FILE`, `GOOGLE_TOKEN_FILE`, `BING_API_KEY`는 공식 API 인증용으로 브라우저 로그인과 별개다.
+
+### 이번 세션의 검증 기록과 한계
+
+- 세션 조건 대기 수정 뒤 관련 테스트 **107 passed**.
+- Google 어댑터와 캡차 goal 반영 뒤 마지막 실행: **137 passed in 21.19s**. 아래 8개 파일 범위이며 프로젝트 전체·DB 통합 검증이 아니다.
+
+```bash
+PYTHONNOUSERSITE=1 PYTHONDONTWRITEBYTECODE=1 /opt/miniconda3/envs/startpress/bin/python -m pytest tests/test_login_bot_google.py tests/test_browser_login_agent.py tests/test_login_bot_naver.py tests/test_login_bot_ai_flow.py tests/test_browser_model_client.py tests/test_browser_schemas.py tests/test_browser_site.py tests/test_browser_session.py -q -p no:cacheprovider --tb=short
+```
+
+- Chromium 실행은 macOS 샌드박스의 MachPort 권한 오류가 있어 승격 환경에서 검증했다. 마지막 통과 실행은 로컬 HTML·가짜 AI를 사용했다. 실제 계정 로그인이나 외부 AI 호출은 하지 않았다.
+- 인계 시점 코드에는 별도 작업의 변경도 보인다. 예: Naver/Google의 `name`, `policy` 읽기 전용 property와 `_policy`, 네이버 `/oauth2.0/authorize` 대응, 관련 테스트 변경. **위 137개 통과는 실행 당시 스냅샷의 기록이며 이후 모든 변경을 재검증한 결과가 아니다.** 문서 업데이트 요청에서는 테스트를 재실행하지 않는다.
+- `.env` 변경 시 기존 파싱 값이 보존되고 신규 필드가 읽히는지 비밀값 출력 없이 검증했다. 문서 업데이트 뒤 `git diff --check`를 확인한다.
+- 별도 서브에이전트 보안·코드 리뷰를 수행한 것으로 기록하지 않는다.
+
+### 다음 세션 — Discord 2차 인증 연동
+
+사용자가 제안한 흐름:
+
+1. ID 입력 → 비밀번호 입력. 생체·패스키가 나오면 취소하고 다른 방법에서 비밀번호 선택.
+2. 2차 인증 화면에서 휴대폰 문자 코드 발송 선택.
+3. Discord에 인증 필요 알림 발송.
+4. 사용자가 Discord에 코드를 보내면 로그인 봇이 받아 입력·확인.
+5. 최종 사이트에서 로그인 성공을 검증하고 세션 저장.
+
+현 상태와 후속 설계 사항:
+
+- 현재 `_run_login()`의 `HumanAction`은 `requires_user`를 반환한다. `authenticated_page()`가 `LoginError`를 발생시키며 브라우저가 닫힌다. **대기·Discord 수신·재개는 미구현**이다.
+- 사용자는 이 `human` 분기에서 처리하면 될 것 같다고 제안했다. 다만 계정 오류·자동화 차단도 사용자 개입으로 끝날 수 있으므로, 모든 requires_user를 문자 코드 요청으로 취급하지 않도록 후속 설계에서 구분한다.
+- **기존 메시지 발송용 Discord incoming webhook URL만으로 일반 사용자 메시지를 수신할 수 없다.** Discord 봇의 Gateway 메시지 이벤트를 사용하면 사용자의 메시지 수신이 가능함을 조사·설명했다. `discord.py`의 `on_message()` / `wait_for("message")`가 후보이고 일반 서버 채널 메시지 내용 수신에는 Message Content Intent 설정이 필요하다.
+- 코드 입력 UI는 **미확정**이다. 일반 메시지/요청 알림에 대한 답장 방식을 설명했고, 앞서 버튼·모달 방식도 제안했다. 사용자가 최종 방식을 선택하거나 봇을 설정한 상태로 기록하지 않는다.
+- 권장 설계안: 지정 Discord 사용자 ID·채널 ID·로그인 요청/답장 ID 검증, 코드 대기 만료·취소·재시도 한도, 동시 로그인 코드 혼선 방지. 일회용 코드는 로그·파일·AI 요청에 보관하지 않고 직접 입력·제출하는 방향을 제안했다. 아직 구현·최종 합의하지 않았다.
+- 문자 OTP와 휴대폰의 승인 버튼/숫자 선택은 별도 인증 유형이다. 사용자는 문자 코드 흐름을 원한다. 제공되는 인증 방식과 문자 발송 가능 여부는 실제 화면에서 확인한다.
+- Discord 봇 생성·초대·토큰·사용자/채널 설정·의존성·실행 수명은 미구현이다. 이번 요청에서는 Discord에 어떤 메시지도 보내지 않았다.
+- Google 자동화 브라우저 로그인 차단은 Discord 코드 수신으로 해결되지 않는다. iframe·팝업·드래그·네이티브 인증창 미지원도 그대로다.
+- IndexedDB 저장, Playwright가 거부하는 저장 상태의 새 로그인 복구는 미해결이다. 이번 초기 화면 대기 수정과 구분한다.
+
+### 업체가 Search Console 전체 사용자 권한을 주는 경우
+
+- 업체 Google 계정 전체를 받지 않아도, **권한을 부여받은 우리 운영 Google 계정**으로 로그인해서 해당 업체 속성을 선택할 수 있다.
+- ID/PW·2차 인증은 우리 운영 계정 기준이다. `.env`에는 그 계정을 넣는다. 업체 계정의 문자 코드를 받을 필요는 없다.
+- 계정 로그인과 사이트 속성 권한은 별개다. 전체 사용자(Full user)는 URL 검사·색인 생성 요청 등이 가능하지만 사용자 권한 관리는 소유자 권한이 필요하다. Google 계정에 사이트 권한이 있다고 모든 관리 작업이 가능한 것으로 취급하지 않는다.
+- 여러 업체가 같은 운영 계정에 권한을 주면 로그인 세션을 재사용하면서 **업체별 정확한 속성·URL·권한**을 별도로 확인하도록 설계한다. 이 선택/검증·DB/API 연동은 아직 구현하지 않았다.
+- Search Console 권한을 Bing 권한으로 간주하지 않는다. Bing의 Google 로그인 연결·사이트 접근 권한도 별도로 검증해야 한다.
+
+### 관련 조사 자료
+
+- [Google 자동화 브라우저 로그인 제한](https://support.google.com/accounts/answer/7675428?hl=en)
+- [Google 2단계 인증 문제와 다른 방법](https://support.google.com/accounts/answer/185834?hl=en)
+- [Search Console 사용자 권한](https://support.google.com/webmasters/answer/7687615?hl=en)
+- [URL 검사 도구의 색인 요청 권한](https://developers.google.com/search/docs/crawling-indexing/ask-google-to-recrawl?hl=en)
+- [Discord 웹훅과 봇](https://github.com/discord/discord-api-docs/blob/main/developers/platform/webhooks.mdx)
+- [discord.py 메시지 수신 API](https://discordpy.readthedocs.io/en/latest/api.html)
+
+### 브랜치·보존할 변경·실행 주의
+
+- 인계 시 `feat/ai-login-bot`, HEAD **feb8e0a — [docs] 네이버 실로그인 검증 결과와 후속 작업 정리**, 이전 기능 커밋 `1c5467b`.
+- 이번 세션의 세션 대기·Google 어댑터·설정 변경은 **미커밋**이다. 이번 인계 요청은 커밋·push 승인이 아니다. 이전 세션의 두 커밋 승인 기록과 구분한다.
+- `git status --short`로 최신 상태를 확인하고 기존 변경을 보존한다. 현재 `.env.example`, `AGENTS.md`, `README.md`, 로그인 코드·테스트의 수정과 `.cursor/`, `CLAUDE.md`, 엔진 초안·실험·테스트·ERD 파일이 있다. 다른 작업 변경을 되돌리거나 이번 작업으로 묶지 않는다.
+- 새 `app/login_bot/sites/google.py`, `tests/test_login_bot_google.py`는 미추적 상태다. 이후 커밋 시 명시적으로 선택한다.
+- `.env`, `.secrets/`, 인증 코드·비밀번호·쿠키·토큰 원문은 출력하거나 커밋하지 않는다. 필드 이름만 문서화한다. `git add .` 금지.
+- **실제 브라우저 봇 실행 전** 현재 `AGENTS.md` 및 `.cursor/rules/bot-execution-records.mdc`를 읽는다. 실행별 행동·결과·민감값 제거한 human 사유·로그인 전후 중단 위치를 비공개 기록으로 남기는 새 규칙이 있다. 이번 인계에서는 실제 봇을 실행하지 않았다.
+- Miniconda `startpress`, 직접 실행 시 `PYTHONNOUSERSITE=1`, 프로젝트 `.venv` 사용 금지. 과거 임시 네이버 실행 파일을 설명 없이 재실행하지 않는다.
+
+## 과거 세션 인계 요약 — AI 로그인봇 구현·네이버 실로그인 / 2026-10-31
+
+**이 절은 이전 세션 기록이다. 현재 구현·다음 작업·승인 범위는 최상단의 최신 세션 요약을 따른다.** 사용자는 제안한 **기능·문서 2개 커밋을 현재 `feat/ai-login-bot` 브랜치에 만들고 push하도록 승인**했다. 기능 커밋은 `1c5467b`이며 문서 커밋과 최종 원격 상태는 `git log -2` 및 upstream으로 확인한다. PR 생성이나 기존 브랜치 삭제는 요청하지 않았다.
 
 ### 사용자 의도와 확정한 구조
 
@@ -747,19 +944,33 @@ API 문서는 [Swagger UI](http://127.0.0.1:8000/docs)에서 확인한다.
 
 Notion은 요구사항·설계 자료다. 실제 구현·적용 여부는 이 문서의 최신 구현 상태와 코드·Alembic 버전을 기준으로 확인한다. 원문의 브라우저 자동화 제안은 이 문서의 공식 API 중심 합의와 구분한다. 초기 조회 이후 IndexNow 세션에서 DB 컬럼·입력 항목·저장 구현 상태를 수정했다. 연결·권한은 변경하지 않았다.
 
-## 마지막 상태
+## 병행 세션 마지막 상태 — Google·Discord
 
 - 갱신일: **2026-10-31 / Asia/Seoul**.
-- 작업 디렉터리: `/Users/kim-yudam/Desktop/study/sideProject/webmaster_automation`.
-- 브랜치: **feat/ai-login-bot**. 기능 커밋: **1c5467b — [feat] 공통 AI 로그인봇과 네이버 인증 구현**. 문서 커밋·최종 HEAD는 `git log -2`로 확인한다.
-- 실행 환경: **Miniconda startpress**, 직접 실행 시 **PYTHONNOUSERSITE=1**, 프로젝트 .venv 사용 금지.
-- 현재 제품 패키지: `app/login_bot/`. Python Playwright 직접 사용, AI Chat Completions, 사이트 규칙은 `sites/`에 분리.
-- 실제 네이버 로그인: 지정 학교 게이트웨이·모델에 실제 인증정보를 보내도록 사용자가 명시 승인한 뒤 **AI 10회 호출로 콘솔 진입·인증 상태 저장 성공**.
-- 저장 상태 재사용: 별도 브라우저에서 **AI 호출 없이 1초 뒤 인증 성공**. 제품의 즉시 인증 판정이 너무 빠른 문제는 **아직 미수정**.
-- 마지막 관련 로컬 검증: **103 passed**. 프로젝트 전체·DB 통합 테스트를 다시 실행한 결과는 아니다. 커밋 직전 관련 103개를 다시 실행해 통과했다.
-- 이번 요청: 사용자가 **기능·문서 2개 커밋 생성과 현재 브랜치 push를 승인**했다. 대상은 `origin/feat/ai-login-bot`이다. 기존 로컬·원격 브랜치와 제외 파일은 보존한다.
-- 다음 우선 작업: 초기 인증 화면의 조건 대기와 회귀 테스트. 이후 IndexedDB 보존·잘못된 복원 상태 처리 등 최상단 미해결 목록을 따른다.
-- 네이버 엔진 조회·서비스·DB/API 연결은 아직 별도 후속이다. 과거 Google·Bing·IndexNow 기록과 관련 로컬 자료를 보존한다.
-- `.env`·인증 JSON·쿠키·토큰은 출력·문서화·커밋하지 않는다. 미추적 실험·엔진 초안·CLAUDE.md·ERD 자료는 커밋 계획에서 제외한다.
+- 브랜치: **feat/ai-login-bot**. HEAD: **feb8e0a**. 이번 구현·설정·인계 변경은 미커밋이다. 커밋·push는 요청하지 않았다.
+- 초기 세션 인증 판정: `domcontentloaded` 다음 사이트별 **wait_until_ready** 조건 대기 추가 완료. 고정 1초 대기가 아니다.
+- 네이버 실로그인 성공은 이전 세션 기록이다. Google 어댑터는 추가했지만 **실제 Google 로그인은 미검증**, Bing Google 로그인 어댑터는 미구현이다.
+- Google goal에 AI 직접 캡차 해결을 명시했다. OTP·휴대폰 승인 등은 현재 human으로 종료하며 브라우저가 닫힌다.
+- `.env`·`.env.example`에 Google ID/PW 필드 추가. 기존 값 보존. 계정정보를 어댑터로 주입하는 영구 실행 코드는 미구현이다.
+- 마지막 관련 테스트 실행 기록: **137 passed in 21.19s**. 실행 당시 8개 파일 범위이며 이후 별도 변경까지 재검증한 기록은 아니다. 이번 문서 업데이트에서는 테스트를 다시 실행하지 않았다.
+- 다음 세션: **비밀번호 로그인 → 문자 코드 발송 → Discord 요청/수신 → 같은 브라우저에서 로그인 재개** 흐름 설계·구현. 수신에는 Discord 봇이 필요하며 기존 발송 웹훅만으로는 안 된다. 답장/모달 방식·봇 설정은 미확정이다.
+- 업체 전체 사용자 권한은 우리 운영 Google 계정에 부여받아 사용한다. 인증은 우리 계정 기준이며 로그인 후 업체 속성 접근 권한을 따로 확인한다.
+- 실제 봇 실행 전 `.cursor/rules/bot-execution-records.mdc` 및 최신 `AGENTS.md`를 확인한다. 기존 미커밋·미추적 변경과 비밀 파일을 보존한다.
 
-새 세션에서: **‘docs/HANDOFF.md 최상단의 2026-10-31 요약부터 읽고 이어서 진행해줘. app/login_bot 공통 AI 로그인봇과 네이버 어댑터는 구현됐고 실제 로그인·상태 저장·별도 복원 확인에 성공했어. 단 제품의 세션 재사용 확인이 너무 빨라 불필요한 AI 호출로 넘어가는 버그는 아직 남아 있어. 먼저 조건 대기와 회귀 테스트를 진행할 계획이야. 기존 미커밋 변경을 보존하고 단계별로 간결하게 설명해줘. 사용자가 기능·문서 두 커밋과 feat/ai-login-bot push를 승인했어. git log -2와 upstream으로 최종 상태를 확인해줘. 기존 실험·엔진 초안과 과거 브랜치는 제외하고 보존했어.’**
+새 세션에서: **‘docs/HANDOFF.md 최상단 최신 요약을 읽고 이어서 진행해줘. 초기 화면 조건 대기와 Google 어댑터는 구현했고 관련 테스트 137개 통과 기록이 있어. Bing은 Google 계정으로 로그인할 예정이야. 다음에는 비밀번호가 있다는 전제로 human 단계에서 Discord로 문자 인증 코드를 받아 같은 브라우저에서 재개하는 기능을 설계·구현하고 싶어. 업체 계정 대신 Full user 권한을 받은 우리 운영 계정으로도 작업할 수 있어야 해. Discord 입력 방식과 봇 설정은 아직 미확정이고, 실제 Google 로그인도 검증하지 않았어. 기존 변경을 보존하고 코드 위치를 짚으며 단계별로 설명해줘.’**
+
+
+## 마지막 상태
+
+- 갱신일: **2026-10-31 / Asia/Seoul**. 브랜치 **feat/ai-login-bot**, 기준 커밋 **feb8e0a**.
+- 사용자 **‘현재 브랜치에 푸시해’** 승인에 따라 네이버 변경만 4개 커밋으로 정리한다. 생성된 커밋: **5b52f15**(로그인 대기·네이버 인증), **e8e4ce0**(색인 조회 엔진), **f1ba2c3**(실행 기록 규칙). 이 문서가 4번 커밋이다. 최종 문서 커밋 해시는 `git log -1`로 확인한다.
+- 푸시 대상은 **origin/feat/ai-login-bot**. 최종 HEAD와 원격 브랜치 SHA가 일치하는지 확인한다. 이 승인을 다른 작업·브랜치·추가 기능의 push 승인으로 확대하지 않는다.
+- 네이버 엔진: `get_site_summary()` → 로그인봇 → `_open_index_status()` → `_read_site_summary()` → 브라우저 종료까지 구현·실제 호출 성공.
+- **20:07 KST 실제 전체 흐름 성공**, AI 로그인 14회 호출·로그인 이후 AI 0회·네이버 색인 성공 판정 메시지 반환. 기록은 `.secrets/bot_runs/naver_get_site_summary_6f2y2aka.jsonl`이며 민감값을 제외했다.
+- push 전 스테이징 스냅샷 검증: 1번 커밋 관련 **112 passed**, 2번 커밋 엔진 **19 passed**. 두 실행 범위를 합쳐 프로젝트 전체 테스트 통과 수로 표현하지 않는다. 실제 봇·DB 통합 테스트를 새로 실행하지 않았다.
+- **캡차 입력 후 같은 필드 재입력 문제는 분석만 했으며 사용자가 다음 작업으로 보류했다.** 다음 재개 시 대상 식별·입력 완료 이력과 불필요한 덮어쓰기 방지를 검토한다. 첫 답의 정오·문제 변경 여부는 로그만으로 단정하지 않는다.
+- Google/README/설정·Discord 등 병행 변경은 이번 네이버 커밋에서 제외하고 작업 트리에 보존한다. .env·실행 로그·인증 상태·임시 실행기는 제외한다.
+- 실제 봇 실행 전 기록 규칙을 읽고 실행별 기록을 남긴다. 제품 자동 파일 로깅은 아직 없으며 이번 기록은 임시 실행기의 계측이다.
+- 실행 환경은 Miniconda startpress, 직접 실행 시 PYTHONNOUSERSITE=1, 프로젝트 .venv 사용 금지.
+
+새 세션에서: **‘docs/HANDOFF.md 최상단 네이버 요약부터 읽고 이어서 진행해줘. get_site_summary는 로그인봇부터 네이버 색인 확인 결과 반환까지 실제 성공했어. 캡차 답을 입력하고 확인 전에 다시 덮어쓰는 문제는 아직 수정하지 않았고 다음 작업으로 남겼어. 이력에 입력 대상·완료 상태가 부족한 문제를 작은 범위로 설명하고 보완할 계획이야. 네이버 변경은 사용자 승인으로 4개 커밋으로 정리하고 feat/ai-login-bot에 push하는 범위였어. git log -4와 원격 SHA로 최종 상태를 확인해줘. Google·Discord 등 제외한 병행 변경과 인증정보·실행 기록은 보존해.’**
