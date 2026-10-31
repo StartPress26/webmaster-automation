@@ -1,13 +1,114 @@
 # 작업 인계 문서
 
-## 현재 세션 인계 요약 — 공통 로그인 스키마·세션 저장소 / 2026-10-29
+## 현재 세션 인계 요약 — AI 로그인봇 구현·네이버 실로그인 / 2026-10-31
 
-**새 세션은 이 절부터 읽는다.** 아래 과거 기록의 브랜치·미구현·검증 상태보다 이 절과 맨 아래 마지막 상태가 우선한다. 사용자는 오늘 작업을 마무리하며 인계 문서 작성 후, 아래 계획의 **1·4·5번을 하나의 커밋으로 묶어 작업 브랜치에 push하도록 승인**했다. 네이버 probe·AI 탐색 실험은 제외하고 테스트는 재실행하지 않는다. 공통 저장소 단위 테스트 파일은 4번 범위에 포함한다.
+**새 세션은 이 절부터 읽는다.** 이 절과 맨 아래 마지막 상태가 과거의 파일 경로·미구현·승인 기록보다 우선한다. 사용자는 제안한 **기능·문서 2개 커밋을 현재 `feat/ai-login-bot` 브랜치에 만들고 push하도록 승인**했다. 기능 커밋은 `1c5467b`이며 문서 커밋과 최종 원격 상태는 `git log -2` 및 upstream으로 확인한다. PR 생성이나 기존 브랜치 삭제는 요청하지 않았다.
+
+### 사용자 의도와 확정한 구조
+
+- 사용자는 학습을 위해 각 함수·개념을 이해하며 단계별로 진행한다. 한국어로 간결하게 설명하고 요청 범위 밖의 기능을 먼저 구현하지 않는다.
+- `app/browser/`를 `app/login_bot/`으로 변경했다. **Python Playwright 직접 사용 방식**이며 MCP로 전환하지 않았다. 브라우저는 Chromium이다.
+- `BrowserContext`는 쿠키 등 인증 데이터를 공유하는 공간, `Page`는 그 안의 탭이다. 스키마가 Page를 생성하는 구조가 아니다.
+- `authenticated_page(...)`가 브라우저 생성 → 상태 복원 → 로그인 확인·실행 → 상태 저장 → 같은 Page 제공을 담당한다. `async with` 블록 종료·예외 시 브라우저를 닫는다. 반환 타입은 Pylance 경고를 해결하기 위해 `AsyncGenerator[Page, None]`을 사용한다.
+- 사용자 요청으로 **미인증 시 실제 ID·비밀번호를 변수로 AI API에 전달**하도록 변경했다. AI가 전체 로그인 과정의 요소 선택·입력·제출·캡차 대응을 판단한다. 인증정보를 AI에 숨기거나 고정 코드로 ID/PW를 제출하는 과거 합의는 현재 설계가 아니다.
+- 특정 캡차 이미지만 찾는 선택자와 사이트별 보호 필드 선택자·`submit_credentials()`·`has_credential_form()`을 제거했다. 화면 텍스트·요소 목록·뷰포트 스크린샷을 공통 코드가 관찰한다.
+- `LoginSite`는 사이트별 정책·인증정보·성공 판정·계정 오류 감지의 약속이다. 실제 구현은 `sites/naver.py`에 둔다. **`app/engines/naver.py`와 별개**이며 엔진 초안은 이번 작업에서 수정하지 않았다.
+
+```text
+app/login_bot/
+├─ __init__.py
+├─ schemas.py        # LoginPolicy, LoginResult, SessionKey, LoginCredentials, LoginAction
+├─ session.py        # 기존 SessionStore, 저장 위치는 유지
+├─ model_client.py   # 비동기 Chat Completions 통신
+├─ login_agent.py    # 브라우저 수명과 AI 로그인 루프
+└─ sites/
+   ├─ __init__.py
+   ├─ base.py        # LoginSite Protocol
+   └─ naver.py       # NaverLoginSite
+```
+
+### 완료된 작업
+
+- [x] 패키지 이름 변경과 관련 import·테스트·문서 경로 정리. 테스트 파일 이름의 `test_browser_*`는 현재 유지한다.
+- [x] `LoginCredentials`를 `schemas.py`에 모았다. 불변 dataclass이고 ID/PW는 repr에서 숨긴다.
+- [x] 동작 스키마 구현: `fill`, `click`, `scroll`, `wait`, `human`. 고정 인증 제출용 `login` 동작은 제거했다. `fill.text`는 최대 2,000자이며 repr에서 숨긴다.
+- [x] `ModelSettings`, `load_model_settings()`, `ModelClient.complete_json()` 구현. HTTP 클라이언트 수명은 호출자가 관리한다. 코드펜스 JSON 처리·안전한 통신 오류·타임아웃·리다이렉트 거부·`store=False`를 적용했다. 모델 제공자의 실제 보관 정책을 보장한다는 뜻은 아니다.
+- [x] `_run_login()` 구현: 상태 확인 → 화면 관찰 → AI 요청 → 동작 검증 → 주소 변경 시 재관찰 → 제한 검사 → 실행 → 성공 재확인. 시스템 프롬프트는 `SYSTEM_PROMPT`, 실행 목표는 `site.policy.goal`이다.
+- [x] 현재 UI 관찰은 표시 중인 메인 탭 요소 최대 160개·본문 최대 16,000자·JPEG 뷰포트 이미지다. 원본 이미지·입력 텍스트·인증정보·AI human 사유는 로컬 행동 기록에 보존하지 않는다. AI 요청에는 실제 인증정보가 포함된다.
+- [x] 허용 주소·폼 목적지·인증 폼의 POST 방식 검사, 전체 시간·행동 횟수·인식 가능한 인증 폼 제출 횟수 제한 구현. 시도 횟수는 비밀번호 또는 username 자동완성 필드를 가진 HTML 폼의 제출 버튼 클릭 기준이며 모든 JavaScript 제출을 포괄하지 않는다.
+- [x] 네이버 정책·정확한 콘솔 URL과 표시된 ‘사이트 등록’ 요소 기반 성공 판정·계정 오류 감지 구현.
+- [x] 현재 제품 코드로 실제 네이버 로그인과 인증 상태 저장에 성공했다. 별도 브라우저에서 AI 호출 없이 저장 상태 복원도 확인했다. 아래 알려진 타이밍 문제는 미수정이다.
+
+### 실제 검증 결과 — 2026-10-31 / Asia/Seoul
+
+- 사용자가 실로그인 시도를 요청했다. 자동 승인 검토가 실제 ID/PW·화면의 외부 AI 전송을 차단했고, 구체적 전송 대상에 대한 승인 질문 뒤 사용자가 **‘승인해’**라고 명시적으로 승인했다.
+- 승인 대상은 학교 게이트웨이 `https://factchat-cloud.mindlogic.ai/v1/gateway`, 모델 `deepseek-v4.1-flash`다. 설정이 해당 주소·모델과 정확히 일치하는지 확인한 임시 실행 도구로 한 번 실행했다. 다른 목적지나 무제한 반복 실행에 대한 포괄 승인으로 확대하지 않는다.
+- 로컬 `.env`의 `NAVER_LOGIN_ID`, `NAVER_LOGIN_PASSWORD`와 AI 키를 사용했다. 실제 값은 출력·문서·커밋에 포함하지 않는다.
+- 새로운 내부 세션 키 `live_check_<임의 식별자>`로 실행했다. **AI API 10회 호출 후 `site.is_authenticated(page) == True`**, 인증 상태 파일 저장 확인. 사이트 등록·변경이나 색인 현황 조회는 수행하지 않았다.
+- 최초 자동 재사용 확인은 `domcontentloaded` 직후 인증 확인이 false여서 AI 루프로 진입했다. 검증용 모델이 추가 AI 호출을 의도적으로 거부해 `RuntimeError`로 종료됐다. AI 서버 오류나 세션 만료로 해석하지 않는다.
+- 저장 상태를 별도 브라우저에 복원한 **읽기 전용 확인에서는 즉시 false, 1초 대기 후 true**였다. AI를 추가 호출하지 않았다. 저장·복원은 동작하며 로그인 완료 화면 렌더링을 기다리는 코드가 필요하다.
+- 실로그인 결과로 캡차 종류·자동 해결률·다른 계정의 성공을 일반화하지 않는다. 로컬 통합 테스트에서는 가짜 로그인 → 캡차 입력·확인 → 성공 화면 흐름을 검증했다.
+- 인증 JSON은 기존 `.secrets/browser_sessions/naver/`에 비공개로 저장했다. 저장 위치는 패키지 이름 변경과 무관하게 유지한다. 쿠키·토큰·파일 본문은 출력하지 않는다.
+
+### 검증 상태
+
+- 마지막 관련 테스트: **103 passed in 10.60s**. 프로젝트 전체 테스트 수가 아니다.
+- 실행 명령:
+
+```bash
+PYTHONNOUSERSITE=1 PYTHONDONTWRITEBYTECODE=1 /opt/miniconda3/envs/startpress/bin/python -m pytest tests/test_browser_login_agent.py tests/test_login_bot_naver.py tests/test_login_bot_ai_flow.py tests/test_browser_model_client.py tests/test_browser_schemas.py tests/test_browser_site.py tests/test_browser_session.py -q -p no:cacheprovider --tb=short
+```
+
+- 가짜 AI·로컬 HTML로 인증정보 전달·입력·제출·캡차 흐름·성공 검증·계정 오류·human 사유 비밀값 보호·동작/제출 제한·외부/GET 폼 차단·과거 요소 거부·세션 재사용·종료를 검증했다.
+- Chromium 실행은 macOS 샌드박스 제한으로 승격 환경에서 수행했다. 실제 사이트·AI 호출은 위 실로그인 실행과 별도 복원 확인에 한정된다.
+- `git diff --check` 통과. 프로젝트 전체·PostgreSQL 통합·과거 독립 실험 테스트는 이번에 다시 실행하지 않았다. 커밋·푸시 요청 후 위 103개를 최종 재실행해 통과했다. 실제 네이버·AI 호출은 추가 실행하지 않았다.
+- 이번 세션은 코드 점검과 위 검증을 수행했으며 별도 서브에이전트 보안·최종 코드 리뷰를 수행한 것으로 기록하지 않는다.
+
+### 알려진 문제와 다음 작업
+
+1. **가장 먼저 세션 재사용의 초기 로딩 타이밍을 수정한다.** `page.goto(..., wait_until='domcontentloaded')` 직후 `is_authenticated()`가 너무 빨리 false를 반환한다. 인증 완료 또는 로그인 화면이 준비될 때까지 제한된 조건 대기를 넣고, 지연 렌더링 회귀 테스트로 불필요한 AI 호출을 막는다. 단순히 모든 실행에 1초 sleep을 넣는 것보다 조건 기반으로 처리한다. 이 버그는 발견만 했으며 수정하지 않았다.
+2. 앞선 리뷰의 미수정 사항: `context.storage_state()`가 `indexed_db=True` 없이 저장하므로 IndexedDB 기반 인증 데이터를 잃을 수 있다. SessionStore 최소 검사는 통과하지만 Playwright에서 거부되는 상태의 복원 실패도 새 로그인으로 이어지지 않는다. 이번 네이버 성공과 별도로 보완·테스트한다.
+3. `requires_user`는 결과를 담은 `LoginError`로 종료하며 현재 브라우저가 닫힌다. 앱 승인·OTP·패스키 등을 사용자가 처리한 뒤 이어가는 대기/재개 기능은 아직 없다.
+4. iframe 내부·새 팝업·드래그·네이티브 패스키 조작은 미지원이다. 기본 조작 외의 UI는 성공을 보장하지 않는다. 다른 사이트 어댑터도 미구현이며 Google 기존 OAuth/API를 자동 교체하지 않는다.
+5. AI 판단 중 URL 변경·요소 연결 해제는 감지하지만 URL이 같은 화면의 모든 의미 변화를 감지하는 것은 아니다. 현재 폼 검사·프롬프트도 사이트의 모든 상태 변경을 완전히 차단하는 보안 경계는 아니다.
+6. 네이버 엔진의 고정 색인 조회·서비스·DB/API 연결은 별도 후속 작업이다. 사용자가 요청한 단계를 앞서 구현하지 않는다.
+
+### 커밋 범위와 실행 상태 — 사용자 승인
+
+현재 브랜치: **feat/ai-login-bot**. 기존 기준 커밋: **f16b12d**. 기능 커밋: **1c5467b — [feat] 공통 AI 로그인봇과 네이버 인증 구현**. 문서 커밋은 `git log -1`로 확인한다.
+
+| 순서 | 커밋 메시지 | 포함 범위 |
+| --- | --- | --- |
+| 1 | `[feat] 공통 AI 로그인봇과 네이버 인증 구현` | `app/browser/` 기존 추적 파일 삭제와 `app/login_bot/` 새 경로 8개 파일, `tests/test_browser_session.py` 수정, 아래 로그인 관련 신규 테스트 6개 |
+| 2 | `[docs] 네이버 실로그인 검증 결과와 후속 작업 정리` | `docs/HANDOFF.md` |
+
+- 신규 테스트 6개: `tests/test_browser_login_agent.py`, `tests/test_browser_model_client.py`, `tests/test_browser_schemas.py`, `tests/test_browser_site.py`, `tests/test_login_bot_ai_flow.py`, `tests/test_login_bot_naver.py`.
+- 1번에서 경로 변경과 의존하는 인터페이스·모델·에이전트·어댑터를 함께 커밋해 중간 커밋의 import가 깨지지 않게 한다. 2번은 그 코드의 검증과 미수정 사항을 설명한다.
+- **제외하고 보존**: `CLAUDE.md`, `naver_probe.py`, `tests/test_naver_probe.py`, `browser_bot_test/`, `app/engines/naver.py`, `app/engines/brave.py`, `app/services/index_status.py`, `outputs/db-erd-prompt.txt`, `outputs/startpress-db-erd.png`.
+- `.env`, `.secrets/`, 인증 JSON·쿠키·토큰, 캐시, 임시 실행 파일은 제외한다. `git add .`를 사용하지 않고 파일별로 명시한다.
+- 커밋 직전 선택한 변경과 비밀값 포함 여부를 확인한다. 최종 스테이징 결과에서 rename이 삭제+추가로 보이더라도 실제 이동 파일을 확인한다. 새 패키지와 관련 테스트는 기능 커밋 `1c5467b`에 포함했다. 기존 제외 파일은 미추적 상태로 보존한다.
+- 한국어 `[타입] 제목`, Git 작성자 유지, `Co-Authored-By` 없음, main/master 직접 push 금지. 사용자가 위 두 커밋의 생성과 현재 브랜치 push를 승인했다. 원격 이름은 `origin/feat/ai-login-bot`으로 맞추며 과거 원격 브랜치는 삭제하지 않는다.
+
+### 기존 로컬 브랜치 확인
+
+- `codex/publication-service`: `78819fa`를 가리키며 현재 `origin/main`과 동일하다. main에 없는 고유 커밋은 없다.
+- `feat/fastapi-basic-app`: 초기 커밋 `dd30267`을 가리키며 `origin/main`보다 14개 커밋 뒤에 있다. main에 없는 고유 커밋은 없다.
+- 두 브랜치는 main에 포함된 과거 작업 포인터다. 사용자는 용도를 물었으며 삭제는 요청하지 않아 보존했다. 원격은 fetch 후 확인했고 기존 `origin/codex/browser-login-foundation`도 삭제하지 않는다.
+
+### 관련 실행 자료
+
+- 실제 실행용 임시 파일: `/private/tmp/webmaster_naver_live_check.py`, `/private/tmp/webmaster_naver_reuse_check.py`. 첫 파일은 실제 AI 호출과 로그인을 수행하므로 설명 없이 재실행하지 않는다. 두 번째는 최근 검증 세션을 복원하며 실제 네이버에 접속한다. 두 파일은 저장소 커밋 범위 밖이고 다음 세션에 존재한다고 보장하지 않는다.
+- 앱에는 별도의 영구 실행 CLI·관리 화면 연동을 추가하지 않았다. 실행 진입점은 위 임시 도구에서 확인할 수 있으나 인증값을 문서로 옮기지 않는다.
+- `.secrets/browser_bot_test/`와 루트 probe의 과거 세션 파일은 이번 제품 실로그인 결과와 구분한다.
+
+## 과거 세션 인계 요약 — 공통 로그인 스키마·세션 저장소 / 2026-10-29
+
+**이 절은 2026-10-29 당시 기록이다. 현재 상태와 새 변경의 승인 범위는 최상단 2026-10-31 요약을 따른다.** 당시 안내: 아래 과거 기록의 브랜치·미구현·검증 상태보다 이 절과 맨 아래 마지막 상태가 우선한다. 사용자는 오늘 작업을 마무리하며 인계 문서 작성 후, 아래 계획의 **1·4·5번을 하나의 커밋으로 묶어 작업 브랜치에 push하도록 승인**했다. 네이버 probe·AI 탐색 실험은 제외하고 테스트는 재실행하지 않는다. 공통 저장소 단위 테스트 파일은 4번 범위에 포함한다.
 
 ### 사용자 의도와 확정한 구조
 
 - 사용자는 개발 개념과 필드를 하나씩 이해하며 진행하기를 원한다. 한국어로 간결하게 설명하고, 요청하지 않은 다음 기능까지 구현하지 않는다.
-- 여러 사이트에서 사용할 공통 브라우저 로그인 계층을 `app/browser/`에 만든다. 네이버·Google·Bing·Brave 중 브라우저 로그인이 필요한 기능은 같은 저장소를 재사용할 수 있다. 기존 공식 API·OAuth 인증까지 교체하는 작업은 아니다.
+- 여러 사이트에서 사용할 공통 브라우저 로그인 계층을 `app/login_bot/`에 만든다. 네이버·Google·Bing·Brave 중 브라우저 로그인이 필요한 기능은 같은 저장소를 재사용할 수 있다. 기존 공식 API·OAuth 인증까지 교체하는 작업은 아니다.
 - Python Playwright를 직접 사용한다. Playwright MCP가 필수인 구조가 아니며 사용자가 브라우저를 미리 열 필요도 없다.
 - `runtime.py` → `browser_manager.py` 분리를 논의했으나 **지금은 별도 관리 파일을 만들지 않고 login_agent.py에서 브라우저 수명까지 관리**하기로 했다.
 - 엔진이 로그인 에이전트로 로그인된 `Page`를 얻고, 같은 `Page`를 고정 조회 코드가 사용한다. 조회가 끝난 뒤 브라우저가 종료되어야 한다. `async with login_agent.authenticated_page(...) as page:`는 설명용 구상이며 아직 실제 API가 아니다.
@@ -16,12 +117,12 @@
 
 ### 완료된 작업
 
-- [x] `app/browser/` 파일 생성. **schemas.py와 session.py는 구현 완료**, `__init__.py`, `model_client.py`, `login_agent.py`는 아직 0바이트다.
+- [x] `app/login_bot/` 파일 생성. **schemas.py와 session.py는 구현 완료**, `__init__.py`, `model_client.py`, `login_agent.py`는 아직 0바이트다.
 - [x] Pydantic 불변 스키마 3개 구현·검증·보안 검토·최종 코드 리뷰 완료. 사용자에게 완료 보고했다.
 - [x] `SessionStore` 구현·테스트·보안 검토·최종 코드 리뷰 완료. 사용자에게 완료 보고했다.
 - [x] 독립 AI 브라우저 실험에서 비밀번호 수정 후 캡차 확인·재로그인·서치어드바이저 콘솔·대상 사이트 진입에 성공했다. 제품 공통 로그인 에이전트 구현 완료를 뜻하지 않는다.
 
-### 스키마 — app/browser/schemas.py
+### 스키마 — app/login_bot/schemas.py
 
 | 타입 | 필드 |
 | --- | --- |
@@ -35,7 +136,7 @@
 - `SessionKey.site`는 DB 사이트 UUID가 아니라 `naver` 같은 로그인 서비스 식별자다. `account_id`는 로그인 ID·비밀번호 대신 계정별 내부 식별자다. 두 필드 모두 ASCII 영숫자·하이픈·밑줄, 최대 64자로 제한한다.
 - `LoginResult.reason`은 안전한 사유를 받는 계약이며 스키마 자체가 비밀값을 자동 마스킹하지는 않는다. AI 동작 스키마는 아직 제품 코드에 추가하지 않았다.
 
-### 세션 저장소 — app/browser/session.py
+### 세션 저장소 — app/login_bot/session.py
 
 - `SessionStore(root_dir=...)`는 불변 dataclass이며 기본 저장 위치는 프로젝트의 `.secrets/browser_sessions/{site}/{account_id}.json`이다.
 - `load(key) -> StorageState | None`: 파일이 없으면 None, 손상·접근 오류는 예외로 구분한다.
@@ -85,20 +186,20 @@
 | 1 | `[chore] 브라우저 자동화를 위한 Playwright 의존성 추가` | `pyproject.toml`, `uv.lock` |
 | 2 | `[feat] 네이버 로그인과 인증 상태 검증 도구 추가` | `naver_probe.py`, `tests/test_naver_probe.py` |
 | 3 | `[test] AI 브라우저 탐색 실험과 검증 기록 추가` | `browser_bot_test/`의 소스·테스트·문서·`.env.example` |
-| 4 | `[feat] 공통 로그인 스키마와 인증 상태 저장소 구현` | `app/browser/` 5개 파일, `tests/test_browser_session.py` |
+| 4 | `[feat] 공통 로그인 스키마와 인증 상태 저장소 구현` | `app/login_bot/` 5개 파일, `tests/test_browser_session.py` |
 | 5 | `[docs] 브라우저 로그인 작업 인계 문서 갱신` | `docs/HANDOFF.md` |
 
 - 3번 실험은 루트 `naver_probe.py`를 사용하므로 2번 뒤에 둔다. 4번은 Playwright 타입을 사용하므로 1번에 의존한다. 빈 login_agent/model_client 파일은 사용자가 요청한 구조이며 구현 완료로 설명하지 않는다.
 - 이전에 사용자가 네이버 엔진 초안을 커밋하지 않도록 요청한 기록을 보존한다. **`app/engines/naver.py`, 빈 `app/engines/brave.py`, 빈 `app/services/index_status.py`, 로컬 ERD 자료 `outputs/db-erd-prompt.txt`, `outputs/startpress-db-erd.png`는 이 계획에서 제외**한다.
 - `.env`, `.secrets/`, 인증 JSON·토큰·쿠키, 임시 환경, 캐시는 제외한다. `git add .`로 일괄 스테이징하지 않는다.
 - 실제 커밋 전에 변경 범위·비밀값 포함 여부·필요 검증을 확인한다. 프로젝트 규칙대로 한국어 `[타입] 제목`, Git에 설정된 작성자 유지, **Co-Authored-By 트레일러 없음**. main/master 직접 push 금지.
-- 최종 승인 범위는 의존성 2개 파일, app/browser/ 5개 파일, tests/test_browser_session.py, docs/HANDOFF.md다. 새 테스트 실행은 생략하며 위 테스트 수치는 이전 실행 결과다. 최종 커밋·원격 상태는 `git log -1`과 브랜치 upstream으로 확인한다.
+- 최종 승인 범위는 의존성 2개 파일, app/login_bot/ 5개 파일, tests/test_browser_session.py, docs/HANDOFF.md다. 새 테스트 실행은 생략하며 위 테스트 수치는 이전 실행 결과다. 최종 커밋·원격 상태는 `git log -1`과 브랜치 upstream으로 확인한다.
 
 ### 관련 파일·환경
 
-- `app/browser/schemas.py`: 공통 정책·결과·세션 키. `app/browser/session.py`: 인증 상태 파일 저장소.
+- `app/login_bot/schemas.py`: 공통 정책·결과·세션 키. `app/login_bot/session.py`: 인증 상태 파일 저장소.
 - `tests/test_browser_session.py`: 저장·읽기·삭제·오류·파일 권한·계정 분리·서로게이트 보존 검증.
-- `app/browser/model_client.py`, `login_agent.py`: 다음 구현 대상, 현재 빈 파일.
+- `app/login_bot/model_client.py`, `login_agent.py`: 다음 구현 대상, 현재 빈 파일.
 - `browser_bot_test/agent.py`, `README.md`, `INVESTIGATION.md`, `test_agent.py`: 동기식 독립 실험 자료. 성공 후 최신 결론은 이 절이 우선한다.
 - `naver_probe.py`, `tests/test_naver_probe.py`: 기존 네이버 로그인·비공개 파일 검증 참고 자료.
 - `pyproject.toml`, `uv.lock`: Playwright 의존성이 포함된 미커밋 변경.
@@ -648,18 +749,17 @@ Notion은 요구사항·설계 자료다. 실제 구현·적용 여부는 이 �
 
 ## 마지막 상태
 
-- 갱신일: **2026-10-29 / Asia/Seoul**.
+- 갱신일: **2026-10-31 / Asia/Seoul**.
 - 작업 디렉터리: `/Users/kim-yudam/Desktop/study/sideProject/webmaster_automation`.
-- 브랜치: **codex/browser-login-foundation**. 기준 커밋은 **78819fa — [feat] Bing 등록 및 URL 수집 상태 조회 구현**이며 이번 통합 커밋은 `git log -1`로 확인한다.
-- 최종 사용자 요청으로 의존성·공통 browser·단위 테스트 파일·인계 문서를 한 커밋으로 묶어 작업 브랜치에 push한다. 나머지 로컬 변경은 제외하며 테스트는 다시 실행하지 않는다.
-- 실행 환경: **Miniconda startpress**, 직접 실행 시 **PYTHONNOUSERSITE=1**, .venv 사용 금지.
-- 이번 브라우저 실험의 별도 임시 검증 환경: `/private/tmp/webmaster-browser-test-venv/`. 프로젝트의 영구 실행 환경으로 합의한 것은 아니다.
-- DB: **PostgreSQL 18.6 / Alembic 0002(head)**. 테스트 고객사·블로그와 Naver·Bing 키 설정이 저장돼 있다.
-- 과거 전체 검증: PostgreSQL 통합 포함 **284 passed**. 이번 세션은 서비스 통합 관련 32개+39개, 발행 알림·IndexNow 관련 72개를 각각 검증했다. 현재 전체 테스트를 다시 실행한 수치는 아니다.
-- 위 서비스 테스트 수치는 이전 세션 기록이다. 브라우저 실험은 **28 passed**, 공통 스키마는 **17개 검사·최종 리뷰 완료**, 인증 상태 저장소는 기존 probe와 합쳐 **31 passed, 2 deselected**다. 스키마 전용 pytest 파일과 프로젝트 전체 재검증은 아직 없다.
-- 실제 IndexNow: **2026-10-27 19:09 KST, 메인 URL 1개·1회 제출·HTTP 200 accepted**. 개별 엔진의 수집·색인 완료를 뜻하지 않는다.
-- 실제 네이버 실험: 비밀번호 수정 후 로그인·콘솔·대상 사이트 진입 성공. 최종 모델 보고는 수집 정보 없음이며 색인 수 0·미색인 확정이 아니다. 공통 SessionStore 구현은 완료했지만 실제 로그인봇과의 저장·복원 연결은 아직 없다.
-- 다음 작업: 공통 `model_client.py`를 설명하고 구현한 뒤 `login_agent.py`에서 브라우저 수명·인증 상태 복원·로그인·같은 Page 제공을 연결한다. 스키마와 session.py는 완료 상태다. 과거 후속 작업을 사용자의 현재 요청보다 앞서 실행하지 않는다.
-- 보존: Google 세션 기록·기존 공개 검증 파일·로컬 ERD 자료. .env·토큰은 커밋·출력하지 않는다.
+- 브랜치: **feat/ai-login-bot**. 기능 커밋: **1c5467b — [feat] 공통 AI 로그인봇과 네이버 인증 구현**. 문서 커밋·최종 HEAD는 `git log -2`로 확인한다.
+- 실행 환경: **Miniconda startpress**, 직접 실행 시 **PYTHONNOUSERSITE=1**, 프로젝트 .venv 사용 금지.
+- 현재 제품 패키지: `app/login_bot/`. Python Playwright 직접 사용, AI Chat Completions, 사이트 규칙은 `sites/`에 분리.
+- 실제 네이버 로그인: 지정 학교 게이트웨이·모델에 실제 인증정보를 보내도록 사용자가 명시 승인한 뒤 **AI 10회 호출로 콘솔 진입·인증 상태 저장 성공**.
+- 저장 상태 재사용: 별도 브라우저에서 **AI 호출 없이 1초 뒤 인증 성공**. 제품의 즉시 인증 판정이 너무 빠른 문제는 **아직 미수정**.
+- 마지막 관련 로컬 검증: **103 passed**. 프로젝트 전체·DB 통합 테스트를 다시 실행한 결과는 아니다. 커밋 직전 관련 103개를 다시 실행해 통과했다.
+- 이번 요청: 사용자가 **기능·문서 2개 커밋 생성과 현재 브랜치 push를 승인**했다. 대상은 `origin/feat/ai-login-bot`이다. 기존 로컬·원격 브랜치와 제외 파일은 보존한다.
+- 다음 우선 작업: 초기 인증 화면의 조건 대기와 회귀 테스트. 이후 IndexedDB 보존·잘못된 복원 상태 처리 등 최상단 미해결 목록을 따른다.
+- 네이버 엔진 조회·서비스·DB/API 연결은 아직 별도 후속이다. 과거 Google·Bing·IndexNow 기록과 관련 로컬 자료를 보존한다.
+- `.env`·인증 JSON·쿠키·토큰은 출력·문서화·커밋하지 않는다. 미추적 실험·엔진 초안·CLAUDE.md·ERD 자료는 커밋 계획에서 제외한다.
 
-새 세션에서: **‘docs/HANDOFF.md 최상단의 2026-10-29 요약을 읽고 이어서 진행해줘. 공통 로그인봇을 app/browser에 만드는 중이며 스키마 3개와 SessionStore는 구현·검증·리뷰 완료야. 다음은 model_client.py, 그다음 login_agent.py이고 두 파일은 아직 비어 있어. browser_manager.py는 지금 별도로 만들지 않기로 했어. 기존 미커밋 작업을 보존하고 기능은 한 단계씩 설명해줘. 최종 승인된 의존성·공통 browser·인계 문서는 한 커밋으로 작업 브랜치에 push하는 범위야. 네이버 probe와 AI 실험 등 제외한 로컬 파일을 추가 커밋하지 마.’**
+새 세션에서: **‘docs/HANDOFF.md 최상단의 2026-10-31 요약부터 읽고 이어서 진행해줘. app/login_bot 공통 AI 로그인봇과 네이버 어댑터는 구현됐고 실제 로그인·상태 저장·별도 복원 확인에 성공했어. 단 제품의 세션 재사용 확인이 너무 빨라 불필요한 AI 호출로 넘어가는 버그는 아직 남아 있어. 먼저 조건 대기와 회귀 테스트를 진행할 계획이야. 기존 미커밋 변경을 보존하고 단계별로 간결하게 설명해줘. 사용자가 기능·문서 두 커밋과 feat/ai-login-bot push를 승인했어. git log -2와 upstream으로 최종 상태를 확인해줘. 기존 실험·엔진 초안과 과거 브랜치는 제외하고 보존했어.’**
