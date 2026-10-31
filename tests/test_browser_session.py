@@ -9,8 +9,8 @@ from typing import cast
 import pytest
 from playwright.async_api import StorageState
 
-from app.browser.schemas import SessionKey
-from app.browser.session import SessionStore, SessionStoreError
+from app.login_bot.schemas import SessionKey
+from app.login_bot.session import SessionStore, SessionStoreError
 
 KEY = SessionKey(site="naver", account_id="primary")
 
@@ -102,7 +102,7 @@ def test_failed_replace_preserves_previous_file(store: SessionStore, monkeypatch
     def fail_replace(source: Path, destination: Path) -> None:
         raise OSError("private-token")
 
-    monkeypatch.setattr("app.browser.session.os.replace", fail_replace)
+    monkeypatch.setattr("app.login_bot.session.os.replace", fail_replace)
     with pytest.raises(SessionStoreError) as error:
         store.save(KEY, {"cookies": [], "origins": [{"origin": "https://other.example", "localStorage": []}]})
     assert error.value.code == "io"

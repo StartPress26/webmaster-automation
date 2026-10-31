@@ -1,7 +1,8 @@
 """공통 브라우저 로그인 정책·결과·세션 식별자를 정의합니다."""
 
 import re
-from typing import Literal, Self
+from dataclasses import dataclass, field
+from typing import Annotated, Literal, Self
 from urllib.parse import urlsplit
 
 from pydantic import (
@@ -9,6 +10,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    TypeAdapter,
     field_validator,
     model_validator,
 )
@@ -17,6 +19,19 @@ HOST_PATTERN = re.compile(
     r"(?=.{1,253}\Z)[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?"
     r"(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*"
 )
+
+
+@dataclass(frozen=True)
+class LoginCredentials:
+    """사이트 구현을 생성할 때 주입하는 로그인 정보이며 출력 시 값을 숨깁니다."""
+
+    login_id: str = field(repr=False)
+    password: str = field(repr=False)
+
+    # 빈 인증정보를 거부하되 오류 메시지에 값을 포함하지 않습니다.
+    def __post_init__(self) -> None:
+        if not self.login_id or not self.password:
+            raise ValueError("로그인 ID와 비밀번호를 모두 입력하세요.")
 
 
 class LoginPolicy(BaseModel):
@@ -104,3 +119,52 @@ class SessionKey(BaseModel):
 
     site: str = Field(min_length=1, max_length=64, pattern=r"^[a-zA-Z0-9][a-zA-Z0-9_-]*$")
     account_id: str = Field(min_length=1, max_length=64, pattern=r"^[a-zA-Z0-9][a-zA-Z0-9_-]*$")
+
+
+class _LoginActionBase(BaseModel):
+    """AI가 고른 로그인 동작의 공통 설정이며 검증 오류에 입력값을 포함하지 않습니다."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid", hide_input_in_errors=True)
+
+
+class ElementAction(_LoginActionBase):
+    """현재 관찰의 요소 번호를 지정하는 클릭·입력 동작입니다."""
+
+    action: Literal["click", "fill"]
+    index: int = Field(ge=0, strict=True)
+    text: str = Field(default="", max_length=2000, repr=False)
+
+    # 입력 동작에는 값을, 클릭 동작에는 빈 값을 요구합니다.
+    @model_validator(mode="after")
+    def validate_text(self) -> Self:
+        if (self.action == "fill") != bool(self.text):
+            raise ValueError("fill에는 입력값이 필요하고 click에는 입력값을 넣을 수 없습니다.")
+        return self
+
+
+class ScrollAction(_LoginActionBase):
+    """화면을 위아래로 이동하는 동작입니다."""
+
+    action: Literal["scroll"]
+    direction: Literal["up", "down"]
+
+
+class SimpleAction(_LoginActionBase):
+    """화면 전환을 기다리는 동작입니다."""
+
+    action: Literal["wait"]
+
+
+class HumanAction(_LoginActionBase):
+    """AI가 처리할 수 없어 사용자에게 넘기는 동작입니다."""
+
+    action: Literal["human"]
+    reason: str = Field(min_length=1, max_length=500)
+
+
+LoginAction = Annotated[
+    ElementAction | ScrollAction | SimpleAction | HumanAction, Field(discriminator="action")
+]
+LOGIN_ACTION: TypeAdapter[LoginAction] = TypeAdapter(
+    LoginAction, config=ConfigDict(hide_input_in_errors=True)
+)

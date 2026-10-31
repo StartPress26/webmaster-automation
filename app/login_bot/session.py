@@ -11,7 +11,7 @@ from typing import Literal, cast
 from playwright.async_api import StorageState
 from pydantic import ValidationError
 
-from app.browser.schemas import SessionKey
+from app.login_bot.schemas import SessionKey
 
 DEFAULT_SESSION_DIR = Path(__file__).resolve().parents[2] / ".secrets" / "browser_sessions"
 ErrorCode = Literal["unsafe_path", "invalid_state", "io"]
