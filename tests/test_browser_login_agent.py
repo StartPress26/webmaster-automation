@@ -56,6 +56,10 @@ class FakeSite:
     )
     auth_delay: float = 0.0
 
+    # 인증 화면 또는 로그인 입력 화면이 표시될 때까지 기다립니다.
+    async def wait_until_ready(self, page: Page) -> None:
+        await page.locator("h1#console, input#id").first.wait_for(state="visible")
+
     # 콘솔 제목이 보이는지로 로그인 성공을 판정하며 필요하면 지연시킵니다.
     async def is_authenticated(self, page: Page) -> bool:
         await asyncio.sleep(self.auth_delay)

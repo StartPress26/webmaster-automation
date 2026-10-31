@@ -159,8 +159,9 @@ async def _ensure_login(page: Page, site: LoginSite, model: JsonModel) -> LoginR
             try:
                 # domcontentloaded는 HTML이 해석되어 문서 구조가 준비될 때까지 기다리겠다.
                 await page.goto(site.policy.start_url, wait_until="domcontentloaded")
+                await site.wait_until_ready(page)
             except PlaywrightError:
-                return LoginResult(status="failed", reason="로그인 시작 주소에 접속하지 못했습니다.")
+                return LoginResult(status="failed", reason="로그인 화면을 준비하지 못했습니다.")
             if await site.is_authenticated(page):
                 return LoginResult(status="authenticated", reason="저장된 세션으로 로그인을 확인했습니다.")
             return await _run_login(page, site, model)

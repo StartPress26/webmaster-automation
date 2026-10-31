@@ -53,6 +53,10 @@ class FakeSite:
         login_id="private-id", password="private-password",
     ), repr=False)
 
+    # 초기 화면의 로그인 조작 요소 또는 인증 완료 표시를 기다립니다.
+    async def wait_until_ready(self, page: Page) -> None:
+        await page.locator("input, button, #authenticated").first.wait_for(state="visible")
+
     # 로컬 완료 표시가 보이면 인증 성공입니다.
     async def is_authenticated(self, page: Page) -> bool:
         return await page.locator("#authenticated").is_visible()

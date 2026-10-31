@@ -26,6 +26,9 @@ class LoginSite(Protocol):
     @property
     def credentials(self) -> LoginCredentials: ...
 
+    # 인증 화면 또는 로그인 입력 화면이 준비될 때까지 기다립니다.
+    async def wait_until_ready(self, page: Page) -> None: ...
+
     # 현재 화면이 로그인 완료 상태인지 사이트별 코드로 판정합니다.
     async def is_authenticated(self, page: Page) -> bool: ...
 

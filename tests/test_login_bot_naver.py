@@ -1,5 +1,6 @@
 """외부 접속 없이 네이버 로그인 규칙과 인증정보 제출을 검증합니다."""
 
+import asyncio
 from collections.abc import AsyncIterator
 
 import pytest
@@ -8,10 +9,21 @@ from playwright.async_api import Page, Route, async_playwright
 from app.login_bot.sites.naver import NaverLoginSite
 from app.login_bot.schemas import LoginCredentials
 from app.login_bot.sites.base import LoginSite
+from app.login_bot.login_agent import _ensure_login
 
 pytestmark = pytest.mark.anyio
 LOGIN_URL = "https://nid.naver.com/nidlogin.login"
 CONSOLE_URL = "https://searchadvisor.naver.com/console/board"
+
+
+class NoCallModel:
+    """인증 화면 대기 중 불필요한 AI 호출이 발생하면 테스트를 실패시킵니다."""
+
+    # 세션 복원과 화면 준비 실패는 AI를 호출하지 않아야 합니다.
+    async def complete_json(
+        self, system: str, user_text: str, image_data_url: str | None = None
+    ) -> dict[str, object]:
+        pytest.fail("화면 준비 중 AI가 호출되었습니다.")
 
 
 
@@ -90,7 +102,61 @@ async def test_authenticated(
         ('<p hidden>비밀번호가 일치하지 않습니다.</p>', False),
     ],
 )
-async def test_credential_error(page: Page, site: NaverLoginSite, html: str, expected: bool) -> None:
-    await page.goto(LOGIN_URL)
+@pytest.mark.parametrize("login_url", [LOGIN_URL, "https://nid.naver.com/oauth2.0/authorize"])
+async def test_credential_error(
+    page: Page, site: NaverLoginSite, html: str, expected: bool, login_url: str,
+) -> None:
+    await page.goto(login_url)
     await page.set_content(html)
     assert await site.credential_error_visible(page) is expected
+
+
+# 콘솔 표시가 HTML 로딩보다 늦어도 AI 호출 없이 인증을 확인합니다.
+async def test_delayed_console_skips_ai(page: Page, site: NaverLoginSite) -> None:
+    # 로그인된 세션을 복원한 뒤 콘솔 화면이 늦게 렌더링되는 응답입니다.
+    async def delayed_console(route: Route) -> None:
+        await route.fulfill(content_type="text/html; charset=utf-8", body="""
+            <body><script>setTimeout(() => {
+                document.body.innerHTML = '<h2>사이트 등록</h2>';
+            }, 400);</script></body>
+        """)
+
+    await page.route(CONSOLE_URL, delayed_console)
+    result = await _ensure_login(page, site, NoCallModel())
+
+    assert result.status == "authenticated"
+    assert result.steps == 0
+
+
+# 로그인 입력칸이 지연 표시되면 두 입력칸이 준비된 뒤 대기를 마칩니다.
+@pytest.mark.parametrize("login_url", [LOGIN_URL, "https://nid.naver.com/oauth2.0/authorize"])
+async def test_waits_for_login_form(page: Page, site: NaverLoginSite, login_url: str) -> None:
+    await page.goto(login_url)
+    await page.set_content("""<body><script>setTimeout(() => {
+        document.body.innerHTML = '<input id="id"><input id="pw" type="password">';
+    }, 200);</script></body>""")
+
+    async with asyncio.timeout(2):
+        await site.wait_until_ready(page)
+
+    assert await page.locator("#id").is_visible()
+    assert await page.locator("#pw").is_visible()
+
+
+# 준비되지 않은 화면이나 잘못된 주소의 로그인 양식은 AI 대신 제한 시간 초과로 끝냅니다.
+@pytest.mark.parametrize("html", ["<body></body>", '<input id="id"><input id="pw">'])
+async def test_readiness_timeout_skips_ai(
+    page: Page, site: NaverLoginSite, html: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # 콘솔 주소에 로그인 입력칸만 있어도 정상 로그인 화면으로 오인하지 않습니다.
+    async def unready_console(route: Route) -> None:
+        await route.fulfill(content_type="text/html", body=html)
+
+    await page.route(CONSOLE_URL, unready_console)
+    monkeypatch.setattr(
+        NaverLoginSite, "_policy", site.policy.model_copy(update={"timeout_seconds": 0.3})
+    )
+    result = await _ensure_login(page, site, NoCallModel())
+
+    assert result.status == "failed"
+    assert "제한 시간" in result.reason
