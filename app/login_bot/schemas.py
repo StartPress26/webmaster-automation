@@ -45,6 +45,7 @@ class LoginPolicy(BaseModel):
     max_steps: int = Field(default=25, ge=1, strict=True)
     max_login_attempts: int = Field(default=3, ge=1, strict=True)
     timeout_seconds: float = Field(default=180.0, gt=0, allow_inf_nan=False, strict=True)
+    human_timeout_seconds: float = Field(default=180.0, gt=0, allow_inf_nan=False, strict=True)
 
     # 로그인 주소는 인증정보·공백·프래그먼트 없는 HTTPS 주소로 제한합니다.
     @field_validator("start_url")

@@ -3,9 +3,10 @@
 import asyncio
 import base64
 import json
+import re
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import Protocol
+from typing import Literal, Protocol
 from urllib.parse import urljoin, urlsplit
 
 from playwright.async_api import Browser, BrowserContext, ElementHandle, Page, Route, StorageState, async_playwright
@@ -14,14 +15,16 @@ from playwright.async_api import Error as PlaywrightError
 from pydantic import ValidationError
 
 from app.login_bot.model_client import ModelClientError
+from app.login_bot.human_auth import AuthCode, SmsCodeProvider
 from app.login_bot.schemas import (
     LOGIN_ACTION, ElementAction, HumanAction, LoginAction, LoginPolicy,
     LoginResult, ScrollAction, SessionKey,
 )
 from app.login_bot.session import SessionStore, SessionStoreError
-from app.login_bot.sites.base import LoginSite
+from app.login_bot.sites.base import LoginSite, SmsChallenge, SmsLoginSite
 
 DEFAULT_ACTION_TIMEOUT_MS = 8000
+SMS_RESULT_TIMEOUT_SECONDS = 30.0
 CONTROLS = 'a, button, input:not([type="hidden"]), textarea, [role="button"]'
 SYSTEM_PROMPT = """주어진 계정으로 로그인하는 브라우저 에이전트입니다.
 credentials의 login_id와 password를 사용해 로그인 과정을 직접 진행하세요.
@@ -82,6 +85,7 @@ def is_allowed_url(url: str, policy: LoginPolicy) -> bool:
     )
 
 
+# 인증된 같은 탭을 제공하고 작업 완료·실패·취소 시 브라우저를 닫습니다.
 @asynccontextmanager
 async def authenticated_page(
     site: LoginSite,
@@ -90,6 +94,7 @@ async def authenticated_page(
     model: JsonModel,
     store: SessionStore | None = None,
     headless: bool = False,
+    sms_provider: SmsCodeProvider | None = None,
 ) -> AsyncGenerator[Page, None]:
     """로그인이 확인된 Page를 제공하고 블록이 끝나면 브라우저를 종료합니다.
 
@@ -104,7 +109,7 @@ async def authenticated_page(
         browser = await runtime.chromium.launch(headless=headless)
         try:
             page = await _prepare_page(await _new_context(browser, state), site.policy)
-            result = await _ensure_login(page, site, model)
+            result = await _ensure_login(page, site, model, sms_provider=sms_provider)
             if result.status != "authenticated":
                 raise LoginError(result)
             state = await page.context.storage_state()
@@ -159,9 +164,11 @@ async def _close_popup(page: Page) -> None:
 
 
 # 시작 주소에서 기존 세션을 확인하고 필요하면 AI 로그인을 제한 시간 안에 실행합니다.
-async def _ensure_login(page: Page, site: LoginSite, model: JsonModel) -> LoginResult:
+async def _ensure_login(
+    page: Page, site: LoginSite, model: JsonModel, *, sms_provider: SmsCodeProvider | None = None
+) -> LoginResult:
     try:
-        async with asyncio.timeout(site.policy.timeout_seconds):
+        async with asyncio.timeout(site.policy.timeout_seconds) as login_timeout:
             try:
                 # domcontentloaded는 HTML이 해석되어 문서 구조가 준비될 때까지 기다리겠다.
                 await page.goto(site.policy.start_url, wait_until="domcontentloaded")
@@ -170,13 +177,16 @@ async def _ensure_login(page: Page, site: LoginSite, model: JsonModel) -> LoginR
                 return LoginResult(status="failed", reason="로그인 화면을 준비하지 못했습니다.")
             if await site.is_authenticated(page):
                 return LoginResult(status="authenticated", reason="저장된 세션으로 로그인을 확인했습니다.")
-            return await _run_login(page, site, model)
+            return await _run_login(page, site, model, sms_provider=sms_provider, login_timeout=login_timeout)
     except TimeoutError:
         return LoginResult(status="failed", reason="로그인 제한 시간을 초과했습니다.")
 
 
 # 미인증 화면과 계정 변수를 AI에 전달하고 검증한 행동을 제한된 횟수만 실행합니다.
-async def _run_login(page: Page, site: LoginSite, model: JsonModel) -> LoginResult:
+async def _run_login(
+    page: Page, site: LoginSite, model: JsonModel, *, sms_provider: SmsCodeProvider | None = None,
+    login_timeout: asyncio.Timeout | None = None,
+) -> LoginResult:
     history: tuple[dict[str, str], ...] = ()
     previous_url: str | None = None
     attempts = 0
@@ -189,6 +199,13 @@ async def _run_login(page: Page, site: LoginSite, model: JsonModel) -> LoginResu
             # 계정 정보가 틀렸다면 이건 사용자의 문제
             if await site.credential_error_visible(page):
                 return LoginResult(status="requires_user", reason="계정 인증정보를 확인해야 합니다.", steps=step, login_attempts=attempts)
+            if isinstance(site, SmsLoginSite):
+                challenge = await site.detect_sms_challenge(page)
+                if challenge is not None:
+                    # 문자 인증 이후에는 오류가 나도 AI 관찰 루프로 돌아가지 않습니다.
+                    return await _complete_sms_login(
+                        page, site, challenge, sms_provider, login_timeout, step, attempts
+                    )
             observed_url = page.url
             observation, elements = await _observe_page(page)
             if observed_url != previous_url:
@@ -236,6 +253,123 @@ async def _run_login(page: Page, site: LoginSite, model: JsonModel) -> LoginResu
         status="failed", reason="로그인 행동 횟수를 초과했습니다.",
         steps=site.policy.max_steps, login_attempts=attempts,
     )
+
+
+# 사용자 대기만 자동 조작 제한에서 분리하고 별도 제한 시간 안에 코드를 요청합니다.
+async def _request_sms_code(
+    provider: SmsCodeProvider, site: LoginSite, challenge: SmsChallenge,
+    login_timeout: asyncio.Timeout | None,
+) -> AuthCode | None:
+    loop = asyncio.get_running_loop()
+    deadline = login_timeout.when() if login_timeout is not None else None
+    remaining = max(0.0, deadline - loop.time()) if deadline is not None else None
+    if login_timeout is not None:
+        login_timeout.reschedule(None)
+    try:
+        async with asyncio.timeout(site.policy.human_timeout_seconds):
+            return await provider.request_code(
+                service=site.name, masked_phone=challenge.masked_phone,
+                timeout_seconds=site.policy.human_timeout_seconds,
+            )
+    finally:
+        if login_timeout is not None and remaining is not None:
+            login_timeout.reschedule(loop.time() + remaining)
+
+
+# OTP를 URL이나 허용되지 않은 폼 목적지로 전송하지 않도록 입력·제출 요소를 검사합니다.
+async def _validate_sms_destination(
+    page: Page, policy: LoginPolicy, code_input: ElementHandle, button: ElementHandle
+) -> None:
+    if not is_allowed_url(page.url, policy):
+        raise ValueError("문자 인증 화면 주소가 변경되었습니다.")
+    if not await code_input.evaluate("(el, button) => el.form === button.form", button):
+        raise ValueError("문자 인증 입력칸과 제출 폼이 다릅니다.")
+    for element in (code_input, button):
+        info = await element.evaluate("""el => ({
+            connected: el.isConnected,
+            destination: el.form && (el.hasAttribute('formaction') ? el.formAction : el.form.action),
+            method: el.form && (el.hasAttribute('formmethod') ? el.formMethod : el.form.method),
+            href: el.href
+        })""")
+        if not info["connected"]:
+            raise ValueError("문자 인증 요소가 변경되었습니다.")
+        for destination in (info["destination"], info["href"]):
+            if destination and not is_allowed_url(urljoin(page.url, destination), policy):
+                raise ValueError("허용되지 않은 문자 인증 전송 대상입니다.")
+        if info["method"] and info["method"].lower() != "post":
+            raise ValueError("문자 인증 코드를 URL에 포함하는 폼은 사용할 수 없습니다.")
+
+
+# 대기 중 같은 URL에서 폼이 교체된 경우까지 검사하여 이전 요청의 코드를 사용하지 않습니다.
+async def _same_sms_screen(
+    page: Page, sms_site: SmsLoginSite, url: str, original: SmsChallenge,
+    code_input: ElementHandle, button: ElementHandle,
+) -> bool:
+    if page.url != url:
+        return False
+    current = await sms_site.detect_sms_challenge(page)
+    if current is None or current.masked_phone != original.masked_phone:
+        return False
+    current_input = await current.code_input.element_handle(timeout=DEFAULT_ACTION_TIMEOUT_MS)
+    current_button = await current.submit_button.element_handle(timeout=DEFAULT_ACTION_TIMEOUT_MS)
+    return (
+        page.url == url
+        and await code_input.evaluate("(el, other) => el.isConnected && el === other", current_input)
+        and await button.evaluate("(el, other) => el.isConnected && el === other", current_button)
+    )
+
+
+# 문자 코드를 한 번만 제출하고 AI 호출 없이 최종 인증 또는 오류까지 확인합니다.
+async def _complete_sms_login(
+    page: Page, site: SmsLoginSite, challenge: SmsChallenge,
+    provider: SmsCodeProvider | None, login_timeout: asyncio.Timeout | None, step: int, attempts: int,
+) -> LoginResult:
+    # 모든 결과에 동일한 로그인 진행 정보를 붙이며 코드 원문은 포함하지 않습니다.
+    def result(status: Literal["authenticated", "requires_user", "failed"], reason: str) -> LoginResult:
+        return LoginResult(status=status, reason=reason, steps=step + 1, login_attempts=attempts)
+
+    if provider is None:
+        return result("requires_user", "문자 인증 코드 입력 수단이 연결되지 않았습니다.")
+    try:
+        if await site.sms_code_error_visible(page):
+            return result("requires_user", "문자 인증 코드 오류 또는 만료를 확인해야 합니다.")
+        observed_url = page.url
+        code_input = await challenge.code_input.element_handle(timeout=DEFAULT_ACTION_TIMEOUT_MS)
+        button = await challenge.submit_button.element_handle(timeout=DEFAULT_ACTION_TIMEOUT_MS)
+        if code_input is None or button is None:
+            return result("requires_user", "문자 인증 입력 화면이 변경되었습니다.")
+        await _validate_sms_destination(page, site.policy, code_input, button)
+        try:
+            code = await _request_sms_code(provider, site, challenge, login_timeout)
+        except TimeoutError:
+            return result("requires_user", "문자 인증 코드 입력 대기 시간이 만료되었습니다.")
+        if code is None:
+            return result("requires_user", "문자 인증 코드 입력이 완료되지 않았습니다.")
+        if not isinstance(code, AuthCode) or re.fullmatch(r"[0-9]{6}", code.value) is None:
+            return result("requires_user", "문자 인증 코드 형식을 확인해야 합니다.")
+        if not await _same_sms_screen(page, site, observed_url, challenge, code_input, button):
+            return result("requires_user", "대기 중 문자 인증 화면이 변경되었습니다. 다시 확인해야 합니다.")
+        await _validate_sms_destination(page, site.policy, code_input, button)
+        await code_input.fill(code.value, timeout=DEFAULT_ACTION_TIMEOUT_MS)
+        if not await _same_sms_screen(page, site, observed_url, challenge, code_input, button):
+            return result("requires_user", "코드 입력 후 문자 인증 화면이 변경되었습니다.")
+        await _validate_sms_destination(page, site.policy, code_input, button)
+        await button.click(timeout=DEFAULT_ACTION_TIMEOUT_MS)
+        try:
+            async with asyncio.timeout(SMS_RESULT_TIMEOUT_SECONDS):
+                while True:
+                    if not is_allowed_url(page.url, site.policy):
+                        return result("failed", "문자 인증 후 허용되지 않은 주소로 이동했습니다.")
+                    if await site.is_authenticated(page):
+                        return result("authenticated", "문자 인증 후 로그인을 확인했습니다.")
+                    if await site.sms_code_error_visible(page) or await site.credential_error_visible(page):
+                        return result("requires_user", "문자 인증 코드 오류 또는 만료를 확인해야 합니다.")
+                    await asyncio.sleep(0.1)
+        except TimeoutError:
+            return result("requires_user", "문자 인증 후 로그인 완료를 확인하지 못했습니다.")
+    except Exception:
+        # 코드가 입력된 화면·예외를 AI에 전달하거나 원문으로 기록하지 않습니다.
+        return result("failed", "문자 인증 처리 중 오류가 발생했습니다. 화면과 연결을 확인하세요.")
 
 
 # 입력 원문을 제외하고 조작 대상과 입력 후 상태를 다음 AI 호출에 전달합니다.
