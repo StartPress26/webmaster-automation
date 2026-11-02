@@ -1,10 +1,20 @@
 """사이트별 로그인 규칙을 공통 로그인 에이전트에 전달하는 약속을 정의합니다."""
 
-from typing import Protocol
+from dataclasses import dataclass, field
+from typing import Protocol, runtime_checkable
 
-from playwright.async_api import Page
+from playwright.async_api import Locator, Page
 
 from app.login_bot.schemas import LoginCredentials, LoginPolicy
+
+
+@dataclass(frozen=True)
+class SmsChallenge:
+    """문자 발송 안내와 현재 화면의 입력·확인 요소를 묶습니다."""
+
+    masked_phone: str | None
+    code_input: Locator = field(repr=False)
+    submit_button: Locator = field(repr=False)
 
 
 class LoginSite(Protocol):
@@ -34,3 +44,14 @@ class LoginSite(Protocol):
 
     # 아이디·비밀번호 불일치 안내가 화면에 보이는지 확인합니다.
     async def credential_error_visible(self, page: Page) -> bool: ...
+
+
+@runtime_checkable
+class SmsLoginSite(LoginSite, Protocol):
+    """문자 인증 감지를 지원하는 사이트만 선택적으로 구현하는 계약입니다."""
+
+    # 발송 안내와 입력 요소를 확인하며 모호하면 None을 반환합니다.
+    async def detect_sms_challenge(self, page: Page) -> SmsChallenge | None: ...
+
+    # 문자 인증 코드의 오답·만료 안내를 확인합니다.
+    async def sms_code_error_visible(self, page: Page) -> bool: ...
