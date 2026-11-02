@@ -1,5 +1,7 @@
 # 작업 인계 문서
 
+**2026-11-02 인계는 두 절로 나뉜다:** 아래의 네이버 이력·로컬 앱 전환 요약과 `병행 최신 인계 — Discord 문자 인증 연결·Google 실검증·Chrome 전환`을 함께 읽는다. 두 채팅의 실행·테스트·커밋 범위를 합쳐 해석하지 않는다.
+
 ## 최신 인계 — 로그인 이력·중복 입력 보완, 보호조치 조사와 로컬 앱 전환 / 2026-11-02
 
 **다음 세션은 이 절부터 읽는다. 이 절은 아래 2026-10-31 기록보다 우선한다.** 사용자는 오늘 작업의 인계 문서 갱신과 커밋 계획을 요청한 뒤, **계획한 두 커밋과 현재 브랜치 push를 명시적으로 승인**했다. 아래 범위만 커밋·푸시하며 병행 변경을 섞지 않는다. 실로그인은 추가 실행하지 않는다.
@@ -126,8 +128,149 @@
 ---
 
 
+## 병행 최신 인계 — Discord 문자 인증 연결·Google 실검증·Chrome 전환 / 2026-11-02
 
-## 현재 세션 인계 요약 — 네이버 색인 조회 연결·실제 전체 흐름 검증 / 2026-10-31
+**Google·Discord 작업은 이 절을 읽는다. 아래 2026-10-31 Google·Discord 기록보다 우선한다.** 상단 병행 세션의 네이버 보호조치 조사·로컬 앱 전환 방향을 보존한다. 해당 채팅의 결정과 이 채팅에서 제안만 한 대안을 혼동하지 않는다.
+최초 요청은 **오늘 작업 인계 업데이트와 커밋 계획**이었고, 이후 사용자가 **커밋·푸시를 승인**했다. 아래 Google·Discord 범위의 5개 커밋을 현재 브랜치에 반영하며 새 실로그인은 실행하지 않는다. PR 생성은 요청받지 않았다.
+브랜치 `feat/ai-login-bot`. 인계 작성 시 HEAD는 `30d48bf`였고, 커밋 준비 중 병행 채팅이 네이버 코드 `f025298`과 인계 `e6c7a2b`를 커밋했다. 그 완료 후 **`e6c7a2b`를 새 기준으로 사본을 다시 만들어** Google·Discord 작업을 진행했다. 최초 원격 조회는 `30d48bf`였으며 최종 push 후 SHA를 다시 확인한다.
+
+### 사용자 의도와 구현 상태
+
+- 사용자와 함수·클래스를 하나씩 설명하며 구현했다. 직접 추가한 코드 주석과 다른 채팅의 변경을 보존한다.
+- 목표: Google 로그인 → 문자 인증 선택·발송 → Discord에 서비스·마스킹 번호 안내 → 본인 코드 제출 → 같은 Playwright 탭에 입력·확인 → 최종 인증 후 세션 저장.
+- **Discord 입력 방식은 버튼 + 모달로 확정·구현**했다. Python 프로그램이 Gateway에 연결해 이벤트를 받는다. 코드가 Discord 서버에서 실행되는 구조가 아니다.
+- **Google 실로그인 성공과 실제 문자 인증 전체 흐름은 확인하지 못했다.** Discord 단독 성공·로컬 모의 성공·기존 Chrome 세션 접근 성공과 구분한다.
+- Bing Google 로그인 어댑터는 미구현이다. 공식 OAuth/API 코드는 별도로 유지한다.
+
+### 완료된 작업 — Discord·Future 연결부
+
+- [x] `app/login_bot/discord_auth.py`: 불변 설정·환경변수 로더, Gateway 연결·종료, 지정 텍스트 채널 전송, 테스트 CLI 구현.
+- [x] `DISCORD_BOT_TOKEN`, `DISCORD_CHANNEL_ID`, `DISCORD_ALLOWED_USER_ID` 사용. 환경변수가 `.env`보다 우선하며 토큰을 repr에서 숨긴다. `.env.example`에 빈 필드 추가. 실제 값은 문서·로그·커밋에 넣지 않는다.
+- [x] `AuthCodeView`의 버튼과 `AuthCodeModal`의 입력창 구현. 사용자·채널·만료·중복 검사, 6자리 ASCII 숫자 검사, 본인에게만 접수 응답, 완료/만료/취소 시 버튼 제거와 연결 정리.
+- [x] `app/login_bot/human_auth.py`: `AuthCode`, `AuthCodeRequest`, `create_auth_code_request()`, `SmsCodeProvider` 구현. 요청별 ID·마감 시각·Future를 사용하며 `wait()` 소비자 한 명, `submit()` 최초 유효 코드 한 번만 허용한다. 늦은 제출과 취소된 요청을 거부한다.
+- [x] `DiscordSmsCodeProvider.request_code()`가 실제 로그인 요청과 Discord를 연결한다. 테스트 문구와 실제 서비스·마스킹 번호 안내를 구분한다. 전체 전화번호·멘션 등 허용되지 않은 안내 값을 거부한다.
+- [x] `discord.py` 의존성·`uv.lock` 갱신, Miniconda `startpress`에 잠금 버전 **discord-py 2.7.1**과 관련 패키지 설치. `.venv`는 생성하지 않았다.
+- [x] `docs/discord-auth.md`, `tests/test_discord_auth.py`, `tests/test_human_auth.py` 추가.
+
+Discord는 Application ID·Public Key·Message Content Intent 없이 현재 Gateway+모달 흐름을 사용한다. 프로그램이 꺼져 있으면 입력을 받을 수 없다. 코드 원문은 채널 응답·로그·파일·AI에 넣지 않지만 Discord를 통해 전달되고 관련 객체 참조가 남은 동안 메모리에 있을 수 있다. 즉시 메모리 삭제나 암호화 보장은 아니다.
+
+```bash
+# 실제 Discord에 연결·테스트 메시지 한 건 전송 후 종료
+PYTHONNOUSERSITE=1 /opt/miniconda3/envs/startpress/bin/python -m app.login_bot.discord_auth
+# 아래 두 모드는 가짜 코드만 사용
+PYTHONNOUSERSITE=1 /opt/miniconda3/envs/startpress/bin/python -m app.login_bot.discord_auth --interactive
+PYTHONNOUSERSITE=1 /opt/miniconda3/envs/startpress/bin/python -m app.login_bot.discord_auth --handoff
+```
+
+### 완료된 작업 — Google 감지·로그인 루프 연결
+
+- [x] 이전 세션의 미추적 `GoogleLoginSite`에 `detect_sms_challenge()`와 `sms_code_error_visible()` 추가. Google 인증 경로, 한·영 문자 발송 완료 안내, 유일한 편집 가능 입력칸·활성 확인 버튼을 함께 확인한다.
+- [x] `sites/base.py`에 불변 `SmsChallenge`, 선택적 확장 계약 `SmsLoginSite` 추가. `GoogleSmsChallenge`는 현재 `SmsChallenge`의 별칭이다. 마스킹 번호가 없거나 모호하면 `None`. 안내 표시는 휴대전화의 실제 수신 보장이 아니다.
+- [x] `authenticated_page(..., sms_provider=...)` → `_ensure_login()` → `_run_login()`에 제공자 전달. **AI 관찰 전에** 문자 인증을 감지하고 `_complete_sms_login()`으로 분기한다. 제공자 미주입 시 `requires_user`로 종료한다.
+- [x] 사용자 대기 전후와 코드 입력 직후 URL·마스킹 번호·입력칸·버튼의 동일성을 검사한다. GET 폼·외부 전송 목적지를 거부한다. Playwright가 직접 코드 입력·확인을 한 번 수행하며 성공 판정 후에만 세션을 저장한다.
+- [x] 문자 인증 분기에 들어간 이후 오류가 나도 AI 관찰로 돌아가지 않는다. 입력 코드가 후속 AI 요청·스크린샷으로 전달되는 경로를 막는다.
+- [x] `LoginPolicy.human_timeout_seconds` 기본 180초 추가. 사용자 대기 중 자동 조작 예산의 잔여 시간을 보존한다. 제출 후 결과 확인은 최대 30초이며 자동 조작 잔여 예산도 적용된다. 오답·만료·추가 인증은 자동 재발송 없이 종료한다. 정리에는 추가 제한 시간이 필요할 수 있다.
+- [x] Google goal에 문자 방식이 제공될 때 선택·발송 요청하도록 명시. 실제 Google이 해당 방법이나 자동화를 허용한다는 보장은 아니다.
+- [x] `tests/test_login_bot_sms.py`: 같은 탭 대기·입력·성공·세션 저장, 실패 시 저장 방지, 시간 분리·취소·만료, stale 요소·전송 목적지 검사, 입력 후 AI 재호출 방지 검증.
+
+호출부는 `sms_provider=DiscordSmsCodeProvider(load_discord_settings())`를 명시적으로 주입한다. **영구 Google 실행 CLI/API는 아직 없고**, 실제 시도는 아래 임시 실행기로 모델·Google 계정·제공자를 구성했다. `.env`만으로 자동 실행되지 않는다.
+
+### 완료된 작업 — 화면 안 요소 필터·Chrome 실행
+
+- [x] `_is_visible_in_viewport()` 추가. `is_visible()` 이후 `getClientRects()`와 `window.innerWidth/innerHeight`를 비교해 화면과 겹치는 요소만 `_observe_page()` 후보로 제공한다. 일부 겹침은 포함, 스크롤 후 들어온 요소는 재관찰 시 포함한다.
+- [x] 초기의 문서 높이 기준은 스크롤 테스트에서 실패해 실제 viewport 높이 기준으로 수정했다. 최종 관련 테스트 통과.
+- [x] **가림·활성화 추가 검사, 클릭 직전 viewport 재검사, 동일 요소 반복 실패 제한은 미구현**이다. 사용자가 우선 요소 수집의 화면 범위 조건만 구현하도록 요청했다.
+- [x] 사용자 요청으로 `authenticated_page()`를 `runtime.chromium.launch(channel="chrome", headless=headless)`로 변경했다. 설치된 Chrome을 사용하고 개인 기본 프로필은 재사용하지 않는다. **공통 진입점이므로 네이버 등에도 적용**된다.
+- [x] Chrome 실행 파일 존재 및 변경 후 공통 로그인 테스트 16개 통과 확인. 실제 Chrome 로그인은 자동 승인 검토에서 차단돼 시작되지 않았다. 일부 테스트 fixture는 여전히 번들 Chromium을 직접 사용한다.
+
+### 실제 실행 결과 — 성공 범위를 구분
+
+1. **Discord 연결 성공**: 초기 토큰 실패·키 미설정 이후 사용자의 `.env` 수정으로 Gateway 연결과 지정 채널 메시지 전송 성공.
+2. **Discord 버튼·모달 실수신 성공**: `--interactive` 종료 출력 `테스트 코드 수신 완료. 연결을 종료했습니다.`를 확인했다. Google 실제 OTP 흐름 성공은 아니다.
+3. `--handoff`는 실제 버튼 전송·대기 시작까지 확인했다. 최종 출력은 회수하지 못했고 인계 시 실행 세션도 조회되지 않았다. **실제 가짜 작업 재개 완료로 단정하지 않는다.** Future 전달·재개 자체는 로컬 테스트로 검증했다.
+4. **Chromium 첫 Google 시도**: 2026-11-02 **20:31:03~20:32:00 KST**, AI 6회, 0번 요소 클릭 시간 초과 반복으로 중단. Google 로그인 전이며 Discord 요청·세션 저장 없음.
+   - `.secrets/bot_runs/google_discord_7a978dbdef00.jsonl`.
+5. **Computer Use 조사**: 사용자 승인 후 Chrome의 새 탭에서 공개 소개 화면 확인. viewport 폭 1440인데 첫 시작하기 링크 x=1620으로 화면 밖, 본문 버튼은 화면 안이었다. 본문 버튼으로 개요 화면 진입 성공. **기존 Chrome 로그인 세션으로 접근한 결과**이며 새 로그인·문자 인증 성공이 아니다. 최초 실패 당시 DOM은 저장하지 않아 정확한 동일성을 단정하지 않는다.
+   - `.secrets/bot_runs/google_start_ui_diagnosis_6d9a08e17f.jsonl`.
+6. **viewport 수정 후 Chromium 재시도**: **21:18:44~21:19:04 KST**, AI 7회, Google 로그인 화면 진입 및 fill 2회·click 4회 완료. 최종 `failed / 로그인 행동 횟수를 초과했습니다.`. Discord 요청·세션 저장 없음.
+   - `.secrets/bot_runs/google_discord_7c37a6b27bb6.jsonl`.
+   - 사용자는 Google의 수상한/안전하지 않은 브라우저 안내를 봤다고 말했다. 해당 실행에서 차단 안내 DOM은 별도로 기록하지 않았으므로 로그만으로 원인을 확정하지 않는다. AI 호출 수와 전체 루프 횟수를 동일하게 해석하지 않는다.
+7. **Chrome 변경 후 실로그인 미실행**: 자동 승인 검토가 실행·재검토·새 명시적 승인 후 실행을 거부했다. 마지막 거부는 승인 누락이 아니라 **Google 비밀번호·화면을 외부 AI 게이트웨이로 전송하는 행위 자체를 불허**한 것이다. Chrome 전환 후 로그인 결과나 차단 해소 증거는 없다.
+
+임시 실행기 `/private/tmp/webmaster_google_discord_live.py`는 제품 함수를 위임하는 계측과 모델·어댑터·제공자 구성을 포함한다. 실행마다 새 비공개 JSONL과 새 Google 세션 키를 만든다. 커밋하지 않으며 사라질 수 있다.
+기록 파일 0600·폴더 0700. 원문 인증정보·코드·토큰·쿠키·화면·AI 요청/응답은 저장하지 않는다. 첫 실행에서 알려진 비밀값 미포함을 확인했다. human 사유는 정제 후 기록한다.
+현재 임시 실행기에는 종료 시 차단 안내 boolean 확인도 추가했지만 그 추가 이후 실제 실행은 거부돼 수행되지 않았다. **파일 확인 목적으로 `--execute`를 재실행하지 않는다.**
+
+### 실행 제한·미구현 대안
+
+- 사용자는 Google ID/PW·화면을 학교 게이트웨이 `https://factchat-cloud.mindlogic.ai/v1/gateway`의 `deepseek-v4.1-flash`로 전송하는 범위를 승인했고 일부 Chromium 실행은 실제 수행됐다.
+- 그러나 마지막 Chrome 검증의 자동 승인 검토는 그 승인을 인정하면서도 전송 자체를 거부했다. 단순 승인 누락으로 기록하거나 같은 승인을 반복 요청하지 않는다. 다른 도구·간접 실행으로 차단을 우회하지 않는다.
+- 이 채팅에서 제안한 대안은 **ID/PW를 AI에 보내지 않고 고정 Playwright로 Google에만 입력**하는 방식이다. 아직 구현하지 않았고 현재 제품은 미인증 시 계정정보를 AI에 보낸다.
+- 직접 최초 로그인 후 전용 프로필/세션 재사용, 공식 API/OAuth, 별도 자동화 드라이버도 조사했지만 이 채팅에서는 구현하지 않았다. 상단 병행 인계의 로컬 앱 전환 방향과 함께 판단한다.
+- Chrome 선택만으로 로그인 차단이 해결된다고 보장하지 않는다. 참고: [Google 브라우저 제한](https://support.google.com/accounts/answer/7675428?hl=ko), [Playwright 이슈](https://github.com/microsoft/playwright/issues/19420), [인증 상태 재사용](https://playwright.dev/python/docs/auth), [Chrome 실행](https://playwright.dev/python/docs/browsers#google-chrome--microsoft-edge), [Chrome 기본 프로필 제한](https://developer.chrome.com/blog/remote-debugging-port).
+
+### 테스트 기록 — 시점·범위가 달라 합산하지 않음
+
+| 시점 | 범위 | 결과 |
+| --- | --- | --- |
+| Discord 코드 전달 | human·Discord 2개 파일 | 51 passed |
+| Google SMS 감지 | Google 어댑터 테스트 | 63 passed |
+| 문자 로그인 연결 | SMS·Google·공통 로그인·AI 흐름·네이버·Discord·human·schemas 8개 파일 | 207 passed in 53.88s |
+| 취소·화면 변경 추가 | SMS 테스트 | 21 passed in 10.39s |
+| 인터페이스 정리 | SMS·공통 로그인·네이버 | 57 passed in 27.22s |
+| viewport 최종 수정 | AI 흐름·Google·네이버·SMS | 132 passed in 54.84s |
+| Chrome 채널 변경 후 | 공통 로그인 `test_browser_login_agent.py` | 16 passed in 8.06s |
+
+모두 로컬 HTML·가짜 모델/코드 제공자 테스트다. 프로젝트 전체·DB 통합·Chrome 전환 이후 전체 재검증 수치가 아니다. 이번 문서 요청에서는 코드 테스트·실로그인을 재실행하지 않고 상태·기록·문서 차이와 공백 검사를 확인한다.
+
+### 커밋 구성 — 이 채팅 범위, 사용자 커밋·푸시 승인
+
+기존 Google 어댑터는 이전 세션에서 시작한 미추적 파일이지만 이번 기능의 의존성이므로 함께 계획한다. 상단 네이버 입력 이력 작업의 커밋 계획과 충돌하지 않도록 hunk 단위로 분리한다.
+
+| 순서 | 제안 메시지 | 범위 |
+| --- | --- | --- |
+| 1 | `[feat] Google 로그인 어댑터와 문자 인증 화면 감지 구현` | `sites/google.py`, `sites/base.py`, `test_login_bot_google.py`, `.env.example`의 Google ID/PW 부분 |
+| 2 | `[feat] Discord 인증 코드 입력과 요청별 대기 구현` | `discord_auth.py`, `human_auth.py`, 관련 두 테스트, `pyproject.toml`, `uv.lock`, `.env.example`의 Discord 부분 |
+| 3 | `[feat] 로그인봇에 문자 인증 대기와 재개 연결` | `login_agent.py`의 SMS import·제공자 주입·대기/입력/결과 확인 부분, `schemas.py`, `test_login_bot_sms.py` |
+| 4 | `[fix] 로그인봇의 화면 내 요소 선택과 Chrome 실행 적용` | `login_agent.py`의 viewport 헬퍼·필터·Chrome launch 부분, `test_login_bot_ai_flow.py`의 viewport 테스트 부분 |
+| 5 | `[docs] Discord 인증 흐름과 Google 실검증 결과 인계` | `docs/discord-auth.md`, `docs/HANDOFF.md`; 병행 인계 내용을 보존하고 Chrome 요구·검증 한계 확인 |
+
+- 3번은 1·2번에 의존한다. 실제 커밋 시 스테이징 스냅샷별 import·관련 테스트를 검증한다. 현재 작업 트리 통과를 분리된 중간 커밋 통과로 단정하지 않는다.
+- `login_agent.py`, `test_login_bot_ai_flow.py`, `.env.example`, `HANDOFF.md`에는 다른 채팅/기존 변경도 있다. **파일 통째로 add하지 않고 hunk/패치로 분리**하며 `git add .` 금지.
+- 이 계획에서 별도 보존: 네이버 입력 이력·동일 값 fill 생략·클릭 후 1초 대기 및 관련 테스트, README 대규모 개편, 기존 AI/Naver 환경변수 예시 추가, `CLAUDE.md`, `naver_probe.py`, `tests/test_naver_probe.py`, `browser_bot_test/`, `app/engines/brave.py`, `app/services/index_status.py`, ERD 자료. 네이버 변경은 상단 별도 계획을 따른다.
+- `.env`, `.secrets/`, 인증 상태·프로필·실행 로그·임시 실행기는 커밋 제외. 한국어 `[타입] 제목`, Git 작성자 유지, Co-Authored-By 없음. main/master 직접 push 금지. 새 브랜치는 `feat/`, `fix/` 등 사용.
+- 기존 README에 Chromium 실행·human 재개 미지원 등 과거 설명이 남아 있다. 다른 채팅의 편집을 보존하고 별도 정리한다. 신규 Discord 문서에는 Chrome 설치 요구와 일부 테스트의 Chromium 필요를 반영했다.
+
+### 다음 작업과 마지막 상태 — Google·Discord
+
+1. 이 문서와 상단 네이버 인계를 함께 읽고 현재 diff를 확인한다. 이후 사용자 승인으로 Google·Discord 범위의 커밋·푸시를 진행하므로 최종 상태는 git log와 원격 SHA로 확인한다. 다른 미커밋 파일을 자동 포함하지 않는다.
+2. 상단 로컬 앱 전환 방향을 우선 고려하고, 인증정보를 AI에 전송하지 않는 구조 또는 직접 로그인·세션 재사용 방식 중 실제 구현 방향을 정한다. 제품 계정 자동 로그인을 반복 실행하지 않는다.
+3. 자동화 차단을 명시적 종료 사유로 분류하는 기능은 미구현이다. 현재 `AUTOMATION_BLOCK`은 준비 대기·SMS 감지에만 사용된다.
+4. viewport 검사와 실제 클릭 가능성 검사를 구분한다. 가림·활성 상태·클릭 직전 재확인·동일 요소 반복 실패 제한은 다음 작업이다.
+5. Google 실제 문자 인증 DOM·최종 인증 판정은 검증 가능한 로그인 경로가 마련된 뒤 확인한다. IndexedDB 저장·손상된 복원 복구·Bing 어댑터는 기존 후속 과제다.
+6. 현재 브랜치는 `feat/ai-login-bot`. Google·Discord 커밋은 아래 실행 상태를 참조한다. Chrome 옵션은 적용됐지만 Chrome 실로그인은 도구 검토에서 차단됐다.
+
+관련 파일: `app/login_bot/{discord_auth,human_auth,login_agent,schemas}.py`, `app/login_bot/sites/{base,google}.py`, `tests/test_{discord_auth,human_auth,login_bot_google,login_bot_sms,login_bot_ai_flow}.py`, `docs/discord-auth.md`.
+
+### 커밋 실행 상태와 선택 스냅샷 검증
+
+사용자의 후속 **커밋·푸시 승인**으로 위 계획을 실행했다. 병행 네이버 커밋 `f025298`, `e6c7a2b`가 먼저 완료된 뒤 그 HEAD 기준으로 선택 사본을 다시 생성했으며 작업 트리 파일을 되돌리거나 병행 인덱스를 덮어쓰지 않았다.
+
+| 순서 | 생성 커밋 | 해당 인덱스만 내보낸 검증 결과 |
+| --- | --- | --- |
+| 1 | `9a36e48` Google 어댑터·문자 감지 | Google 어댑터 63 passed in 20.49s |
+| 2 | `eee667c` Discord 입력·요청별 대기 | Discord·human 55 passed in 0.29s |
+| 3 | `9a374c9` 문자 인증 대기·재개 연결 | SMS·공통 로그인·AI 흐름·네이버 74 passed in 45.77s |
+| 4 | `af32301` viewport·Chrome 적용 | 관련 8개 테스트 파일 220 passed in 60.57s |
+| 5 | 이 인계와 Discord 사용 문서 | 문서 공백·추가 줄 비밀값 검사. 해시는 git log로 확인 |
+
+4번 검증은 `test_login_bot_ai_flow.py`, `test_browser_login_agent.py`, `test_login_bot_sms.py`, `test_login_bot_naver.py`, `test_login_bot_google.py`, `test_discord_auth.py`, `test_human_auth.py`, `test_browser_schemas.py` 범위다. 프로젝트 전체·DB 통합·실제 Google 인증 결과는 아니다. 위 수치를 서로 합산하지 않는다.
+
+추가 줄의 알려진 실제 인증정보 포함 여부와 `git diff --cached --check`를 확인했다. `.env`·실행 기록·인증 상태·임시 실행기는 포함하지 않았다.
+AI/Naver 설정 예시 추가분과 README 개편, 기타 제외 파일은 작업 트리에 보존했다. `.env.example`에는 이번 계획의 Google·Discord 부분만 반영했다.
+푸시 대상은 `origin/feat/ai-login-bot`이며 force push·PR 생성은 하지 않는다. 푸시 직전 원격은 병행 문서 커밋 `e6c7a2b`였다. 최종 문서 커밋 해시와 원격 반영 여부는 `git log -5` 및 원격 브랜치 SHA로 확인한다.
+
+## 과거 세션 인계 요약 — 네이버 색인 조회 연결·실제 전체 흐름 검증 / 2026-10-31
 
 **네이버 작업은 이 절부터 읽는다.** 이번 사용자 요청은 인계 문서 갱신과 커밋 계획 수립이다. **캡차 답을 다시 덮어쓰는 문제는 분석만 했고, 수정은 다음 작업으로 미뤘다.** 이후 사용자가 **현재 브랜치에 push**하도록 승인했다. 아래 네이버 범위만 4개 커밋으로 나눠 origin/feat/ai-login-bot에 반영하며 새 실로그인은 실행하지 않는다. Google·Bing·Discord 관련 병행 작업은 아래 기록을 보존하며 네이버 변경과 섞어 자동 구현·커밋하지 않는다.
 
