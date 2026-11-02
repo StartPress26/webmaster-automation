@@ -86,6 +86,56 @@ class ScriptModel:
         return self.actions[min(len(self.requests) - 1, len(self.actions) - 1)]
 
 
+# 화면 밖 첫 링크를 제외하고 본문 링크의 요소 번호를 다시 맞춥니다.
+async def test_observation_excludes_offscreen_start_link(page: Page) -> None:
+    await page.set_viewport_size({"width": 800, "height": 600})
+    await page.set_content('''
+        <a id="outside" href="/next" style="position:fixed;left:900px;top:20px">시작하기</a>
+        <a id="inside" href="/next" style="position:absolute;left:20px;top:100px">시작하기</a>
+    ''')
+    assert await page.locator("#outside").is_visible()
+    observation, elements = await _observe_page(page)
+    assert len(elements) == 1
+    assert await elements[0].get_attribute("id") == "inside"
+    assert observation["elements"][0]["index"] == 0
+    assert observation["elements"][0]["label"] == "시작하기"
+
+
+# 네 방향 화면 밖과 경계선 접촉은 제외하고 일부라도 겹치면 포함합니다.
+@pytest.mark.parametrize(("left", "top", "expected"), [
+    (800, 20, False), (-100, 20, False), (20, 600, False), (20, -40, False),
+    (790, 20, True), (-90, 20, True), (20, 590, True), (20, -30, True),
+])
+async def test_observation_viewport_edges(page: Page, left: int, top: int, expected: bool) -> None:
+    await page.set_viewport_size({"width": 800, "height": 600})
+    await page.set_content(f'''<style>html,body{{margin:0;overflow:hidden}}</style>
+        <button style="position:fixed;left:{left}px;top:{top}px;width:100px;height:40px">확인</button>''')
+    _, elements = await _observe_page(page)
+    assert bool(elements) is expected
+
+
+# 스크롤로 화면 안에 들어온 요소는 다음 관찰에서 후보가 됩니다.
+async def test_observation_includes_control_after_scroll(page: Page) -> None:
+    await page.set_viewport_size({"width": 800, "height": 600})
+    await page.set_content('''<body style="margin:0;height:1600px">
+        <button id="below" style="position:absolute;top:1000px">다음</button></body>''')
+    assert await page.locator("#below").is_visible()
+    assert (await _observe_page(page))[1] == ()
+    await page.evaluate("window.scrollTo(0, 800)")
+    observation, elements = await _observe_page(page)
+    assert len(elements) == 1
+    assert observation["elements"][0]["label"] == "다음"
+
+
+# 화면 안에 배치되어도 숨겨진 요소는 기존처럼 제외합니다.
+async def test_observation_keeps_hidden_controls_excluded(page: Page) -> None:
+    await page.set_content('''<button hidden>숨김</button>
+        <button style="visibility:hidden">숨김</button><button>표시</button>''')
+    observation, elements = await _observe_page(page)
+    assert len(elements) == 1
+    assert observation["elements"][0]["label"] == "표시"
+
+
 # AI가 ID·비밀번호 입력과 제출, 캡차 입력과 확인까지 선택하고 마지막 행동 뒤 성공하는지 확인합니다.
 async def test_ai_login_and_captcha(page: Page) -> None:
     await page.set_content('''<form method="post"><input aria-label="아이디" autocomplete="username">

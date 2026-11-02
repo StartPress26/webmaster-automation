@@ -106,7 +106,7 @@ async def authenticated_page(
     state = await _load_state(session_store, key)
 
     async with async_playwright() as runtime:
-        browser = await runtime.chromium.launch(headless=headless)
+        browser = await runtime.chromium.launch(channel="chrome", headless=headless)
         try:
             page = await _prepare_page(await _new_context(browser, state), site.policy)
             result = await _ensure_login(page, site, model, sms_provider=sms_provider)
@@ -402,10 +402,26 @@ async def _action_history(
     }
 
 
-# 표시 중인 조작 요소와 화면 텍스트를 수집하되 입력값은 요소 정보에서 제외합니다.
+# 숨겨지지 않은 요소 중 현재 화면과 실제 표시 영역이 겹치는 요소만 허용합니다.
+async def _is_visible_in_viewport(element: ElementHandle) -> bool:
+    if not await element.is_visible():
+        return False
+    return await element.evaluate("""el => {
+        if (!el.isConnected) return false;
+        const width = window.innerWidth;
+        const height = window.innerHeight;
+        return Array.from(el.getClientRects()).some(rect =>
+            rect.width > 0 && rect.height > 0
+            && rect.right > 0 && rect.bottom > 0
+            && rect.left < width && rect.top < height
+        );
+    }""")
+
+
+# 현재 화면 안의 조작 요소를 수집하되 입력값은 요소 정보에서 제외합니다.
 async def _observe_page(page: Page) -> tuple[dict[str, object], tuple[ElementHandle, ...]]:
     candidates = await page.query_selector_all(CONTROLS)
-    elements = tuple([element for element in candidates if await element.is_visible()])[:160]
+    elements = tuple([element for element in candidates if await _is_visible_in_viewport(element)])[:160]
     controls = tuple([
         {
             "index": index,
