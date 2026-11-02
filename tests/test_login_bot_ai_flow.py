@@ -3,6 +3,7 @@
 import json
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
+from unittest.mock import AsyncMock
 
 import pytest
 from playwright.async_api import Page, Route, async_playwright
@@ -109,6 +110,108 @@ async def test_ai_login_and_captcha(page: Page) -> None:
     assert result.status == "authenticated"
     assert result.login_attempts == 1
     assert len(model.requests) == 5
+    assert len(model.requests[3]["history"]) == 3
+    assert model.requests[3]["history"][0]["target_label"] == "아이디"
+    assert model.requests[4]["history"][-1] == {
+        "action": "fill", "outcome": "실행 완료", "target_index": "0",
+        "target_label": "캡차", "target_type": "input", "input_state": "입력값 있음",
+    }
+    histories = json.dumps([request["history"] for request in model.requests])
+    assert "test-answer" not in histories
+    assert "private-id" not in histories
+    assert "private-password" not in histories
+
+
+# 입력 후 버튼이 나타나 요소 번호가 달라져도 같은 URL의 과거 이력은 유지합니다.
+async def test_history_survives_added_control(page: Page) -> None:
+    await page.set_content('''<input aria-label="아이디"
+        oninput="document.querySelector('button').hidden=false"><button hidden>지우기</button>
+        <input aria-label="비밀번호" type="password">''')
+    model = ScriptModel(actions=(
+        {"action": "fill", "index": 0, "text": "private-id"},
+        {"action": "human", "reason": "테스트 종료"},
+    ))
+    await _run_login(page, FakeSite(), model)
+    assert len(model.requests[0]["observation"]["elements"]) == 2
+    assert len(model.requests[1]["observation"]["elements"]) == 3
+    assert model.requests[1]["history"][0]["target_label"] == "아이디"
+
+
+# DOM이 그대로여도 URL이 바뀌면 다음 요청에서 이전 화면의 이력을 제거합니다.
+async def test_history_resets_on_url_change(page: Page) -> None:
+    await page.set_content('''<input aria-label="아이디">
+        <button onclick="history.pushState({}, '', '/next')">다음</button>''')
+    model = ScriptModel(actions=(
+        {"action": "fill", "index": 0, "text": "private-id"},
+        {"action": "click", "index": 1},
+        {"action": "human", "reason": "테스트 종료"},
+    ))
+    await _run_login(page, FakeSite(), model)
+    assert len(model.requests[1]["history"]) == 1
+    assert model.requests[2]["observation"]["url"] == f"https://{HOST}/next"
+    assert model.requests[2]["history"] == []
+
+
+# 입력 뒤 오류나 문제 변경에 따른 수정은 계속 허용하고 마지막 입력 상태를 전달합니다.
+@pytest.mark.parametrize("message", ["답이 틀렸습니다", "문제가 변경되었습니다"])
+async def test_history_allows_correction(page: Page, message: str) -> None:
+    await page.set_content(f'''<p>{message}</p><input aria-label="정답">
+        <button onclick="document.body.innerHTML='<h1 id=authenticated>완료</h1>'">확인</button>''')
+    model = ScriptModel(actions=(
+        {"action": "fill", "index": 0, "text": "first-answer"},
+        {"action": "fill", "index": 0, "text": "corrected-answer"},
+        {"action": "click", "index": 1},
+    ))
+    assert (await _run_login(page, FakeSite(), model)).status == "authenticated"
+    assert len(model.requests[2]["history"]) == 2
+    assert model.requests[2]["history"][-1]["input_state"] == "입력값 있음"
+
+
+# 화면이 입력값을 라벨에 복사해도 이력에는 그 원문을 포함하지 않습니다.
+async def test_history_redacts_answer_in_label(page: Page) -> None:
+    await page.set_content('''<input oninput="this.setAttribute('aria-label', this.value)">
+        <button>확인</button>''')
+    model = ScriptModel(actions=(
+        {"action": "fill", "index": 0, "text": "secret-answer"},
+        {"action": "human", "reason": "테스트 종료"},
+    ))
+    await _run_login(page, FakeSite(), model)
+    assert model.requests[1]["history"][0]["target_label"] == "[비공개]"
+
+
+# 같은 값이면 실제 fill 호출을 생략하고 빈 값이나 다른 값은 정상 입력합니다.
+@pytest.mark.parametrize("current", ["", "old-answer", "same-answer"])
+async def test_fill_skips_only_equal_value(page: Page, monkeypatch: pytest.MonkeyPatch, current: str) -> None:
+    await page.set_content('<input aria-label="정답">')
+    await page.locator('input').fill(current)
+    _, elements = await _observe_page(page)
+    fill = AsyncMock(wraps=elements[0].fill)
+    monkeypatch.setattr(elements[0], "fill", fill)
+    action = LOGIN_ACTION.validate_python({"action": "fill", "index": 0, "text": "same-answer"})
+    outcome = await _execute_action(page, action, elements, FakeSite().policy)
+    if current == "same-answer":
+        fill.assert_not_awaited()
+        assert outcome == "이미 같은 값이 있어 입력 생략"
+    else:
+        fill.assert_awaited_once_with("same-answer")
+        assert outcome == "실행 완료"
+    assert await page.locator('input').input_value() == "same-answer"
+
+
+# 반복 입력 생략 결과와 대상 정보가 다음 AI 호출에 원문 없이 전달됩니다.
+async def test_skipped_fill_reaches_history(page: Page) -> None:
+    await page.set_content('<input aria-label="정답">')
+    model = ScriptModel(actions=(
+        {"action": "fill", "index": 0, "text": "secret-answer"},
+        {"action": "fill", "index": 0, "text": "secret-answer"},
+        {"action": "human", "reason": "테스트 종료"},
+    ))
+    await _run_login(page, FakeSite(), model)
+    history = model.requests[2]["history"]
+    assert history[-1]["outcome"] == "이미 같은 값이 있어 입력 생략"
+    assert history[-1]["target_label"] == "정답"
+    assert history[-1]["input_state"] == "입력값 있음"
+    assert "secret-answer" not in json.dumps(history)
 
 
 # 로그인된 화면에서는 인증정보를 AI에 보내지 않는지 확인합니다.
