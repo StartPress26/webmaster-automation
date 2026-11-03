@@ -557,3 +557,81 @@ async def test_page_storage_failure_does_not_notify(
             await engine.dispose()
     finally:
         app.dependency_overrides.pop(get_indexnow_client, None)
+
+
+# 부모·고객사별로 글을 분리하고 생성 시각이 같아도 ID 순으로 안정적으로 페이지 조회합니다.
+async def test_page_listing_filters_and_paginates(
+    site_api: AsyncClient, api_client_id: str, migrated_database_url: str,
+) -> None:
+    from datetime import datetime, timezone
+    from app.api.pages import get_indexnow_client
+
+    parent = (await site_api.post("/sites", json=site_payload(api_client_id))).json()
+    other_parent = (await site_api.post("/sites", json=site_payload(
+        api_client_id, url="https://example.com/other/",
+    ))).json()
+    other_customer = (await site_api.post("/clients", json={"name": "다른 고객사"})).json()["id"]
+    foreign_parent = (await site_api.post("/sites", json=site_payload(other_customer))).json()
+    page_ids = tuple([(await site_api.post(f"/sites/{parent['id']}/pages", json={
+        "name": f"글 {index}", "url": f"https://example.com/blog/post-{index}",
+        "notify_search_engines": False,
+    })).json()["page"]["id"] for index in range(3)])
+    for main_id, url in (
+        (other_parent["id"], "https://example.com/other/post"),
+        (foreign_parent["id"], "https://example.com/blog/foreign"),
+    ):
+        assert (await site_api.post(f"/sites/{main_id}/pages", json={
+            "name": "다른 부모의 글", "url": url, "notify_search_engines": False,
+        })).status_code == 201
+    engine = create_async_engine(migrated_database_url, poolclass=NullPool, hide_parameters=True)
+    try:
+        async with AsyncSession(engine) as session, session.begin():
+            await session.execute(update(Site).where(Site.id.in_(tuple(UUID(value) for value in page_ids))).values(
+                created_at=datetime(2026, 11, 3, tzinfo=timezone.utc),
+            ))
+            await session.execute(update(Site).where(Site.id.in_((UUID(parent["id"]), UUID(page_ids[0])))).values(is_active=False))
+
+        # GET은 IndexNow 클라이언트를 생성하지 않습니다.
+        def forbidden_client() -> None:
+            pytest.fail("글 목록 조회는 외부 클라이언트를 준비하지 않습니다.")
+
+        app.dependency_overrides[get_indexnow_client] = forbidden_client
+        path = f"/sites/{parent['id']}/pages"
+        response = await site_api.get(path)
+        assert response.status_code == 200
+        rows = response.json()["items"]
+        assert [row["id"] for row in rows] == sorted(page_ids)
+        assert all(row["client_id"] == api_client_id and row["parent_site_id"] == parent["id"] for row in rows)
+        assert all(row["target_type"] == "page" for row in rows)
+        assert next(row for row in rows if row["id"] == page_ids[0])["is_active"] is False
+        assert (await site_api.get(path, params={"limit": 1, "offset": 1})).json() == {"items": rows[1:2]}
+        assert (await site_api.get(path, params={"offset": 3})).json() == {"items": []}
+        schema = (await site_api.get("/openapi.json")).json()
+        assert {"get", "post"} <= schema["paths"]["/sites/{main_site_id}/pages"].keys()
+    finally:
+        app.dependency_overrides.pop(get_indexnow_client, None)
+        await engine.dispose()
+
+
+# 빈 목록은 200, 없는 부모나 글을 부모로 지정한 경우는 404입니다.
+async def test_page_listing_parent_validation(site_api: AsyncClient, api_client_id: str) -> None:
+    parent = (await site_api.post("/sites", json=site_payload(api_client_id))).json()
+    path = f"/sites/{parent['id']}/pages"
+    assert (await site_api.get(path)).json() == {"items": []}
+    page = (await site_api.post(path, json={
+        "name": "글", "url": "https://example.com/blog/post", "notify_search_engines": False,
+    })).json()["page"]
+    for parent_id in (uuid4(), page["id"]):
+        response = await site_api.get(f"/sites/{parent_id}/pages")
+        assert response.status_code == 404
+        assert response.json()["detail"]["code"] == "MAIN_SITE_NOT_FOUND"
+    assert (await site_api.get("/sites/not-a-uuid/pages")).status_code == 422
+
+
+# 목록의 페이지 크기와 오프셋 경계를 검증합니다.
+@pytest.mark.parametrize("params", [{"limit": 0}, {"limit": 101}, {"offset": -1}, {"limit": "invalid"}])
+async def test_page_listing_invalid_query(
+    site_api: AsyncClient, api_client_id: str, params: dict[str, int | str],
+) -> None:
+    parent = (await site_api.post("/sites", json=site_payload(api_client_id))).json()
+    assert (await site_api.get(f"/sites/{parent['id']}/pages", params=params)).status_code == 422

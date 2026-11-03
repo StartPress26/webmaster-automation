@@ -53,3 +53,9 @@ class PageCreateResult(BaseModel):
 
     page: PageRead
     submission: PageNotification
+
+
+class PageList(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    items: tuple[PageRead, ...]

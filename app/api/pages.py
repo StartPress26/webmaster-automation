@@ -5,12 +5,12 @@ from typing import Annotated
 from uuid import UUID
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.engines.indexnow.client import IndexNowClient
-from app.schemas.page import PageCreate, PageCreateResult
+from app.schemas.page import PageCreate, PageCreateResult, PageList
 from app.services import page as service
 
 router = APIRouter(prefix="/sites", tags=["개별 글"])
@@ -42,3 +42,21 @@ async def create_page(
         raise HTTPException(status_code=409, detail={"code": "DUPLICATE_PAGE", "message": str(error)}) from error
     except service.PageUrlScopeError as error:
         raise HTTPException(status_code=422, detail={"code": "INVALID_PAGE_SCOPE", "message": str(error)}) from error
+
+
+# 외부 호출 없이 부모 사이트의 저장된 글 목록을 페이지 단위로 반환합니다.
+@router.get(
+    "/{main_site_id}/pages", response_model=PageList,
+    responses={404: {"description": "부모 메인 사이트 없음"}},
+)
+async def list_pages(
+    main_site_id: UUID, session: DatabaseSession,
+    limit: Annotated[int, Query(ge=1, le=100)] = 100,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> PageList:
+    try:
+        return PageList(items=await service.list_pages(
+            session, main_site_id, limit=limit, offset=offset,
+        ))
+    except service.PageParentNotFoundError as error:
+        raise HTTPException(status_code=404, detail={"code": "MAIN_SITE_NOT_FOUND", "message": str(error)}) from error

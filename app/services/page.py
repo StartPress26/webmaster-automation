@@ -117,3 +117,21 @@ async def create_page(
             status="unknown", error_code="INDEXNOW_TIMEOUT" if isinstance(error, IndexNowTimeoutError)
             else "INDEXNOW_TRANSPORT_ERROR",
         ))
+
+
+# 부모 메인 사이트의 글만 안정적인 순서로 조회하며 비활성 글도 목록에 포함합니다.
+async def list_pages(
+    session: AsyncSession, parent_id: UUID, *, limit: int = 100, offset: int = 0,
+) -> tuple[PageRead, ...]:
+    async with session.begin():
+        parent = await session.scalar(select(Site).where(
+            Site.id == parent_id, Site.target_type == "site",
+        ))
+        if parent is None:
+            raise PageParentNotFoundError("부모 메인 사이트를 찾을 수 없습니다.")
+        rows = await session.scalars(select(Site).where(
+            Site.parent_site_id == parent.id,
+            Site.target_type == "page",
+            Site.client_id == parent.client_id,
+        ).order_by(Site.created_at, Site.id).limit(limit).offset(offset))
+        return tuple(PageRead.model_validate(row) for row in rows)
