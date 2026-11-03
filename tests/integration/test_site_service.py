@@ -198,3 +198,69 @@ async def test_registration_failure_rolls_back_site(
     async with site_sessions() as session:
         assert (await session.scalars(select(Site.id).where(Site.client_id == site_client_id))).all() == []
         assert frozenset(await session.scalars(select(EngineRegistration.id))) == before_ids
+
+
+# 동시 설정 교체가 끝나면 두 엔진에는 같은 요청의 완전한 설정만 남아야 합니다.
+async def test_concurrent_indexnow_updates_stay_consistent(
+    site_sessions: async_sessionmaker[AsyncSession], site_client_id: UUID,
+) -> None:
+    from app.schemas.indexnow_settings import IndexNowSettingsWrite
+    from app.services.indexnow_settings import put_settings
+
+    async with site_sessions() as session:
+        site = await create_site(session, site_request(site_client_id))
+    settings = (
+        IndexNowSettingsWrite(key="a1b2c3d4", key_location="https://example.com/first.txt"),
+        IndexNowSettingsWrite(key="deadbeef", key_location="https://example.com/second.txt"),
+    )
+
+    # 독립 세션에서 서로 다른 설정을 동시에 저장합니다.
+    async def replace(data: IndexNowSettingsWrite) -> None:
+        async with site_sessions() as session:
+            await put_settings(session, site.id, data)
+
+    await asyncio.gather(*(replace(data) for data in settings))
+    async with site_sessions() as session:
+        rows = tuple(await session.scalars(select(EngineRegistration).where(
+            EngineRegistration.main_site_id == site.id
+        )))
+        assert len(rows) == 2
+        pairs = {(row.indexnow_key, row.indexnow_key_location) for row in rows}
+        assert len(pairs) == 1
+        assert pairs <= {(data.key, data.key_location) for data in settings}
+
+
+# 실제 갱신 직후 실패하면 두 엔진 모두 이전 설정으로 롤백돼야 합니다.
+async def test_indexnow_update_failure_rolls_back(
+    site_sessions: async_sessionmaker[AsyncSession], site_client_id: UUID,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.schemas.indexnow_settings import IndexNowSettingsWrite
+    from app.services.indexnow_settings import put_settings
+
+    async with site_sessions() as session:
+        site = await create_site(session, site_request(
+            site_client_id, indexnow_key="a1b2c3d4",
+            indexnow_key_location="https://example.com/key.txt",
+        ))
+    async with site_sessions() as session:
+        original = session.execute
+
+        # 실제 SQL 실행 뒤 예외를 발생시켜 커밋 전 실패를 재현합니다.
+        async def fail_after_write(*args: object, **kwargs: object) -> None:
+            await original(*args, **kwargs)
+            raise RuntimeError("설정 갱신 테스트 오류")
+
+        monkeypatch.setattr(session, "execute", fail_after_write)
+        with pytest.raises(RuntimeError, match="설정 갱신 테스트 오류"):
+            await put_settings(session, site.id, IndexNowSettingsWrite(
+                key="deadbeef", key_location="https://example.com/new.txt",
+            ))
+        assert not session.in_transaction()
+    async with site_sessions() as session:
+        rows = tuple(await session.scalars(select(EngineRegistration).where(
+            EngineRegistration.main_site_id == site.id
+        )))
+        assert len(rows) == 2
+        assert all(row.indexnow_key == "a1b2c3d4" for row in rows)
+        assert all(row.indexnow_key_location == "https://example.com/key.txt" for row in rows)

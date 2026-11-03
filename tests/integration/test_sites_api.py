@@ -5,7 +5,7 @@ from uuid import UUID, uuid4
 
 import pytest
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import insert, select
+from sqlalchemy import insert, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
@@ -215,3 +215,110 @@ async def test_site_routes_are_documented(site_api: AsyncClient) -> None:
     assert "201" in operations["post"]["responses"]
     assert {"get", "post"} <= operations.keys()
     assert (await site_api.get("/docs")).status_code == 200
+
+
+# 설정 추가·반복 저장·교체 후에도 두 엔진의 등록 상태와 키 비공개를 보장합니다.
+async def test_indexnow_settings_roundtrip(
+    site_api: AsyncClient, api_client_id: str, migrated_database_url: str,
+) -> None:
+    created = (await site_api.post("/sites", json=site_payload(api_client_id))).json()
+    path = f"/sites/{created['id']}/indexnow-settings"
+    assert (await site_api.get(path)).json() == {"configured": False, "key_location": None}
+    payload = {"key": "a1b2c3d4", "key_location": "https://example.com/key.txt"}
+    expected = {"configured": True, "key_location": payload["key_location"]}
+    for _ in range(2):
+        response = await site_api.put(path, json=payload)
+        assert response.status_code == 200
+        assert response.json() == expected
+        assert payload["key"] not in response.text
+    engine = create_async_engine(migrated_database_url, poolclass=NullPool, hide_parameters=True)
+    try:
+        async with AsyncSession(engine) as session, session.begin():
+            rows = tuple(await session.scalars(select(EngineRegistration).where(
+                EngineRegistration.main_site_id == UUID(created["id"])
+            )))
+            assert len(rows) == 2
+            await session.execute(update(EngineRegistration).where(
+                EngineRegistration.main_site_id == UUID(created["id"])
+            ).values(registration_status="verified", error_message="기존 기록"))
+        replacement = {"key": "deadbeef", "key_location": "https://example.com/new-key.txt"}
+        assert (await site_api.put(path, json=replacement)).status_code == 200
+        async with AsyncSession(engine) as session:
+            rows = tuple(await session.scalars(select(EngineRegistration).where(
+                EngineRegistration.main_site_id == UUID(created["id"])
+            )))
+            assert len(rows) == 2
+            assert all(row.indexnow_key == replacement["key"] for row in rows)
+            assert all(row.indexnow_key_location == replacement["key_location"] for row in rows)
+            assert all(row.registration_status == "verified" for row in rows)
+            assert all(row.error_message == "기존 기록" for row in rows)
+        assert (await site_api.get(path)).json() == {
+            "configured": True, "key_location": replacement["key_location"],
+        }
+    finally:
+        await engine.dispose()
+
+
+# 잘못된 설정은 저장하지 않고 검증 응답에도 키를 노출하지 않습니다.
+@pytest.mark.parametrize("payload", [
+    {"key": "secret-invalid-key", "key_location": "https://example.com/key.txt"},
+    {"key": "a1b2c3d4"},
+    {"key": "a1b2c3d4", "key_location": "https://other.test/key.txt"},
+    {"key": "a1b2c3d4", "key_location": "https://example.com/other/key.txt"},
+    {"key": "a1b2c3d4", "key_location": "https://example.com/key.txt", "extra": "a1b2c3d4"},
+])
+async def test_indexnow_settings_invalid(
+    site_api: AsyncClient, api_client_id: str, payload: dict[str, str],
+) -> None:
+    created = (await site_api.post("/sites", json=site_payload(api_client_id))).json()
+    path = f"/sites/{created['id']}/indexnow-settings"
+    response = await site_api.put(path, json=payload)
+    assert response.status_code == 422
+    assert payload["key"] not in response.text
+    assert (await site_api.get(path)).json() == {"configured": False, "key_location": None}
+
+
+# 미존재 사이트와 개별 글은 설정 조회·변경 대상으로 허용하지 않습니다.
+async def test_indexnow_settings_main_site_only(
+    site_api: AsyncClient, api_client_id: str, migrated_database_url: str,
+) -> None:
+    created = (await site_api.post("/sites", json=site_payload(api_client_id))).json()
+    page_id = uuid4()
+    engine = create_async_engine(migrated_database_url, poolclass=NullPool, hide_parameters=True)
+    try:
+        async with AsyncSession(engine) as session, session.begin():
+            await session.execute(insert(Site).values(
+                id=page_id, client_id=UUID(api_client_id), parent_site_id=UUID(created["id"]),
+                target_type="page", owner_type="client", name="글", url="https://example.com/blog/post",
+            ))
+        for site_id in (uuid4(), page_id):
+            path = f"/sites/{site_id}/indexnow-settings"
+            assert (await site_api.get(path)).status_code == 404
+            response = await site_api.put(path, json={
+                "key": "a1b2c3d4", "key_location": "https://example.com/key.txt",
+            })
+            assert response.status_code == 404
+    finally:
+        await engine.dispose()
+
+
+# 기존 불일치를 조회 오류로 알리고 PUT으로 누락 행까지 복구합니다.
+async def test_indexnow_settings_conflict_and_repair(
+    site_api: AsyncClient, api_client_id: str, migrated_database_url: str,
+) -> None:
+    created = (await site_api.post("/sites", json=site_payload(api_client_id))).json()
+    path = f"/sites/{created['id']}/indexnow-settings"
+    engine = create_async_engine(migrated_database_url, poolclass=NullPool, hide_parameters=True)
+    try:
+        async with AsyncSession(engine) as session, session.begin():
+            await session.execute(insert(EngineRegistration).values(
+                main_site_id=UUID(created["id"]), engine="bing", registration_status="verified",
+                indexnow_key="deadbeef", indexnow_key_location="https://example.com/old.txt",
+            ))
+        assert (await site_api.get(path)).status_code == 409
+        assert (await site_api.put(path, json={
+            "key": "a1b2c3d4", "key_location": "https://example.com/key.txt",
+        })).status_code == 200
+        assert (await site_api.get(path)).json()["configured"] is True
+    finally:
+        await engine.dispose()
