@@ -9,6 +9,7 @@ from fastapi.staticfiles import StaticFiles
 from app.api.clients import router as clients_router
 from app.api.indexnow_settings import router as indexnow_settings_router
 from app.api.sites import router as sites_router
+from app.api.pages import router as pages_router
 from app.core.database import dispose_database
 
 
@@ -26,6 +27,7 @@ app = FastAPI(title="StartPress Admin", lifespan=lifespan)
 app.include_router(clients_router)
 app.include_router(sites_router)
 app.include_router(indexnow_settings_router)
+app.include_router(pages_router)
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
