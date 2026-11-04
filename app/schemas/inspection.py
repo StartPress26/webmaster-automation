@@ -24,6 +24,7 @@ class InspectionRead(BaseModel):
     last_checked_at: datetime | None
     next_check_at: datetime | None
     error_message: str | None
+    error_code: str | None = None
 
 
 class InspectionList(BaseModel):

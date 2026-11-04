@@ -19,14 +19,21 @@ Inspector = Callable[[InspectionEngine, str, str], Awaitable[InspectionResult]]
 _google_credentials_lock = Lock()
 
 
+class GoogleInspectionAuthError(GoogleEngineError):
+    # 인증 원문 대신 허용된 세부 원인과 메시지만 서비스 계층에 전달합니다.
+    def __init__(self, error: GoogleAuthError) -> None:
+        super().__init__("authentication", error.public_message)
+        self.auth_code = error.code
+
+
 # 동기 인증·요청을 한 스레드에서 실행하고 Google 전용 세션을 닫습니다.
 def _inspect_google(site_url: str, page_url: str) -> GoogleUrlInspection:
     try:
         # 토큰 갱신 파일을 동시 요청이 서로 덮어쓰지 않게 합니다.
         with _google_credentials_lock:
             credentials = load_credentials()
-    except GoogleAuthError:
-        raise GoogleEngineError("authentication", "Google 인증 설정을 확인하세요.") from None
+    except GoogleAuthError as error:
+        raise GoogleInspectionAuthError(error) from None
     with GoogleEngine(credentials) as engine:
         return engine.inspect_url(site_url, page_url)
 

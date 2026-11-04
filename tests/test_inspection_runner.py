@@ -42,6 +42,19 @@ async def test_google_auth_error_is_sanitized(monkeypatch: pytest.MonkeyPatch) -
     assert "secret-token" not in str(error.value)
 
 
+# 인증 갱신 실패의 공개 코드가 서비스 경계까지 유지되어야 합니다.
+async def test_google_auth_reason_is_preserved(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.services.inspection import _public_error
+
+    monkeypatch.setattr(runner, "load_credentials", Mock(side_effect=GoogleAuthError("secret-token", code="refresh_failed")))
+    with pytest.raises(GoogleEngineError) as error:
+        await runner.inspect_url("google", "https://example.com/", "https://example.com/post")
+    public = _public_error(error.value)
+    assert public.code == "GOOGLE_AUTH_REFRESH_FAILED"
+    assert "갱신" in str(public)
+    assert "secret-token" not in str(public)
+
+
 # Google 세션은 검사 성공과 실패 모두 닫혀야 합니다.
 @pytest.mark.parametrize("fail", [False, True])
 async def test_google_session_cleanup(monkeypatch: pytest.MonkeyPatch, fail: bool) -> None:

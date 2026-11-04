@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.engines.bing import BingEngineError
 from app.engines.google.google import GoogleEngineError
 from app.engines.indexnow.schemas import IndexNowUrl
-from app.engines.inspection import Inspector
+from app.engines.inspection import Inspector, GoogleInspectionAuthError
 from app.models.site import Site
 from app.models.site_engine_status import SiteEngineStatus
 from app.schemas.inspection import InspectionEngine, InspectionRead
@@ -79,6 +79,8 @@ async def _get_context(
 
 # 외부 오류는 고정 메시지로 변환해 원본 키·토큰·본문이 저장되지 않게 합니다.
 def _public_error(error: GoogleEngineError | BingEngineError) -> InspectionUpstreamError:
+    if isinstance(error, GoogleInspectionAuthError):
+        return InspectionUpstreamError(f"GOOGLE_AUTH_{error.auth_code.upper()}", str(error), 503)
     messages = {
         "authentication": (503, "검색엔진 인증 설정을 확인하세요."),
         "permission": (502, "검색엔진 사이트 접근 권한이 없습니다."),
@@ -103,11 +105,11 @@ async def run_inspection(
         public_error = _public_error(error)
         async with session.begin():
             statement = insert(SiteEngineStatus).values(
-                site_id=site_id, engine=engine, index_status="unknown", error_message=str(public_error),
+                site_id=site_id, engine=engine, index_status="unknown", error_message=str(public_error), error_code=public_error.code,
             )
             await session.execute(statement.on_conflict_do_update(
                 constraint="uq_site_engine_statuses_site_engine",
-                set_={"error_message": str(public_error)},
+                set_={"error_message": str(public_error), "error_code": public_error.code},
                 where=or_(SiteEngineStatus.last_checked_at.is_(None), SiteEngineStatus.last_checked_at <= started_at),
             ))
         raise public_error from None
@@ -117,7 +119,7 @@ async def run_inspection(
     async with session.begin():
         statement = insert(SiteEngineStatus).values(
             site_id=site_id, engine=engine, index_status=result.index_status,
-            last_checked_at=result.checked_at, error_message=None,
+            last_checked_at=result.checked_at, error_message=None, error_code=None,
         )
         await session.execute(statement.on_conflict_do_update(
             constraint="uq_site_engine_statuses_site_engine",
@@ -125,6 +127,7 @@ async def run_inspection(
                 "index_status": statement.excluded.index_status,
                 "last_checked_at": statement.excluded.last_checked_at,
                 "error_message": None,
+                "error_code": None,
             },
             where=or_(SiteEngineStatus.last_checked_at.is_(None), SiteEngineStatus.last_checked_at <= result.checked_at),
         ))

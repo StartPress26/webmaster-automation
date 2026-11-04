@@ -23,7 +23,8 @@ GET은 DB에 저장된 엔진별 최신 상태 조회를 수행합니다. 검사
   "index_status": "indexed",
   "last_checked_at": "2026-11-03T05:00:00Z",
   "next_check_at": null,
-  "error_message": null
+  "error_message": null,
+  "error_code": null
 }
 ```
 
@@ -47,7 +48,8 @@ GET은 DB에 저장된 엔진별 최신 상태 조회를 수행합니다. 검사
       "index_status": "indexed",
       "last_checked_at": "2026-11-03T05:00:00Z",
       "next_check_at": null,
-      "error_message": null
+      "error_message": null,
+      "error_code": null
     }
   ]
 }
@@ -63,6 +65,8 @@ GET은 DB에 저장된 엔진별 최신 상태 조회를 수행합니다. 검사
 외부 조회 오류는 기존 index_status·last_checked_at·next_check_at을 유지하고 안전한 오류 메시지만 저장합니다.
 성공 관측이 없는 첫 실패는 unknown·last_checked_at=null로 저장합니다.
 오류를 not_indexed로 바꾸지 않습니다. 이후 성공하면 오류 메시지를 지웁니다.
+오류의 안정적인 분류는 nullable `error_code`로 저장하고, 이후 성공하면 코드도 지웁니다.
+기존 코드 없는 오류 기록은 그대로 유지하며 당시의 세부 원인을 추정해 채우지 않습니다.
 원본 키·토큰·응답 본문은 오류 응답과 저장 메시지에 포함하지 않습니다.
 
 | HTTP | 코드 | 의미 |
@@ -79,11 +83,28 @@ GET은 DB에 저장된 엔진별 최신 상태 조회를 수행합니다. 검사
 
 ## 범위와 검증
 
-DB 구조 변경은 없습니다. 상세 canonical·크롤링 시각 등 엔진 원본 상세 필드는 이번 API에서 저장·노출하지 않고
-기존 테이블의 요약 상태를 사용합니다. 검사 이력·스케줄러·자동 재시도·화면 연결은 이번 범위에 포함하지 않습니다.
+오류 표시 개선에서 Alembic 0003으로 `site_engine_statuses.error_code` nullable TEXT 컬럼을 추가했습니다.
+기존 URL·판정·성공 시각·오류 문구는 변경하지 않습니다.
+상세 canonical·크롤링 시각 등 엔진 원본 상세 필드는 이번 API에서 저장·노출하지 않고
+기존 테이블의 요약 상태를 사용합니다. 검사 이력·스케줄러·자동 재시도는 구현하지 않습니다.
+프론트 연결은 `extension/src/api.ts`와 `extension/src/main.ts`에 구현되어 있습니다.
 동시 성공 관측은 checked_at이 오래된 결과가 최신 결과를 덮어쓰지 않도록 저장합니다.
 
 임시 PostgreSQL과 모의 엔진으로 메인페이지·글의 조회·독립 DB 저장·엔진별 분리,
 오류 시 이전 상태 보존·복구·최초 실패·GET 외부 호출 없음·입력·활성·범위 검증을 확인했습니다.
 Google 스레드 실행·인증 오류 비공개·엔진 세션 및 HTTP 클라이언트 정리도 검증했습니다.
 실제 외부 검색엔진 조회는 실행하지 않았습니다.
+
+## Google 인증 오류의 세부 코드
+
+HTTP 503의 기존 일반 코드 `ENGINE_AUTHENTICATION`은 유지하며,
+인증 로더에서 확인한 원인은 `GOOGLE_AUTH_` 접두사의 코드로 추가 구분합니다.
+
+- `CONFIGURATION_MISSING`, `INVALID_TOKEN_PATH`: 서버 설정 문제
+- `TOKEN_UNREADABLE`, `TOKEN_FORMAT`: 저장된 인증 파일 문제
+- `INSUFFICIENT_SCOPES`, `REFRESH_TOKEN_MISSING`: 접근 범위·갱신 수단 확인 필요
+- `REFRESH_FAILED`: 갱신 실패. 네트워크·권한 철회 등 실제 제공자 원인을 단정하지 않음
+- `TOKEN_INVALID`, `TOKEN_SAVE_FAILED`: 갱신 후 유효성·서버 저장 문제
+
+원문 토큰·키·외부 오류 응답·파일 내용은 전달하지 않고 허용된 고정 메시지만 사용합니다.
+유효한 토큰의 단순 만료 자체를 오류로 처리하지 않으며 기존 자동 갱신 동작은 유지합니다.

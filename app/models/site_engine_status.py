@@ -33,3 +33,4 @@ class SiteEngineStatus(UUIDPrimaryKey, Base):
     last_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     next_check_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     error_message: Mapped[str | None] = mapped_column(Text)
+    error_code: Mapped[str | None] = mapped_column(Text)

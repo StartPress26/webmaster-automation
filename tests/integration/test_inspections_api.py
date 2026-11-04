@@ -158,10 +158,12 @@ async def test_inspection_error_preserves_status(
     assert stored["index_status"] == before["index_status"]
     assert stored["last_checked_at"] == before["last_checked_at"]
     assert stored["error_message"] is not None
+    assert stored["error_code"] == f"ENGINE_{code.upper()}"
     assert "secret-key-token" not in str(stored)
     recovered = await inspection_api.post(path, json={"engine": engine_name})
     assert recovered.status_code == 200
     assert recovered.json()["error_message"] is None
+    assert recovered.json()["error_code"] is None
 
 
 # 첫 검사 실패도 미색인으로 단정하지 않고 unknown·관측 시각 없음으로 저장합니다.
@@ -180,6 +182,30 @@ async def test_first_error_is_unknown(inspection_api: AsyncClient) -> None:
     assert row["index_status"] == "unknown"
     assert row["last_checked_at"] is None
     assert row["error_message"] is not None
+    assert row["error_code"] == "ENGINE_TIMEOUT"
+
+
+# 안전한 Google 세부 인증 원인은 저장 후 GET으로 읽어도 보존됩니다.
+async def test_google_auth_code_is_persisted(inspection_api: AsyncClient) -> None:
+    from app.engines.inspection import GoogleInspectionAuthError
+    from app.engines.google.google_auth import GoogleAuthError
+
+    _, target_id, _ = await create_target(inspection_api)
+    inspector = AsyncMock(side_effect=GoogleInspectionAuthError(GoogleAuthError("secret-key", code="refresh_failed")))
+
+    # 실제 인증 없이 정제된 인증 오류만 반환합니다.
+    def dependency() -> Inspector:
+        return inspector
+
+    app.dependency_overrides[get_inspector] = dependency
+    path = f"/sites/{target_id}/inspections"
+    failure = await inspection_api.post(path, json={"engine": "google"})
+    assert failure.status_code == 503
+    assert failure.json()["detail"]["code"] == "GOOGLE_AUTH_REFRESH_FAILED"
+    row = (await inspection_api.get(path)).json()["items"][0]
+    assert row["error_code"] == "GOOGLE_AUTH_REFRESH_FAILED"
+    assert row["last_checked_at"] is None
+    assert "secret-key" not in str(row)
 
 
 # GET은 검사 의존성을 생성하지 않으며 미존재 대상은 두 메서드 모두 404입니다.
