@@ -218,6 +218,15 @@ tbody tr:last-child td { border-bottom: 0; }
 .mode-switch { white-space: nowrap; font-size: 12px; color: var(--blue); }
 .result-url { display: block; font-size: 11px; color: #718094; overflow-wrap: anywhere; margin-top: 5px; }
 .inspection-controls { padding: 0 25px 24px; display: grid; gap: 8px; border-bottom: 1px solid var(--border); }
+.inspection-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.sitemap-panel[hidden] { display: none; }
+.sitemap-panel { margin-bottom: 22px; }
+.sitemap-form { padding: 0 25px 22px; }
+.sitemap-form label { display: block; margin-bottom: 8px; font-size: 13px; }
+.sitemap-input-row { display: flex; flex-wrap: wrap; gap: 10px; }
+.sitemap-input-row input { flex: 1 1 220px; min-width: 0; padding: 11px; border: 1px solid #d9dfe7; border-radius: 5px; }
+.sitemap-feedback { font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
+.sitemap-feedback:not(.inspection-error) { color: #27775f; }
 .inspection-controls label { font-size: 12px; color: #65717d; }
 .inspection-controls select { width: 100%; min-width: 0; padding: 11px; border: 1px solid #d9dfe7; border-radius: 5px; color: #3c4c5e; background: #fff; }
 .inspection-controls p { overflow-wrap: anywhere; }

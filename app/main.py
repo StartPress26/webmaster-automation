@@ -12,6 +12,7 @@ from app.api.indexnow_settings import router as indexnow_settings_router
 from app.api.sites import router as sites_router
 from app.api.pages import router as pages_router
 from app.api.inspections import router as inspections_router
+from app.api.sitemaps import router as sitemaps_router
 from app.core.database import dispose_database
 
 
@@ -33,6 +34,8 @@ app.include_router(sites_router)
 app.include_router(indexnow_settings_router)
 app.include_router(pages_router)
 app.include_router(inspections_router)
+# sitemap 제출
+app.include_router(sitemaps_router)
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 

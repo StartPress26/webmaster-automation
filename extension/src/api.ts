@@ -3,7 +3,7 @@ import type { Article, ClientRead, IndexNowSettings, IndexNowSettingsRead, PageC
 import { ApiError, httpError } from './errors.ts';
 import type { Operation } from './errors';
 import { defaultApiBase } from './runtime.ts';
-import type { ClientDashboard } from './types';
+import type { ClientDashboard, SitemapSubmission } from './types';
 export { ApiError, errorDetail } from './errors.ts';
 
 export interface ApiClient {
@@ -18,6 +18,7 @@ export interface ApiClient {
   readonly listPages: (id: string) => Promise<readonly PageRead[]>;
   readonly getInspections: (id: string) => Promise<readonly InspectionRead[]>;
   readonly inspect: (id: string, engine: 'google' | 'bing') => Promise<InspectionRead>;
+  readonly submitSitemap: (id: string, engine: 'google' | 'bing', sitemapUrl: string) => Promise<SitemapSubmission>;
 }
 
 // 검사 응답에서 대상·엔진·상태와 nullable 필드를 확인합니다.
@@ -65,6 +66,15 @@ export function createApi(fetcher: typeof fetch = fetch, base = defaultApiBase(g
   }
 
   return {
+    // 선택한 메인 사이트의 사이트맵을 한 번 제출하고 접수 응답을 검증합니다.
+    submitSitemap: async (id: string, engine: 'google' | 'bing', sitemapUrl: string): Promise<SitemapSubmission> => {
+      if (engine !== 'google' && engine !== 'bing') throw new ApiError(422, '사이트맵 제출은 Google과 Bing만 지원합니다.', { operation: 'submit' });
+      const result = await request<SitemapSubmission>(`/sites/${encodeURIComponent(id)}/sitemaps`, 'POST', { engine, sitemap_url: sitemapUrl }, 'submit');
+      if (result?.main_site_id !== id || result?.engine !== engine || result?.status !== 'accepted' || result?.sitemap_url !== sitemapUrl) {
+        throw new ApiError(0, '사이트맵 접수 응답을 확인하지 못했습니다.', { code: 'INVALID_RESPONSE', operation: 'submit' });
+      }
+      return result;
+    },
     // 선택한 고객사의 등록 글 통계를 외부 검사 없이 읽습니다.
     getDashboard: (clientId: string): Promise<ClientDashboard> => request(`/clients/${encodeURIComponent(clientId)}/dashboard`),
     // 부모 사이트에 속한 저장된 글을 외부 호출 없이 읽습니다.

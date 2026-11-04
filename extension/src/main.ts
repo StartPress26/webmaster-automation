@@ -73,6 +73,8 @@ let requestText = '';
 let refreshTimer: ReturnType<typeof setTimeout> | undefined;
 let formDrafts: FormDrafts = new Map();
 let renderedScope = '';
+let sitemapOpen = false;
+let sitemapFeedback: { readonly siteId: string; readonly engine: Engine; readonly message: string; readonly failed: boolean } | null = null;
 const root = document.querySelector<HTMLDivElement>('#app');
 if (!root) throw new Error('화면을 표시할 요소가 없습니다.');
 const app: HTMLDivElement = root;
@@ -213,8 +215,9 @@ function inspectionView(): string {
   }
   const rows = currentRows();
   const visible = rows.filter((row: Inspection): boolean => state.filter === 'all' || row.status === state.filter);
-  return `<div class="page-heading"><div><h1>색인 상태 확인</h1><p>검색엔진이 내 사이트의 페이지를 어떻게 보고 있는지 확인하세요.</p></div><button class="button primary" id="refresh-index">${icon('refresh')}인덱스 업데이트</button></div>
+  return `<div class="page-heading"><div><h1>색인 상태 확인</h1><p>검색엔진이 내 사이트의 페이지를 어떻게 보고 있는지 확인하세요.</p></div>${inspectionActions()}</div>
     ${engines()}
+    ${sitemapForm()}
     <section class="report" aria-labelledby="report-title">
       <div class="report-header"><div><h2 id="report-title">페이지 색인 상태</h2><p>선택한 사이트의 URL별 관측 결과</p></div><span class="muted small">${icon('clock')}<span id="last-updated">${escape(rows[0]?.checkedAt ?? '조회 기록 없음')}</span></span></div>
       <div class="status-summary">${(['indexed', 'waiting', 'crawled', 'not_indexed'] as const).map((status: IndexStatus): string => `<button class="summary-cell ${status} ${state.filter === status ? 'selected' : ''}" data-filter="${status}" aria-pressed="${state.filter === status}"><span class="summary-label"><span class="status-dot"></span>${statusNames[status]}</span><strong>${rows.filter((row: Inspection): boolean => row.status === status).length}<span>페이지</span></strong></button>`).join('')}</div>
@@ -223,7 +226,20 @@ function inspectionView(): string {
       ${visible.length === 0 ? '<div class="empty-state">이 조건의 조회 기록이 없습니다.<p>다른 검색엔진이나 상태를 선택해 보세요.</p></div>' : ''}
       <div class="table-footer"><span>예시 관측 데이터</span><span>${visible.length}개 페이지</span></div>
     </section>
-    <div class="explanation">${icon('info')}<p>인덱스 업데이트는 관측 결과를 새로 확인하는 작업입니다. URL 제출이 수집이나 색인 완료를 의미하지는 않습니다.</p></div>`;
+    <div class="explanation">${icon('info')}<p>색인 상태 조회는 관측 결과를 새로 확인하는 작업입니다. 사이트맵 제출은 수집이나 색인 완료를 의미하지 않습니다.</p></div>`;
+}
+
+// 사이트 전체의 제출 작업을 개별 URL 상태 조회 버튼 옆에 배치합니다.
+function inspectionActions(): string {
+  return `<div class="inspection-actions"><button class="button primary" id="refresh-index">${icon('refresh')}${state.engine === 'naver' ? '네이버 상태 조회 · 탭 연결 필요' : '색인 상태 조회'}</button><button class="button secondary" id="toggle-sitemap" aria-expanded="${sitemapOpen && state.engine !== 'naver'}" aria-controls="sitemap-panel" ${state.engine === 'naver' ? 'title="사이트맵 제출은 Google과 Bing만 지원합니다."' : ''}>${icon('send')}사이트맵 제출</button></div>`;
+}
+
+// 메인 사이트와 선택한 검색엔진을 명시하고 공개 사이트맵 주소를 입력받습니다.
+function sitemapForm(): string {
+  const site = property();
+  const feedback = sitemapFeedback?.siteId === site.id && sitemapFeedback.engine === state.engine ? sitemapFeedback : null;
+  const suggestion = site.siteUrl ? new URL('sitemap.xml', site.siteUrl).href : '';
+  return `<section id="sitemap-panel" class="report sitemap-panel" ${sitemapOpen && state.engine !== 'naver' ? '' : 'hidden'} aria-labelledby="sitemap-title"><div class="report-header"><div><h2 id="sitemap-title">${engineNames[state.engine]} 사이트맵 제출</h2><p>선택한 글과 관계없이 ${escape(site.name)} 사이트 전체에 제출합니다.</p></div><button class="icon-button" id="close-sitemap" aria-label="사이트맵 제출 닫기">${icon('close')}</button></div><form id="sitemap-form" class="sitemap-form"><label for="sitemap-url">사이트맵 URL</label><div class="sitemap-input-row"><input id="sitemap-url" name="sitemapUrl" type="url" required maxlength="2048" value="${escape(suggestion)}" placeholder="https://example.com/sitemap.xml" aria-describedby="sitemap-help"><button class="button primary" type="submit">${engineNames[state.engine]}에 제출${demo ? ' · 예시' : ''}</button></div><p id="sitemap-help" class="field-help">실제 사이트맵 주소를 확인하세요. 새 글이 사이트맵에 먼저 반영되어 있어야 하며, 접수 성공이 색인 완료를 의미하지 않습니다.</p>${feedback ? `<p class="sitemap-feedback ${feedback.failed ? 'inspection-error' : ''}" role="${feedback.failed ? 'alert' : 'status'}">${escape(feedback.message)}</p>` : ''}</form></section>`;
 }
 
 // 선택한 메인페이지 또는 글의 검사 대상을 반환합니다.
@@ -239,8 +255,9 @@ function apiInspectionView(): string {
   const failure = inspectionError ?? previousError;
   const unavailable = inspectionUnavailable(state.engine, property(), target);
   const explanation = state.engine === 'naver' ? unavailable : state.engine === 'bing' ? 'Bing은 현재 API로 크롤링 상태를 조회합니다. 실제 색인 여부를 추정하지 않습니다.' : 'Google URL Inspection API로 저장된 색인 상태를 조회합니다. URL 제출이나 색인 요청은 실행하지 않습니다.';
-  return `<div class="page-heading"><div><h1>색인 상태 확인</h1><p>메인페이지 또는 글을 선택하고 검색엔진별 최신 상태를 확인하세요.</p></div><button class="button primary" id="refresh-index">${icon('refresh')}${state.engine === 'naver' ? '네이버 상태 업데이트 · 탭 연결 필요' : '인덱스 업데이트'}</button></div>
+  return `<div class="page-heading"><div><h1>색인 상태 확인</h1><p>메인페이지 또는 글을 선택하고 검색엔진별 최신 상태를 확인하세요.</p></div>${inspectionActions()}</div>
     ${engines()}
+    ${sitemapForm()}
     <section class="report"><div class="report-header"><div><h2>검사 대상</h2><p>대상 선택은 저장 상태만 읽습니다. 새 조회는 위 버튼으로 실행합니다.</p></div><button class="button secondary" id="reload-inspection-targets">${icon('refresh')}대상 목록 새로고침</button></div>
     <div class="inspection-controls"><label for="inspection-target-select">메인페이지 / 글</label><select id="inspection-target-select">${inspectionTargets.length ? inspectionTargets.map((item: InspectionTarget): string => `<option value="${escape(item.id)}" ${item.id === inspectionTargetId ? 'selected' : ''}>${item.type === 'site' ? '메인페이지' : '글'} · ${escape(item.name)}${item.active ? '' : ' (비활성)'} — ${escape(item.url)}</option>`).join('') : '<option value="">사이트를 먼저 등록하거나 선택하세요</option>'}</select><p class="small muted">${escape(target?.url ?? '')}</p></div>
     ${targetsError ? errorPanel(targetsError, '글 목록을 불러오지 못했습니다', 'targets') : ''}
@@ -536,6 +553,8 @@ function applyAvailability(): void {
   app.querySelectorAll<HTMLButtonElement | HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>('button, input, select, textarea').forEach((element): void => { element.disabled = pending || loading; });
   if (pending || loading) return;
   const noSite = !property().id || !property().active;
+  const noSitemap = noSite || state.engine === 'naver';
+  app.querySelectorAll<HTMLButtonElement | HTMLInputElement>('#toggle-sitemap, #sitemap-form input, #sitemap-form button').forEach((element): void => { element.disabled = noSitemap; });
   app.querySelectorAll<HTMLButtonElement | HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>('#notification-form button, #notification-form input, #notification-form select, #notification-form textarea, #indexnow-form input, #indexnow-form button').forEach((element): void => { element.disabled = noSite; });
   app.querySelectorAll<HTMLInputElement | HTMLButtonElement>('#indexnow-form input, #indexnow-form button').forEach((element): void => { element.disabled = noSite || settingsLoading; });
   const registration = app.querySelector<HTMLButtonElement>('#registration-form button[type="submit"]');
@@ -824,6 +843,40 @@ async function runApiInspection(): Promise<void> {
   }
 }
 
+// 사용자가 명시적으로 제출하며 예시 모드에서는 네트워크 요청을 보내지 않습니다.
+async function submitSitemap(event: SubmitEvent): Promise<void> {
+  event.preventDefault();
+  const site = property();
+  const engine = state.engine;
+  if (pending || loading || !site.id || !site.active || engine === 'naver') return;
+  const form = event.currentTarget as HTMLFormElement;
+  const input = form.querySelector<HTMLInputElement>('#sitemap-url');
+  if (!input || !form.reportValidity()) return;
+  try {
+    const sitemapUrl = parseUrl(input.value.trim());
+    if (sitemapUrl.origin !== new URL(site.siteUrl).origin) throw new Error('선택한 사이트와 같은 도메인·프로토콜·포트의 사이트맵 URL을 입력하세요.');
+    if (demo) {
+      sitemapFeedback = { siteId: site.id, engine, message: '예시 모드입니다. 실제 사이트맵 제출은 실행하지 않았습니다.', failed: false };
+      return;
+    }
+    setPending(true);
+    form.querySelector('.sitemap-feedback')?.remove();
+    const button = form.querySelector<HTMLButtonElement>('button[type="submit"]');
+    if (button) button.textContent = '제출 중…';
+    await api.submitSitemap(site.id, engine, sitemapUrl.href);
+    sitemapFeedback = { siteId: site.id, engine, message: `${engineNames[engine]} 사이트맵 제출 접수 완료. 수집·색인 반영에는 시간이 걸릴 수 있습니다.`, failed: false };
+  } catch (error: unknown) {
+    const failure = asAppError(error, 'submit');
+    const uncertain = ['network', 'timeout', 'response', 'server'].includes(failure.kind);
+    const advice = uncertain ? '접수 여부를 확인하지 못했습니다. 자동 재전송하지 않습니다.' : presentError(failure, '').advice;
+    sitemapFeedback = { siteId: site.id, engine, message: `${failure.message} ${advice}`, failed: true };
+  } finally {
+    setPending(false);
+    render();
+    if (state.view === 'inspect' && state.propertyId === site.id && state.engine === engine) app.querySelector<HTMLElement>('.sitemap-feedback')?.scrollIntoView?.({ block: 'nearest' });
+  }
+}
+
 // URL 상세 창을 열고 키보드 포커스를 창 안으로 이동합니다.
 function openDetail(id: string): void {
   update({ selectedId: id });
@@ -935,6 +988,9 @@ function bindEvents(): void {
   app.querySelector<HTMLFormElement>('#url-search')?.addEventListener('submit', inspectUrl);
   app.querySelector<HTMLInputElement>('#url-inspect')?.addEventListener('input', (event: Event): void => (event.target as HTMLInputElement).setCustomValidity(''));
   app.querySelector<HTMLButtonElement>('#refresh-index')?.addEventListener('click', refreshInspection);
+  app.querySelector<HTMLButtonElement>('#toggle-sitemap')?.addEventListener('click', (): void => { sitemapOpen = !sitemapOpen; render(); if (sitemapOpen) app.querySelector<HTMLInputElement>('#sitemap-url')?.focus(); });
+  app.querySelector<HTMLButtonElement>('#close-sitemap')?.addEventListener('click', (): void => { sitemapOpen = false; render(); app.querySelector<HTMLButtonElement>('#toggle-sitemap')?.focus(); });
+  app.querySelector<HTMLFormElement>('#sitemap-form')?.addEventListener('submit', (event: SubmitEvent): void => { void submitSitemap(event); });
   app.querySelector<HTMLButtonElement>('#dismiss-notice')?.addEventListener('click', (): void => {
     state = { ...state, notice: '' };
     app.querySelector<HTMLElement>('.success-notice')?.remove();

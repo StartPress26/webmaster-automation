@@ -25,8 +25,8 @@ async function waitFor(condition) {
 }
 
 // 브라우저나 실제 API를 사용하지 않는 독립 DOM 실행 환경을 만듭니다.
-async function workspace(override = () => undefined) {
-  const dom = new JSDOM('<div id="app"></div>', { url: 'http://localhost/', runScripts: 'outside-only' });
+async function workspace(override = () => undefined, query = '') {
+  const dom = new JSDOM('<div id="app"></div>', { url: `http://localhost/${query}`, runScripts: 'outside-only' });
   const { window } = dom;
   window.matchMedia = () => ({ matches: false });
   window.CSS = { escape: (value) => value };
@@ -133,6 +133,102 @@ test('늦게 도착한 이전 고객사 통계는 현재 고객사의 화면을 
     assert.equal(app.document.querySelector('.dashboard-card p').textContent, '2개');
   } finally {
     await delay(0);
+    app.dom.window.close();
+  }
+});
+
+// 개별 글 선택과 관계없이 사이트 단위로 제출하며 중복 클릭을 막습니다.
+test('사이트맵 버튼에서 Google·Bing 제출과 접수 안내까지 연결된다', async () => {
+  let complete;
+  const response = new Promise((resolve) => { complete = resolve; });
+  const app = await workspace((url) => {
+    if (url === '/api/sites/a1/sitemaps') return response;
+    if (url.startsWith('/api/sites/a1/pages')) return new Response(JSON.stringify({ items: [{ id: 'page', name: '글', url: 'https://a.example/post', is_active: true }] }));
+    return undefined;
+  });
+  try {
+    const { document, window, calls } = app;
+    app.navigate('inspect');
+    await waitFor(() => document.querySelector('#inspection-target-select')?.options.length === 2);
+    app.choose('#inspection-target-select', 'page');
+    await waitFor(() => !document.querySelector('#read-inspection').disabled);
+    document.querySelector('#toggle-sitemap').click();
+    assert.equal(document.querySelector('#toggle-sitemap').getAttribute('aria-expanded'), 'true');
+    assert.equal(document.querySelector('#sitemap-panel').hidden, false);
+    document.querySelector('[data-engine="bing"]').click();
+    const input = document.querySelector('#sitemap-url');
+    input.value = 'https://a.example/custom-sitemap.xml';
+    const form = document.querySelector('#sitemap-form');
+    form.dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true }));
+    form.dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true }));
+    assert.ok(document.querySelector('#sitemap-form button[type="submit"]').disabled);
+    const submissions = calls.filter((call) => call.url.endsWith('/sitemaps'));
+    assert.equal(submissions.length, 1);
+    assert.deepEqual(JSON.parse(submissions[0].options.body), { engine: 'bing', sitemap_url: input.value });
+    complete(new Response(JSON.stringify({ main_site_id: 'a1', engine: 'bing', sitemap_url: input.value, status: 'accepted' })));
+    await waitFor(() => document.querySelector('.sitemap-feedback')?.textContent.includes('Bing 사이트맵 제출 접수 완료'));
+    assert.ok(document.querySelector('.sitemap-feedback').textContent.includes('수집·색인 반영에는 시간'));
+    assert.equal(document.querySelector('#sitemap-url').value, input.value);
+    document.querySelector('[data-engine="google"]').click();
+    assert.equal(document.querySelector('.sitemap-feedback'), null);
+    document.querySelector('[data-engine="naver"]').click();
+    assert.ok(document.querySelector('#toggle-sitemap').disabled);
+    assert.ok(document.querySelector('#sitemap-panel').hidden);
+  } finally {
+    await delay(0);
+    app.dom.window.close();
+  }
+});
+
+// 오류 이후 URL을 유지하고 재전송 없이 접수 불확실성을 표시합니다.
+test('사이트맵 실패는 입력을 유지하고 다른 사이트에 결과를 표시하지 않는다', async () => {
+  const app = await workspace((url) => url.endsWith('/sitemaps') ? Promise.reject(new TypeError('network')) : undefined);
+  try {
+    const { document, window, calls } = app;
+    app.navigate('inspect');
+    document.querySelector('#toggle-sitemap').click();
+    document.querySelector('#sitemap-url').value = 'https://a.example/my-sitemap.xml';
+    document.querySelector('#sitemap-form').dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true }));
+    await waitFor(() => document.querySelector('.sitemap-feedback')?.textContent.includes('접수 여부를 확인하지 못했습니다'));
+    assert.equal(document.querySelector('#sitemap-url').value, 'https://a.example/my-sitemap.xml');
+    assert.equal(calls.filter((call) => call.url.endsWith('/sitemaps')).length, 1);
+    app.choose('#property-select', 'a2');
+    assert.equal(document.querySelector('.sitemap-feedback'), null);
+    assert.equal(document.querySelector('#sitemap-url').value, 'https://second.example/sitemap.xml');
+  } finally {
+    await delay(0);
+    app.dom.window.close();
+  }
+});
+
+// 다른 도메인 주소는 제출하지 않고 입력 수정을 안내합니다.
+test('사이트맵의 다른 도메인 주소는 클라이언트에서 차단한다', async () => {
+  const app = await workspace();
+  try {
+    app.navigate('inspect');
+    app.document.querySelector('#toggle-sitemap').click();
+    app.document.querySelector('#sitemap-url').value = 'https://other.example/sitemap.xml';
+    app.document.querySelector('#sitemap-form').dispatchEvent(new app.window.Event('submit', { bubbles: true, cancelable: true }));
+    await waitFor(() => app.document.querySelector('.sitemap-feedback'));
+    assert.ok(app.document.querySelector('.sitemap-feedback').textContent.includes('같은 도메인'));
+    assert.equal(app.calls.filter((call) => call.url.endsWith('/sitemaps')).length, 0);
+  } finally {
+    await delay(0);
+    app.dom.window.close();
+  }
+});
+
+// 예시 제출은 성공 접수로 오해하지 않게 표시하고 외부 요청을 보내지 않습니다.
+test('예시 모드의 사이트맵 제출은 API를 호출하지 않는다', async () => {
+  const app = await workspace(undefined, '?mode=demo');
+  try {
+    app.navigate('inspect');
+    app.document.querySelector('#toggle-sitemap').click();
+    app.document.querySelector('#sitemap-form').dispatchEvent(new app.window.Event('submit', { bubbles: true, cancelable: true }));
+    await waitFor(() => app.document.querySelector('.sitemap-feedback'));
+    assert.ok(app.document.querySelector('.sitemap-feedback').textContent.includes('실제 사이트맵 제출은 실행하지 않았습니다'));
+    assert.equal(app.calls.length, 0);
+  } finally {
     app.dom.window.close();
   }
 });

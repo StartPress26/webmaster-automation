@@ -70,6 +70,13 @@ export interface InspectionRead {
   readonly error_code?: string | null;
 }
 
+export interface SitemapSubmission {
+  readonly main_site_id: string;
+  readonly engine: 'google' | 'bing';
+  readonly sitemap_url: string;
+  readonly status: 'accepted';
+}
+
 export interface SiteWrite {
   readonly client_id: string;
   readonly name: string;
