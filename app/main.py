@@ -7,6 +7,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.api.clients import router as clients_router
+from app.api.dashboard import router as dashboard_router
 from app.api.indexnow_settings import router as indexnow_settings_router
 from app.api.sites import router as sites_router
 from app.api.pages import router as pages_router
@@ -26,6 +27,8 @@ async def lifespan(_: FastAPI) -> AsyncGenerator[None, None]:
 
 app = FastAPI(title="StartPress Admin", lifespan=lifespan)
 app.include_router(clients_router)
+# 선택한 고객사의 블로그·글·엔진별 저장 상태 통계를 조회합니다.
+app.include_router(dashboard_router)
 app.include_router(sites_router)
 app.include_router(indexnow_settings_router)
 app.include_router(pages_router)

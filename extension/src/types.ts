@@ -1,6 +1,6 @@
 import type { ApiError } from './errors';
 
-export type View = 'inspect' | 'register' | 'notify' | 'clients';
+export type View = 'dashboard' | 'inspect' | 'register' | 'notify' | 'clients';
 export type Engine = 'google' | 'naver' | 'bing';
 export type IndexStatus = 'indexed' | 'waiting' | 'crawled' | 'not_indexed';
 export type NotifyRoute = 'direct' | 'link' | 'request';
@@ -121,6 +121,7 @@ export interface Activity {
 
 export interface AppState {
   readonly view: View;
+  readonly clientId: string;
   readonly propertyId: string;
   readonly engine: Engine;
   readonly filter: 'all' | IndexStatus;
@@ -129,4 +130,34 @@ export interface AppState {
   readonly mobileNav: boolean;
   readonly notice: string;
   readonly noticeTone?: 'success' | 'warning' | 'error' | 'info';
+}
+
+export interface EngineSummary {
+  readonly indexed: number;
+  readonly not_indexed: number;
+  readonly crawled: number;
+  readonly submitted: number;
+  readonly failed: number;
+  readonly unknown: number;
+  readonly error_count: number;
+  readonly last_checked_at: string | null;
+}
+
+export interface DashboardSite {
+  readonly id: string;
+  readonly name: string;
+  readonly url: string;
+  readonly is_active: boolean;
+  readonly page_count: number;
+  readonly google: EngineSummary;
+  readonly bing: EngineSummary;
+}
+
+export interface ClientDashboard {
+  readonly client: ClientRead;
+  readonly site_count: number;
+  readonly page_count: number;
+  readonly google: EngineSummary;
+  readonly bing: EngineSummary;
+  readonly sites: readonly DashboardSite[];
 }

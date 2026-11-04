@@ -3,9 +3,11 @@ import type { Article, ClientRead, IndexNowSettings, IndexNowSettingsRead, PageC
 import { ApiError, httpError } from './errors.ts';
 import type { Operation } from './errors';
 import { defaultApiBase } from './runtime.ts';
+import type { ClientDashboard } from './types';
 export { ApiError, errorDetail } from './errors.ts';
 
 export interface ApiClient {
+  readonly getDashboard: (clientId: string) => Promise<ClientDashboard>;
   readonly listClients: () => Promise<readonly ClientRead[]>;
   readonly listSites: (clientId: string) => Promise<readonly SiteRead[]>;
   readonly addClient: (name: string, manager: string) => Promise<ClientRead>;
@@ -63,6 +65,8 @@ export function createApi(fetcher: typeof fetch = fetch, base = defaultApiBase(g
   }
 
   return {
+    // 선택한 고객사의 등록 글 통계를 외부 검사 없이 읽습니다.
+    getDashboard: (clientId: string): Promise<ClientDashboard> => request(`/clients/${encodeURIComponent(clientId)}/dashboard`),
     // 부모 사이트에 속한 저장된 글을 외부 호출 없이 읽습니다.
     listPages: (id: string): Promise<readonly PageRead[]> => list(`/sites/${encodeURIComponent(id)}/pages`),
     // 엔진을 실행하지 않고 DB에 저장된 최신 상태만 읽습니다.

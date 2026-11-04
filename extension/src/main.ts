@@ -6,11 +6,14 @@ import { submitPageBatch } from './batch';
 import { inspectionStatusNames, inspectionTime, inspectionUnavailable } from './inspection';
 import { ApiError, asAppError, presentError, uncertainWrite } from './errors';
 import { captureFormDrafts, restoreFormDrafts } from './forms';
+import { clientProperties, clientSelection, dashboardContent, demoDashboard } from './dashboard';
+import type { ClientDashboard } from './types';
 import type { FormDrafts } from './forms';
 import type { Activity, AppState, Client, Engine, IndexStatus, Inspection, NotifyRoute, Property, View, SiteRead, PageOutcome, PageCreateResult, InspectionTarget, InspectionRead } from './types';
 
-type Icon = 'menu' | 'search' | 'chevron' | 'globe' | 'plus' | 'send' | 'inspect' | 'users' | 'refresh' | 'external' | 'check' | 'clock' | 'info' | 'close' | 'arrow' | 'link' | 'mail';
+type Icon = 'dashboard' | 'menu' | 'search' | 'chevron' | 'globe' | 'plus' | 'send' | 'inspect' | 'users' | 'refresh' | 'external' | 'check' | 'clock' | 'info' | 'close' | 'arrow' | 'link' | 'mail';
 const iconPaths: Record<Icon, string> = {
+  dashboard: '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="11" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="18" width="7" height="3" rx="1"/>',
   menu: '<path d="M4 6h16M4 12h16M4 18h16"/>',
   search: '<circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4 4"/>',
   chevron: '<path d="m9 5 7 7-7 7"/>',
@@ -29,7 +32,7 @@ const iconPaths: Record<Icon, string> = {
   link: '<path d="m10 13 4-4m-6 7-1 1a4 4 0 0 1-6-6l4-4a4 4 0 0 1 6 0m2 4 1-1a4 4 0 0 0 6-6l-1-1a4 4 0 0 0-6 0l-2 2"/>',
   mail: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 6 9 7 9-7"/>',
 };
-const viewTitles: Record<View, string> = { inspect: '색인 상태 확인', register: '사이트 등록', notify: '새 글 발행 알림', clients: '고객사 관리' };
+const viewTitles: Record<View, string> = { dashboard: '대시보드', inspect: '색인 상태 확인', register: '사이트 등록', notify: '새 글 발행 알림', clients: '고객사 관리' };
 const statusNames: Record<IndexStatus, string> = { indexed: '색인됨', waiting: '수집 대기', crawled: '크롤링됨', not_indexed: '색인되지 않음' };
 const engineNames: Record<Engine, string> = { google: 'Google', naver: '네이버', bing: 'Bing' };
 const demo = new URLSearchParams(window.location.search).get('mode') === 'demo';
@@ -39,7 +42,11 @@ let clients: readonly Client[] = demo ? initialClients : [];
 let properties: readonly Property[] = demo ? initialProperties : [];
 let inspections: readonly Inspection[] = initialInspections;
 let activities: readonly Activity[] = [];
-let state: AppState = { view: 'inspect', propertyId: demo ? 'otter-site' : '', engine: 'google', filter: 'all', route: 'direct', selectedId: null, mobileNav: false, notice: '' };
+let state: AppState = { view: 'dashboard', clientId: demo ? 'otter' : '', propertyId: demo ? 'otter-site' : '', engine: 'google', filter: 'all', route: 'direct', selectedId: null, mobileNav: false, notice: '' };
+let dashboardData: ClientDashboard | null = null;
+let dashboardLoading = false;
+let dashboardError: ApiError | null = null;
+let dashboardVersion = 0;
 let loading = !demo;
 let loadError: ApiError | null = null;
 let settingsLoading = false;
@@ -82,7 +89,80 @@ function escape(value: string): string {
 
 // 현재 선택한 사이트를 반환합니다.
 function property(): Property {
-  return properties.find((item: Property): boolean => item.id === state.propertyId) ?? emptyProperty;
+  return properties.find((item: Property): boolean => item.id === state.propertyId && item.clientId === state.clientId) ?? emptyProperty;
+}
+
+// 현재 고객사와 담당자 정보를 반환합니다.
+function selectedClient(): Client | undefined {
+  return clients.find((item: Client): boolean => item.id === state.clientId);
+}
+
+// 발행·검사 화면에서 현재 고객사 소속 블로그만 선택하게 합니다.
+function sitePicker(): string {
+  if (state.view !== 'inspect' && state.view !== 'notify') return '';
+  const sites = clientProperties(properties, state.clientId);
+  return `<section class="site-context"><label for="property-select">관리할 블로그</label><select id="property-select">${sites.length ? sites.map((site): string => `<option value="${escape(site.id)}" ${site.id === state.propertyId ? 'selected' : ''}>${escape(site.name)} · ${escape(site.siteUrl)}${site.active ? '' : ' (비활성)'}</option>`).join('') : '<option value="">등록된 블로그 없음</option>'}</select>${sites.length ? '' : '<button class="button secondary" data-view="register">사이트 등록</button>'}</section>`;
+}
+
+// 선택 고객사의 통계와 데이터 준비·빈 목록·오류 상태를 표시합니다.
+function dashboardView(): string {
+  const client = selectedClient();
+  const heading = `<div class="page-heading"><div><h1>${escape(client?.name ?? '고객사')} · 대시보드</h1><p>담당자: ${escape(client?.manager || '미지정')} · 선택한 고객사의 블로그 전체 현황</p></div>${client ? '<button class="button secondary" id="reload-dashboard">통계 새로고침</button>' : ''}</div>`;
+  if (!client) return `${heading}<section class="report empty-state">선택할 고객사가 없습니다.<p>고객사 관리에서 첫 고객사를 추가하세요.</p><button class="button primary" data-view="clients">고객사 관리</button></section>`;
+  if (dashboardLoading) return `${heading}<section class="report empty-state" role="status">고객사 통계를 불러오는 중…</section>`;
+  if (dashboardError) return `${heading}${errorPanel(dashboardError, '고객사 통계를 불러오지 못했습니다')}`;
+  const data = demo ? demoDashboard(client, properties, inspections) : dashboardData;
+  return `${heading}${data && data.client.id === client.id ? dashboardContent(data) : '<section class="report empty-state">통계 새로고침으로 저장된 현황을 확인하세요.</section>'}`;
+}
+
+// 고객사 전환 중 늦게 도착한 이전 고객사의 통계 응답은 무시합니다.
+async function loadDashboard(): Promise<void> {
+  const version = ++dashboardVersion;
+  const id = state.clientId;
+  dashboardData = null;
+  dashboardError = null;
+  dashboardLoading = !demo && !!id;
+  if (state.view === 'dashboard') render();
+  if (demo || !id) return;
+  try {
+    const result = await api.getDashboard(id);
+    if (version === dashboardVersion && id === state.clientId) {
+      if (result.client.id !== id) throw new ApiError(0, '요청한 고객사와 통계 응답이 다릅니다.');
+      dashboardData = result;
+    }
+  } catch (error: unknown) {
+    if (version === dashboardVersion && id === state.clientId) dashboardError = asAppError(error);
+  } finally {
+    if (version === dashboardVersion && id === state.clientId) {
+      dashboardLoading = false;
+      if (state.view === 'dashboard') render();
+    }
+  }
+}
+
+// 선택 블로그의 초안·결과를 분리하고 이전 설정 요청을 무효화합니다.
+function selectProperty(id: string): void {
+  if (id && !clientProperties(properties, state.clientId).some((site): boolean => site.id === id)) return;
+  notificationDraft = ''; notificationTitles = ''; requestText = '';
+  outcomes = outcomeHistory.get(id) ?? [];
+  outcomesError = null;
+  settingsError = null;
+  settingsLoading = false;
+  ++settingsRequest;
+  update({ propertyId: id, filter: 'all', selectedId: null, notice: '' });
+  void loadSettings();
+  void loadInspectionTargets();
+}
+
+// 고객사를 바꾸면 소속 블로그로 선택을 제한하고 통계를 다시 읽습니다.
+function selectClient(id: string): void {
+  if (!clients.some((client): boolean => client.id === id)) return;
+  if (id !== state.clientId) activities = [];
+  state = { ...state, ...clientSelection(properties, id), notice: '' };
+  dashboardData = null;
+  dashboardError = null;
+  selectProperty(state.propertyId);
+  void loadDashboard();
 }
 
 // 한국 시간 기준의 표시용 현재 시각을 반환합니다.
@@ -176,7 +256,7 @@ function apiInspectionView(): string {
 function registrationView(): string {
   return `<div class="page-heading"><div><h1>사이트 등록</h1><p>새 도메인을 등록하고 검색엔진 연결을 준비하세요.</p></div></div>
     <div class="form-layout"><section class="report form-report"><div class="report-header"><div><h2>새 도메인 등록</h2><p>고객사와 사이트 정보를 입력하세요.</p></div>${icon('globe')}</div>
-      <form id="registration-form" class="work-form">${clients.length ? '' : '<div class="inline-note">먼저 왼쪽 고객사 관리에서 고객사를 등록하세요.</div>'}<label>고객사 <span class="required">*</span><select name="clientId" required>${clients.map((client: Client): string => `<option value="${escape(client.id)}" ${client.id === property().clientId ? 'selected' : ''}>${escape(client.name)}</option>`).join('')}</select></label>
+      <form id="registration-form" class="work-form">${clients.length ? '' : '<div class="inline-note">먼저 왼쪽 고객사 관리에서 고객사를 등록하세요.</div>'}<label>고객사 <span class="required">*</span><input value="${escape(selectedClient()?.name ?? '')}" readonly required aria-label="현재 선택한 고객사"><span class="field-help">왼쪽 위에서 고객사를 변경할 수 있습니다.</span></label>
       <label>사이트 이름 <span class="required">*</span><input name="siteName" required maxlength="100" placeholder="예: 오터스튜디오 공식 사이트"></label>
       <label>도메인 URL <span class="required">*</span><input name="origin" type="url" required placeholder="https://example.com"><span class="field-help">글 주소가 아닌 사이트의 루트 주소를 입력하세요.</span></label>
       <fieldset><legend>사이트 소유 구분</legend><div class="radio-row"><label class="radio-label"><input type="radio" name="ownership" value="client" checked>고객사 사이트</label><label class="radio-label"><input type="radio" name="ownership" value="internal">우리 팀 사이트</label></div></fieldset>
@@ -243,12 +323,12 @@ function detailView(): string {
 // 전체 관리 화면과 현재 선택한 작업 페이지를 표시합니다.
 function render(): void {
   if (renderedScope) formDrafts = captureFormDrafts(app, renderedScope, formDrafts);
-  const scope = `${state.view}:${state.propertyId}:${state.route}`;
+  const scope = `${state.clientId}:${state.view}:${state.propertyId}:${state.route}`;
   const privateInputs = renderedScope === scope ? Array.from(app.querySelectorAll<HTMLInputElement>('input[name="indexnowKey"], input[name="indexnowLocation"]')).map((element) => ({ formId: element.form?.id, element })) : [];
   document.title = `StartPress · ${viewTitles[state.view]}`;
   app.innerHTML = `<header class="app-header"><button class="icon-button menu-toggle" id="menu-toggle" aria-label="왼쪽 메뉴 열기 또는 닫기" aria-expanded="${window.matchMedia('(max-width:760px)').matches ? state.mobileNav : !state.mobileNav}">${icon('menu')}</button><a class="brand" href="#inspect" aria-label="StartPress 홈"><span class="brand-symbol"><span></span><span></span><span></span></span><span>StartPress <span class="brand-subtitle">Console</span></span></a><form class="global-search" id="url-search"><label class="visually-hidden" for="url-inspect">선택한 사이트의 URL 검사</label>${icon('search')}<input id="url-inspect" type="url" placeholder="${escape(property().origin)} 내 URL 검사" required autocomplete="off"><kbd>URL 검사</kbd></form><div class="header-end"><a class="mode-switch" href="${demo ? '/' : '/?mode=demo'}">${demo ? 'API 모드로' : '예시 모드'}</a><span class="user-avatar" aria-label="StartPress 팀">S</span></div></header>
-    <aside class="sidebar ${state.mobileNav ? 'open' : ''}"><label class="property-picker"><span class="property-symbol">${icon('globe')}</span><span class="visually-hidden">관리할 사이트 선택</span><select id="property-select">${properties.length ? '' : '<option value="">등록된 사이트 없음</option>'}${properties.map((item: Property): string => `<option value="${escape(item.id)}" ${item.id === state.propertyId ? 'selected' : ''}>${escape(item.siteUrl)}</option>`).join('')}</select></label><div class="sidebar-client">${escape(clients.find((client: Client): boolean => client.id === property().clientId)?.name ?? '')}<span>${property().owned ? '내부 사이트' : '고객사 사이트'}</span></div><div class="nav-section-label">검색엔진 관리</div><nav aria-label="검색엔진 관리">${navigation('register', 'globe')}${navigation('notify', 'send')}${navigation('inspect', 'inspect')}</nav><div class="nav-divider"></div><div class="nav-section-label">워크스페이스</div><nav aria-label="워크스페이스">${navigation('clients', 'users')}</nav><div class="sidebar-bottom"><span class="team-symbol">SP</span><div>StartPress 팀<span>사이트 운영 워크스페이스</span></div></div></aside>
-    <main class="main-content"><div class="breadcrumb"><span>${state.view === 'clients' ? '워크스페이스' : escape(property().name)}</span>${icon('chevron')}<span>${viewTitles[state.view]}</span></div><div class="preview-notice">${icon('info')}<span>${demo ? '예시 모드입니다. 실제 검색엔진 요청이나 DB 저장은 하지 않습니다.' : 'API 연결 모드입니다. 고객사·사이트·글 저장은 DB에 반영되며, 발행 알림 선택 시 실제 IndexNow 요청을 실행합니다.'}</span></div>${loading ? '<div class="connection-notice" role="status">서버에서 고객사와 사이트를 불러오는 중…</div>' : loadError ? errorPanel(loadError, '고객사·사이트 목록을 불러오지 못했습니다', 'workspace') : ''}${state.notice ? `<div class="success-notice ${state.noticeTone ?? 'success'}" role="status">${icon(state.noticeTone && state.noticeTone !== 'success' ? 'info' : 'check')}<span>${escape(state.notice)}</span><button class="icon-button" id="dismiss-notice" aria-label="안내 닫기">${icon('close')}</button></div>` : ''}${state.view === 'inspect' ? inspectionView() : state.view === 'register' ? registrationView() : state.view === 'notify' ? notificationView() : clientsView()}<footer class="page-footer"><span>StartPress Console</span><span>${demo ? '예시 데이터 · 새로고침하면 초기화' : 'API 연결 · 알림 결과와 이번 작업 이력은 이 화면에서만 유지'}</span></footer></main>${detailView()}<div class="visually-hidden" role="status" aria-live="polite" id="live-status"></div>`;
+    <aside class="sidebar ${state.mobileNav ? 'open' : ''}"><label class="property-picker"><span class="property-symbol">${icon('users')}</span><span class="visually-hidden">관리할 고객사 선택</span><select id="client-select">${clients.length ? clients.map((client: Client): string => `<option value="${escape(client.id)}" ${client.id === state.clientId ? 'selected' : ''}>${escape(client.name)}</option>`).join('') : '<option value="">등록된 고객사 없음</option>'}</select></label><div class="sidebar-client">담당자: ${escape(selectedClient()?.manager || '미지정')}<span>${clientProperties(properties, state.clientId).length}개 블로그</span></div>${navigation('dashboard', 'dashboard')}<div class="nav-divider"></div><div class="nav-section-label">검색엔진 관리</div><nav aria-label="검색엔진 관리">${navigation('register', 'globe')}${navigation('notify', 'send')}${navigation('inspect', 'inspect')}</nav><div class="nav-divider"></div><div class="nav-section-label">워크스페이스</div><nav aria-label="워크스페이스">${navigation('clients', 'users')}</nav><div class="sidebar-bottom"><span class="team-symbol">SP</span><div>StartPress 팀<span>사이트 운영 워크스페이스</span></div></div></aside>
+    <main class="main-content"><div class="breadcrumb"><span>${state.view === 'clients' ? '워크스페이스' : escape(selectedClient()?.name ?? '고객사를 선택하세요')}</span>${icon('chevron')}<span>${viewTitles[state.view]}</span></div><div class="preview-notice">${icon('info')}<span>${demo ? '예시 모드입니다. 실제 검색엔진 요청이나 DB 저장은 하지 않습니다.' : 'API 연결 모드입니다. 고객사·사이트·글 저장은 DB에 반영되며, 발행 알림 선택 시 실제 IndexNow 요청을 실행합니다.'}</span></div>${loading ? '<div class="connection-notice" role="status">서버에서 고객사와 사이트를 불러오는 중…</div>' : loadError ? errorPanel(loadError, '고객사·사이트 목록을 불러오지 못했습니다', 'workspace') : ''}${state.notice ? `<div class="success-notice ${state.noticeTone ?? 'success'}" role="status">${icon(state.noticeTone && state.noticeTone !== 'success' ? 'info' : 'check')}<span>${escape(state.notice)}</span><button class="icon-button" id="dismiss-notice" aria-label="안내 닫기">${icon('close')}</button></div>` : ''}${sitePicker()}${state.view === 'dashboard' ? dashboardView() : state.view === 'inspect' ? inspectionView() : state.view === 'register' ? registrationView() : state.view === 'notify' ? notificationView() : clientsView()}<footer class="page-footer"><span>StartPress Console</span><span>${demo ? '예시 데이터 · 새로고침하면 초기화' : 'API 연결 · 알림 결과와 이번 작업 이력은 이 화면에서만 유지'}</span></footer></main>${detailView()}<div class="visually-hidden" role="status" aria-live="polite" id="live-status"></div>`;
   for (const input of privateInputs) {
     const replacement = input.formId ? app.querySelector<HTMLInputElement>(`#${CSS.escape(input.formId)} input[name="${CSS.escape(input.element.name)}"]`) : null;
     input.element.removeAttribute('aria-invalid');
@@ -433,14 +513,15 @@ async function loadWorkspace(): Promise<void> {
     const siteLists = await Promise.all(result.map((item): Promise<readonly SiteRead[]> => api.listSites(item.id)));
     clients = result.map((item): Client => ({ id: item.id, name: item.name, manager: item.manager_name ?? '' }));
     properties = siteLists.flat().map(mapSite);
-    state = { ...state, propertyId: properties.some((item: Property): boolean => item.id === state.propertyId) ? state.propertyId : properties[0]?.id ?? '', view: properties.length ? state.view : 'clients' };
+    const clientId = clients.some((item): boolean => item.id === state.clientId) ? state.clientId : clients[0]?.id ?? '';
+    state = { ...state, ...clientSelection(properties, clientId, state.propertyId) };
   } catch (error: unknown) {
     loadError = asAppError(error);
   } finally {
     loading = false;
     render();
   }
-  if (!loadError) await Promise.all([loadSettings(), loadInspectionTargets()]);
+  if (!loadError) await Promise.all([loadSettings(), loadInspectionTargets(), loadDashboard()]);
 }
 
 // 네트워크 처리 중 입력과 중복 실행을 막고 폼 자체는 보존합니다.
@@ -458,7 +539,7 @@ function applyAvailability(): void {
   app.querySelectorAll<HTMLButtonElement | HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>('#notification-form button, #notification-form input, #notification-form select, #notification-form textarea, #indexnow-form input, #indexnow-form button').forEach((element): void => { element.disabled = noSite; });
   app.querySelectorAll<HTMLInputElement | HTMLButtonElement>('#indexnow-form input, #indexnow-form button').forEach((element): void => { element.disabled = noSite || settingsLoading; });
   const registration = app.querySelector<HTMLButtonElement>('#registration-form button[type="submit"]');
-  if (registration) registration.disabled = clients.length === 0;
+  if (registration) registration.disabled = !state.clientId;
   const search = app.querySelector<HTMLInputElement>('#url-inspect');
   if (search) search.disabled = noSite || (!demo && targetsLoading);
   if (!demo) {
@@ -552,7 +633,7 @@ function inspectUrl(event: SubmitEvent): void {
 // 새 도메인을 예시 목록에 추가하되 검색엔진 등록 완료로 처리하지 않습니다.
 async function registerSite(event: SubmitEvent): Promise<void> {
   event.preventDefault();
-  if (pending) return;
+  if (pending || !state.clientId) return;
   const form = event.currentTarget as HTMLFormElement;
   clearFormErrors(form);
   const data = new FormData(form);
@@ -563,13 +644,17 @@ async function registerSite(event: SubmitEvent): Promise<void> {
     if (url.pathname !== '/' || url.search) throw new Error('경로나 쿼리가 없는 도메인 루트 주소를 입력하세요.');
     const indexNow = validateIndexNowSettings(url.origin, String(data.get('indexnowKey') ?? ''), String(data.get('indexnowLocation') ?? ''));
     const editable = String(data.get('editable') ?? '');
-    const payload = { client_id: String(data.get('clientId')), name, url: url.href, owner_type: data.get('ownership') === 'internal' ? 'internal' as const : 'client' as const, cms_type: String(data.get('cmsType') ?? '') || null, can_edit_site: editable === '' ? null : editable === 'true', indexnow_key: indexNow?.key ?? null, indexnow_key_location: indexNow?.keyLocation ?? null };
+    const payload = { client_id: state.clientId, name, url: url.href, owner_type: data.get('ownership') === 'internal' ? 'internal' as const : 'client' as const, cms_type: String(data.get('cmsType') ?? '') || null, can_edit_site: editable === '' ? null : editable === 'true', indexnow_key: indexNow?.key ?? null, indexnow_key_location: indexNow?.keyLocation ?? null };
     setPending(true);
     const site: Property = demo ? { id: crypto.randomUUID(), clientId: payload.client_id, name, origin: url.origin, siteUrl: url.href, active: true, owned: payload.owner_type === 'internal', indexNow: indexNow ? { configured: true, key_location: indexNow.keyLocation } : { configured: false, key_location: null } } : mapSite(await api.addSite(payload));
     properties = [...properties, site];
     pending = false;
     form.reset();
     addActivity(`${name} 사이트 정보 저장`);
+    dashboardData = null;
+    outcomes = [];
+    outcomesError = null;
+    notificationDraft = ''; notificationTitles = ''; requestText = '';
     update({ propertyId: site.id, notice: `${name}: ${demo ? '예시 목록' : 'DB'}에 사이트 정보를 저장했습니다. 검색엔진 등록·소유 확인을 완료한 것은 아닙니다.` });
     if (!demo) await Promise.all([loadSettings(), loadInspectionTargets()]);
   } catch (error: unknown) {
@@ -659,6 +744,7 @@ async function notifyPublication(event: SubmitEvent): Promise<void> {
     const incomplete = processed.some((item: PageOutcome): boolean => item.saveStatus !== 'saved' || (!!item.result && !['accepted', 'skipped'].includes(item.result.submission.status)) || item.result?.submission.error_code === 'INDEXNOW_NOT_CONFIGURED');
     const savedCount = processed.filter((item: PageOutcome): boolean => item.saveStatus === 'saved').length;
     update({ notice: demo ? '예시 처리 결과입니다. 실제 DB 저장·전송은 없습니다.' : incomplete ? `${processed.length}개 중 ${savedCount}개 글의 저장이 확인됐습니다. 알림 실패·대기·결과 불명 항목을 아래에서 확인하세요.` : '글 처리를 완료했습니다. 저장 결과와 알림 접수 결과는 아래 표에서 각각 확인하세요.', noticeTone: incomplete ? 'warning' : demo ? 'info' : 'success' });
+    dashboardData = null;
     if (!demo) void loadInspectionTargets();
   } catch (error: unknown) {
     showError('#notification-error', error);
@@ -682,6 +768,8 @@ async function addClient(event: SubmitEvent): Promise<void> {
     clients = [...clients, { id: result.id, name: result.name, manager: result.manager_name ?? '' }];
     pending = false;
     form.reset();
+    state = { ...state, view: 'dashboard' };
+    selectClient(result.id);
     update({ notice: `${result.name}: ${demo ? '예시 목록' : 'DB'}에 고객사를 저장했습니다.` });
   } catch (error: unknown) {
     showError('#client-error', error);
@@ -789,6 +877,7 @@ function bindEvents(): void {
     button.addEventListener('click', (): void => {
       capturePublicationDraft();
       update({ view: button.dataset.view as View, notice: '', mobileNav: false });
+      if (state.view === 'dashboard') void loadDashboard();
     });
   });
   app.querySelector<HTMLButtonElement>('#menu-toggle')?.addEventListener('click', (): void => {
@@ -796,13 +885,19 @@ function bindEvents(): void {
     app.querySelector<HTMLElement>('.sidebar')?.classList.toggle('open', state.mobileNav);
     app.querySelector<HTMLButtonElement>('#menu-toggle')?.setAttribute('aria-expanded', String(window.matchMedia('(max-width:760px)').matches ? state.mobileNav : !state.mobileNav));
   });
-  app.querySelector<HTMLAnchorElement>('.brand')?.addEventListener('click', (event: MouseEvent): void => { event.preventDefault(); update({ view: 'inspect', mobileNav: false, notice: '' }); });
+  app.querySelector<HTMLAnchorElement>('.brand')?.addEventListener('click', (event: MouseEvent): void => { event.preventDefault(); update({ view: 'dashboard', mobileNav: false, notice: '' }); void loadDashboard(); });
+  app.querySelector<HTMLSelectElement>('#client-select')?.addEventListener('change', (event: Event): void => {
+    selectClient((event.target as HTMLSelectElement).value);
+  });
   app.querySelector<HTMLSelectElement>('#property-select')?.addEventListener('change', (event: Event): void => {
-    notificationDraft = ''; notificationTitles = ''; requestText = '';
-    outcomes = outcomeHistory.get((event.target as HTMLSelectElement).value) ?? []; outcomesError = null; settingsError = null;
-    update({ propertyId: (event.target as HTMLSelectElement).value, filter: 'all', selectedId: null, notice: '' });
-    void loadSettings();
-    void loadInspectionTargets();
+    selectProperty((event.target as HTMLSelectElement).value);
+  });
+  app.querySelector<HTMLButtonElement>('#reload-dashboard')?.addEventListener('click', (): void => { void loadDashboard(); });
+  app.querySelectorAll<HTMLButtonElement>('[data-dashboard-site]').forEach((button): void => {
+    button.addEventListener('click', (): void => {
+      state = { ...state, view: 'inspect', mobileNav: false };
+      selectProperty(button.dataset.dashboardSite ?? '');
+    });
   });
   app.querySelectorAll<HTMLButtonElement>('[data-engine]').forEach((button: HTMLButtonElement): void => {
     button.addEventListener('click', (): void => { if (inspectionError?.operation === 'inspect') inspectionError = null; update({ engine: button.dataset.engine as Engine, filter: 'all', notice: '' }); });
