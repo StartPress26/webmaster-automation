@@ -1,6 +1,84 @@
 # 작업 인계 문서
 
-## 현재 인계 요약 — 2026-11-04 / Asia/Seoul
+## 현재 인계 요약 — 2026-11-05 / Asia/Seoul
+
+**새 세션은 이 절과 맨 아래 2026-11-05 마지막 상태를 먼저 읽는다. 이전 날짜의 배포 미구현·PR 미병합·현재 브랜치 설명은 과거 기록이다. 기존 API의 상세 계약은 아래 2026-11-04 기능 요약을 참고한다.**
+
+### 사용자의 작업 방식과 현재 목표
+
+- 한국어로 간결하게 설명하고 사용자가 직접 명령을 실행하며 이해하도록 한 단계씩 지도한다. Docker·Compose·SSH·배포 개념은 기초부터 설명했다. 요청에 맞춰 파일 작성과 커밋·푸시·PR 생성은 에이전트가 수행했다.
+- StartPress는 개발자 1명을 포함한 소규모 외주 팀이다. 사용자는 퇴사 후에도 팀이 운영할 수 있도록 콘솔 중심의 Lightsail 설정과 팀 저장소를 선택했다.
+- **AWS에는 FastAPI와 PostgreSQL을 배포하고, 최신 대시보드는 Chrome 확장에 포함한다.** `extension/`을 웹 화면으로 AWS 이미지에 추가하는 작업은 현재 결정 범위에 포함되지 않는다.
+- **다음 개발은 이미 로그인한 네이버 서치어드바이저 탭 선택 → 화면의 사이트·검사 URL·결과 읽기 → 결과 저장 순서다.** 탭 조회 권한과 결과 저장 API의 구체적 계약은 구현 전에 확인한다.
+- 신규 사이트 소유권 확인 UI/API, `/pages`의 사이트맵 자동 제출 제외 등 기존 확정 범위는 아래 기능 요약을 따른다.
+
+### 현재 Git과 완료된 배포 구성
+
+- 현재 로컬 브랜치와 `origin/main`은 **`main`, HEAD `4444868`**이다. 사용자가 PR #3과 [PR #4](https://github.com/StartPress26/webmaster-automation/pull/4)를 병합했다.
+- 배포 작업 브랜치 `chore/production-compose`의 마지막 커밋은 `b484c30`이다. 주요 커밋은 `2b6e9a8` Docker 이미지, `c533d29` 운영용 Compose, `b484c30` Vite 프록시 18000 연결이다.
+- **현재 미커밋 변경은 `extension/vite.config.ts`의 프록시 주소 `18000 → 18001`이다.** 사용자 Mac의 SSH 터널을 통해 Lightsail API에 연결하는 설정이므로 보존한다. 이번 인계 업데이트도 미커밋으로 남긴다.
+- `feat/webmaster-tab-automation` 브랜치는 존재하지만 기준이 `c8d469c`로 PR #4 병합 이전이다. 다음 구현 전에 최신 main 반영 방법을 정하고 현재 Vite 변경을 보존한다. main에 직접 push하지 않는다.
+- `Dockerfile`은 Python 3.13, 고정된 uv 도구로 `uv.lock`을 pip 설치 목록으로 변환, 해시 검증 설치, `app/`과 Alembic 파일 복사, UID/GID 10001 실행으로 구성했다. FastAPI는 컨테이너 내부 `0.0.0.0:8000`에서 실행한다.
+- `compose.yaml`은 개발용 PostgreSQL·pgAdmin이다. `compose.prod.yaml`은 별도 프로젝트 `webmaster-automation-prod`에서 `db → migrate → api` 순서로 실행한다. `migrate`와 `api`는 `startpress-api:prod` 이미지를 공유한다.
+- DB healthcheck 성공 후 Alembic `upgrade head`를 실행하고, 성공 종료 후 API를 시작한다. `db`와 `api`는 `restart: unless-stopped`, DB는 영속 볼륨을 사용한다. API 포트는 호스트의 `127.0.0.1:18000`에 연결한다.
+- `.env.prod.example`은 Git에 포함한다. 실제 `.env.prod`, `.secrets/`, 루트 `*.dump`는 Git에서 제외하고 Docker 빌드에서도 비공개 파일·백업을 제외한다.
+
+### Lightsail의 실제 진행 상태
+
+- **사용자가 Lightsail에서 Docker·Compose 설치, main 클론, 서버용 환경변수 구성과 컨테이너 기동을 완료하고 API·DB 연결을 확인했다.** 이후 SSH 터널을 통한 대시보드 고객사 추가·새로고침 후 조회도 사용자 확인을 받았다. 에이전트가 원격 서버 상태를 직접 재조회한 결과와 구분한다.
+- 인스턴스 이름은 `startpress-webmaster-prod`, Ubuntu 24.04.4 LTS, 2GB RAM·2 vCPU·60GB SSD이며 **시드니 `ap-southeast-2`**에 생성됐다. 사용자가 마지막으로 전달한 공인 IPv4는 `13.239.37.152`다. 고정 IP 설정은 확인되지 않았으므로 재시작 후 주소를 확인한다.
+- 계정은 새 AWS 프로젝트 가입 방식이며 프로젝트 리전이 시드니에 자동 배정된 것을 사용자가 확인했다. 이 가입 방식에서는 리전 선택에 제약이 있다. 서울로 이전하려면 가입 방식·플랜·고급 기능 활성화 조건부터 확인한다. 현재는 시드니에서 개발 검증을 진행한다.
+- 화면에서 신규 가입 Free Plan 크레딧 $100와 약 6개월 기간을 확인했다. 현재 잔액·만료일은 재확인해야 한다. 인스턴스 사용료가 누적되며 일반 Lightsail 인스턴스는 정지 상태에서도 요금이 발생한다.
+- 팀 GitHub 조직에서 Deploy keys가 처음에는 비활성화돼 있었다. 실제 정책 위치는 조직 Settings → Security and quality → Deploy keys다. 사용자가 허용 설정 후 저장소에 **읽기 전용 Deploy Key**를 등록하고 인증·클론을 완료했다.
+- 서버의 GitHub 키 경로는 `~/.ssh/startpress_github`이고 공개키는 `.pub` 파일이다. 개인키·암호를 문서에 복사하지 않는다. GitHub 호스트 확인 실패는 공식 공개 호스트 키를 `known_hosts`에 등록한 뒤 해결했고 `You've successfully authenticated`를 확인했다.
+- 서버 저장소 경로는 `~/webmaster-automation`, 브랜치는 main이다. 클론 시 `core.sshCommand`에 해당 키와 `IdentitiesOnly=yes`를 설정했다.
+- 서버 `.env.prod`는 로컬 비밀번호와 분리해 생성하도록 안내했다. PostgreSQL 사용자·DB 이름은 `webmaster`, `DATABASE_URL`의 DB 호스트·포트는 `db:5432`다.
+- 현재 Compose에서 API에 전달하는 설정은 **`DATABASE_URL`만**이다. Google 토큰·Bing 키의 운영 환경 연결은 후속 작업이다. Google 토큰을 연결할 때는 코드의 `.secrets/` 경로 제약과 토큰 파일 원자적 교체를 위한 디렉터리 쓰기 권한을 반영한다.
+
+### Mac에서 Lightsail을 사용하는 현재 경로
+
+- **Mac 대시보드 5173 → Vite `/api` 프록시 → Mac 18001 → SSH 터널 → Lightsail 127.0.0.1:18000 → 컨테이너 API 8000 → PostgreSQL** 흐름으로 고객사 쓰기·읽기를 검증했다.
+- Mac에서 Lightsail 기본 키를 다운로드하고 권한을 제한한 뒤 터널을 열었다. 키 파일은 프로젝트나 Git에 넣지 않는다. 기본 키는 리전별이며 GitHub Deploy Key와 역할이 다르다.
+
+```bash
+# Mac 터미널에서 실행하고 서버의 현재 공인 IP를 확인합니다.
+chmod 600 ~/Downloads/LightsailDefaultKey-ap-southeast-2.pem
+ssh -i ~/Downloads/LightsailDefaultKey-ap-southeast-2.pem \
+  -N -o ExitOnForwardFailure=yes \
+  -L 127.0.0.1:18001:127.0.0.1:18000 \
+  ubuntu@13.239.37.152
+```
+
+- 터널 터미널을 열어둔 상태에서 Mac의 `curl -fsS http://127.0.0.1:18001/health`를 확인했다. 로컬 Vite를 재시작하고 `http://127.0.0.1:5173/`에서 고객사를 추가했다. `?mode=demo`는 실제 저장 검증에 사용하지 않는다.
+- **설치된 Chrome 확장의 `extension/src/runtime.ts`는 여전히 `127.0.0.1:8000`을 사용한다.** Vite의 18001 변경은 웹 개발 화면에만 적용된다. 확장으로 AWS 저장·조회까지 검증하려면 이 API 연결 설정을 별도로 준비해야 한다.
+- 현재 Manifest V3는 관리 탭 열기와 로컬 API 호스트 권한까지 구현돼 있다. 네이버 탭 선택·Content Script·GUI 결과 읽기는 미구현이다.
+- AWS 컨테이너는 `up -d`로 계속 실행한다. 브라우저 SSH나 Mac의 터널 종료와 서비스 수명을 구분한다. 지금 팀원에게 배포할 공개 HTTPS 주소·팀원 인증·스토어 제출은 남아 있다. 사용자는 현재 소유한 도메인이 없다고 명확히 답했다.
+
+### 검증 근거와 보존할 자료
+
+- 로컬에서 FastAPI 이미지 빌드, UID 10001의 `/`·`/health`, Alembic `0003 (head)` 파일 확인을 수행했다.
+- 기존 개발 DB와 분리한 임시 Compose 프로젝트에서 빈 DB 마이그레이션, 고객사 POST·GET, 컨테이너 재생성 후 데이터 유지를 검증하고 임시 프로젝트를 정리했다.
+- 사용자 로컬 운영용 Compose의 첫 마이그레이션 실패는 `.env.prod`의 DB 호스트·포트를 `db:5432`로 맞춰 해결했다. 이후 `0003 (head)`와 빈 고객사 목록을 직접 확인했다.
+- 프로젝트 루트 `startpress-postgres.dump`에 로컬 운영용 DB 백업을 만들고 `pg_restore`로 파일을 읽을 수 있는지 확인했다. 사용자가 `startpress_restore_check` 별도 DB에 복구한 뒤 고객사가 조회됨을 확인했다. 이 백업은 로컬 검증 시점의 자료이며 AWS DB 백업 자동화는 후속 작업이다.
+- PR #4 생성 전 프론트 **42 passed**, TypeScript 검사, Compose 구성과 diff 검사 통과를 재확인했다. 이후 사용자가 변경한 18001 프록시 설정은 실사용 확인을 받았다. 이번 인계 요청에서는 테스트를 재실행하지 않았다.
+- 기존 백엔드 **650 passed**는 2026-11-04 검증 기록이다. 배포 작업에서 전체 백엔드 테스트를 새로 실행한 수치로 설명하지 않는다.
+- 브라우저 조회 기록은 `.secrets/bot_runs/`에 비공개로 남겼다. 다음 실제 브라우저·확장 검증 전 `.cursor/rules/bot-execution-records.mdc`를 따른다.
+
+### 다음에 해야 할 작업
+
+1. 최신 main을 기준으로 확장 개발 브랜치를 준비하고 Vite의 미커밋 18001 설정을 보존한다. 우선 사용자에게 다음 기능의 구현 단위를 설명한다.
+2. 이미 로그인한 네이버 탭을 찾아 사용자가 선택하고, 기존 결과의 사이트·검사 URL·판정을 읽는 기능부터 구현한다. 자동 로그인·인증정보 수집·서버로의 쿠키 전송을 추가하지 않는다.
+3. 확장 설치 상태에서 API 주소를 SSH 터널에 연결할 방법을 정하고, 결과 저장 API 계약·기존 상태 저장 흐름을 확인한다. Google·Bing은 기존 공식 API 사용 원칙을 따른다.
+4. 팀 배포 전에 고정된 HTTPS API 주소와 팀원 인증을 구성하고, 확장의 운영 API 주소·호스트 권한을 연결한다. 도메인 구매나 계정 플랜 변경은 결정된 사항이 아니다.
+5. 서버 DB 백업의 외부 보관·복구 절차, 팀원별 콘솔 접근과 인계 자료를 정리한다. 필요할 때 Google·Bing 운영용 인증을 구성한다.
+
+### 관련 파일
+
+- 배포 구성은 `Dockerfile`, `.dockerignore`, `compose.prod.yaml`, `.env.prod.example`, `.gitignore`다.
+- 웹 개발 연결은 `extension/vite.config.ts`, 설치된 확장 연결은 `extension/src/runtime.ts`, 확장 실행·권한은 `extension/public/manifest.json`, `extension/src/background.ts`다.
+- 기존 API 목록·상태 판정·사이트맵 계약은 아래 기능 요약 및 각 API 문서를 참고한다. 로컬 Conda `startpress` 실행과 `.venv`·`uv sync`·`uv run` 금지 원칙을 유지한다.
+
+## 이전 기능 인계 요약 — 2026-11-04 / Asia/Seoul
 
 **새 세션은 이 절을 먼저 읽는다. 이 절과 맨 아래 최신 마지막 상태가 과거 스냅샷보다 우선한다. 아래 과거의 DB 0002·extension 미추적·사이트맵 API 미연결 설명은 현재 상태가 아니다.**
 
@@ -711,7 +789,7 @@ Notion은 요구사항·설계 자료다. 실제 구현·적용 여부는 이 �
 새 세션 시작 문구: **“docs/HANDOFF.md의 맨 위 현재 인계 요약을 읽고 이어서 진행해줘. HEAD는 afa2ef8이고 사이트맵 API·프론트 버튼은 완료됐어. DB는 0003과 error_code 컬럼이 확인됐지만 관련 마이그레이션·인증 오류 코드 변경은 아직 미커밋이야. 기존 변경을 보존하고, 신규 도메인 등록·소유권 확인은 현재 범위에서 제외해.”**
 
 
-## 마지막 상태 — 최신 / 2026-11-04 커밋·PR 정리
+## 과거 마지막 상태 — 2026-11-04 커밋·PR 정리
 
 - 작업 브랜치는 **feat/chrome-extension**, PR 대상은 **main**이다. 기존 프론트·대시보드·사이트맵 커밋 위에 오류 코드 **037a394**, pgAdmin **988fb0d**, 문서·main 동기화 커밋을 순서대로 추가한다. 최신 HEAD는 `git log -1`로 확인한다.
 - 오류 코드와 **0003 소스도 커밋 완료**다. 개발 DB는 0003·error_code 있음이 확인됐으며 기존 데이터는 보존했다.
@@ -720,3 +798,14 @@ Notion은 요구사항·설계 자료다. 실제 구현·적용 여부는 이 �
 - 사용자 승인 범위는 이 브랜치 push와 main 대상 PR 생성까지다. 원격 PR URL·상태는 `gh pr view`로 확인하며 main 직접 push·PR 병합을 하지 않는다.
 
 새 세션 시작 문구: **“docs/HANDOFF.md의 최신 인계 요약을 읽고 이어서 진행해줘. feat/chrome-extension에서 오류 코드·0003·pgAdmin까지 커밋했고 main 대상 PR 생성 작업을 진행했어. gh pr view와 git status로 최종 원격 상태를 먼저 확인해줘. DB·실제 검색엔진 상태를 테스트 목적으로 바꾸지 말고 신규 도메인 등록·소유 확인은 현재 범위에서 제외해.”**
+
+## 마지막 상태 — 최신 / 2026-11-05 Lightsail 배포와 확장 개발 인계
+
+- 로컬은 `main`, HEAD `4444868`이며 PR #4까지 병합됐다. 기존 미커밋 Vite 변경은 프록시를 SSH 터널 포트 `18001`에 연결한다. 이 요청에서 `docs/HANDOFF.md`를 추가로 갱신했다.
+- 사용자가 시드니 Lightsail에 FastAPI·PostgreSQL을 배포하고 Mac의 SSH 터널과 대시보드에서 고객사 저장·새로고침 후 조회까지 확인했다. AWS 컨테이너는 계속 실행해두기로 했다.
+- 최신 대시보드는 Chrome 확장에 포함한다. AWS 프론트 웹 호스팅을 위한 Docker 변경은 진행하지 않는다. 다음 작업은 로그인된 네이버 탭 선택과 결과 읽기 기능이다.
+- 설치된 확장 API 주소는 아직 로컬 `8000`이다. Vite `18001`은 웹 개발 경로만 바꾸므로 설치된 확장의 서버 연결을 별도로 준비한다.
+- 팀 배포용 HTTPS·팀원 인증·고정 IP·AWS DB 외부 백업은 후속 작업이다. 도메인은 현재 보유하지 않는다. Google·Bing 운영용 인증 연결도 남아 있다.
+- 현재 요청에서는 인계 문서를 업데이트하고 diff만 검증했다. 서버 기동·고객사 저장·복구의 사용자 확인과 이전 도구 검증 결과를 구분해 기록했다.
+
+새 세션에서는 **“docs/HANDOFF.md의 2026-11-05 최신 요약을 읽고 이어서 진행해줘. main 4444868에 배포 PR까지 병합했고 Lightsail API·DB와 SSH 터널 18001을 통한 저장·조회를 확인했어. 로컬 Vite의 미커밋 변경을 보존하고 최신 main 기준 확장 개발 브랜치에서 로그인된 네이버 탭 선택·결과 읽기부터 한 단계씩 진행해줘.”**라고 전달한다.
