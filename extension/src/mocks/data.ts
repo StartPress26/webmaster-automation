@@ -1,0 +1,29 @@
+import type { Client, Inspection, Property } from '../types';
+
+export const initialClients: readonly Client[] = [
+  { id: 'otter', name: '오터스튜디오', manager: '김유담' },
+  { id: 'grove', name: '그로브커피', manager: '이서연' },
+  { id: 'startpress', name: 'StartPress', manager: '김유담' },
+];
+
+export const initialProperties: readonly Property[] = [
+  { id: 'otter-site', clientId: 'otter', name: '오터스튜디오', origin: 'https://otter-studio.example', owned: false, active: true, siteUrl: 'https://otter-studio.example/', indexNow: { configured: true, key_location: 'https://otter-studio.example/a1b2c3d4e5f67890.txt' } },
+  { id: 'grove-site', clientId: 'grove', name: '그로브커피', origin: 'https://grove-coffee.example', owned: false, active: true, siteUrl: 'https://grove-coffee.example/', indexNow: null },
+  { id: 'startpress-blog', clientId: 'startpress', name: 'StartPress 블로그', origin: 'https://blog.startpress.example', owned: true, active: true, siteUrl: 'https://blog.startpress.example/', indexNow: null },
+];
+
+export const initialInspections: readonly Inspection[] = [
+  { id: 'p1', propertyId: 'otter-site', path: '/', title: '브랜드의 시작을 함께합니다', engine: 'google', status: 'indexed', crawledAt: '2026.11.02 14:32', checkedAt: '2026.11.03 09:42' },
+  { id: 'p2', propertyId: 'otter-site', path: '/journal/brand-story', title: '오터스튜디오의 브랜드 이야기', engine: 'google', status: 'indexed', crawledAt: '2026.11.02 11:08', checkedAt: '2026.11.03 09:42' },
+  { id: 'p3', propertyId: 'otter-site', path: '/journal/autumn-collection', title: '가을 컬렉션을 소개합니다', engine: 'google', status: 'waiting', crawledAt: null, checkedAt: '2026.11.03 09:42' },
+  { id: 'p4', propertyId: 'otter-site', path: '/journal/design-process', title: '좋은 디자인이 만들어지는 과정', engine: 'google', status: 'crawled', crawledAt: '2026.11.03 06:15', checkedAt: '2026.11.03 09:42' },
+  { id: 'p5', propertyId: 'otter-site', path: '/about', title: '우리가 일하는 방식', engine: 'google', status: 'indexed', crawledAt: '2026.11.01 22:41', checkedAt: '2026.11.03 09:42' },
+  { id: 'p6', propertyId: 'otter-site', path: '/journal/studio-notes', title: '스튜디오에서 보내는 편지', engine: 'google', status: 'not_indexed', crawledAt: '2026.11.02 18:20', checkedAt: '2026.11.03 09:42' },
+  { id: 'p7', propertyId: 'otter-site', path: '/work', title: '함께 만든 프로젝트', engine: 'google', status: 'indexed', crawledAt: '2026.11.02 08:13', checkedAt: '2026.11.03 09:42' },
+  { id: 'p8', propertyId: 'otter-site', path: '/journal/new-perspective', title: '새로운 관점으로 바라보기', engine: 'google', status: 'waiting', crawledAt: null, checkedAt: '2026.11.03 09:42' },
+  { id: 'n1', propertyId: 'otter-site', path: '/journal/brand-story', title: '오터스튜디오의 브랜드 이야기', engine: 'naver', status: 'indexed', crawledAt: '2026.11.02 12:00', checkedAt: '2026.11.03 09:35' },
+  { id: 'n2', propertyId: 'otter-site', path: '/journal/autumn-collection', title: '가을 컬렉션을 소개합니다', engine: 'naver', status: 'waiting', crawledAt: null, checkedAt: '2026.11.03 09:35' },
+  { id: 'b1', propertyId: 'otter-site', path: '/', title: '브랜드의 시작을 함께합니다', engine: 'bing', status: 'crawled', crawledAt: '2026.11.02 15:10', checkedAt: '2026.11.03 09:30' },
+  { id: 'g1', propertyId: 'grove-site', path: '/', title: '매일의 좋은 커피', engine: 'google', status: 'indexed', crawledAt: '2026.11.02 10:10', checkedAt: '2026.11.03 09:42' },
+  { id: 's1', propertyId: 'startpress-blog', path: '/posts/getting-started', title: 'StartPress 시작하기', engine: 'google', status: 'indexed', crawledAt: '2026.11.02 10:30', checkedAt: '2026.11.03 09:42' },
+];

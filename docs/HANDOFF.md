@@ -1,10 +1,167 @@
 # 작업 인계 문서
 
-## 현재 방향 — 2026-11-03
+## 현재 인계 요약 — 2026-11-04 / Asia/Seoul
+
+**새 세션은 이 절을 먼저 읽는다. 이 절과 맨 아래 최신 마지막 상태가 과거 스냅샷보다 우선한다. 아래 과거의 DB 0002·extension 미추적·사이트맵 API 미연결 설명은 현재 상태가 아니다.**
+
+### 사용자의 작업 방식·확정 범위
+
+- 한국어로 간결하게 설명하고, 사용자가 Python·FastAPI 코드를 한 함수씩 이해하며 진행하도록 지도한다. 사용자가 요청한 범위를 구현하며 부가 기능을 앞서 만들지 않는다.
+- **현재 익스텐션은 이미 검색엔진에 등록되어 있고 서버 계정에 접근 권한이 있는 사이트를 대상으로 한다. 신규 도메인의 Google·Bing 사이트 등록·인증 파일 발급·소유권 확인 UI/API는 현재 범위에서 제외한다.** 기존 Python 어댑터는 보존한다.
+- 새 글은 `POST /sites/{main_site_id}/pages` 한 번으로 DB 저장과 기본 IndexNow 알림을 처리한다. 별도 `/submissions` API·제출 이력 테이블은 복구하지 않는다.
+- **사이트맵 제출은 `/pages`에 자동 연결하지 않는다.** 색인 상태 확인 화면에서 사용자가 별도 버튼으로 실행한다.
+- 사이트맵 제출은 이미 공개된 글 목록 URL을 검색엔진에 알리는 기능이다. 새 글을 사이트맵에 반영하는 작업은 실제 블로그·CMS가 담당한다. 우리 DB 글 저장으로 블로그의 sitemap.xml이 바뀌지는 않는다. 글마다 사이트맵 재제출이 필수는 아니다.
+- 접수 성공과 수집·색인 완료를 구분한다. `unknown`을 수집 대기·미색인으로 바꾸지 않는다. Bing 검사 결과는 현재 `crawled`·`unknown`만 판정한다.
+- 한국어 `[타입] 제목`, Git 작성자 유지, 공동 작성자 트레일러 없음. main/master 직접 push 금지. 새 브랜치는 `feat/`·`fix/` 등 사용하며 `codex/` 접두사를 사용하지 않는다.
+
+### 현재 Git 상태와 완료 기능
+
+현재 브랜치는 **feat/chrome-extension**이다. 마지막 기능 커밋은 **037a394**, pgAdmin 구성 커밋은 **988fb0d**이며 이후 문서·main 동기화 커밋은 `git log -1`로 확인한다. 사용자는 남은 변경을 세 커밋으로 정리하고 이 브랜치를 push해 **main 대상 PR을 생성**하도록 요청했다. PR 병합은 요청하지 않았다.
+
+| 커밋 | 기능 |
+|---|---|
+| 1cda961 | IndexNow 설정 조회·변경 PUT·GET |
+| e4e2a54 | 개별 글 저장과 기본 IndexNow 알림 연결 |
+| 0b4cf4b | Google·Bing 상태 검사 POST·GET과 DB 저장 |
+| 730f7d0 | 부모 사이트별 글 목록 GET |
+| f4283ba | 검색엔진 관리 프론트와 Chrome 확장 실행 구성 |
+| 27a6b3a | 고객사별 대시보드와 블로그 선택 |
+| afa2ef8 | Google·Bing 사이트맵 제출 API와 화면 연결 |
+| 037a394 | 검사 오류 코드 저장·Google 인증 원인 세분화·0003 마이그레이션 |
+| 988fb0d | pgAdmin Compose·환경변수 예시·실행 안내 |
+
+- `POST·GET /clients`, `POST·GET /sites`: 고객사·메인 사이트의 DB 저장·목록. 사이트 정보 저장은 외부 검색엔진 등록·소유 확인을 수행하지 않는다.
+- `GET /clients/{client_id}/dashboard`: 선택 고객사의 사이트·글 수, Google·Bing 저장 상태·오류·블로그별 통계. 외부 엔진을 호출하지 않는다. 첫 화면은 고객사 대시보드이며 소속 블로그 선택·초안 분리·이전 고객사의 늦은 응답 무시 기능이 있다.
+- `PUT·GET /sites/{main_site_id}/indexnow-settings`: Naver·Bing 공통 설정 저장·조회. 키 원문 응답 제외, 불완전·불일치 조회는 409.
+- `POST /sites/{main_site_id}/pages`: 글 저장 후 선택적 IndexNow 공통 알림. `notify_search_engines` 기본 true. 알림 실패에도 글은 보존하고 201의 `page`·`submission`으로 결과를 구분한다. 중복 409는 재전송하지 않는다.
+- `GET /sites/{main_site_id}/pages`: 부모별 저장 글 목록, limit 1~100·offset 0 이상, 생성 시각·ID 정렬. 비활성 글도 조회한다.
+- `POST /sites/{site_id}/inspections`: `engine=google|bing` 실제 상태 조회·요약 저장. 글은 부모 속성 사용. 외부 호출 전 DB 트랜잭션 종료, Google 동기 작업은 스레드 실행.
+- `GET /sites/{site_id}/inspections`: 외부 호출 없이 저장된 최신 상태만 조회. 실패 시 이전 판정·성공 관측 시각 보존, 첫 실패는 unknown·last_checked_at=null.
+
+### 이번 작업 — 사이트맵 API·프론트 완료
+
+- **`POST /sites/{main_site_id}/sitemaps`**: 요청 `{"engine":"google","sitemap_url":"https://example.com/sitemap.xml"}`. Google 또는 Bing 하나에 기존 어댑터로 한 번 제출한다.
+- 성공 HTTP 200: `main_site_id`, `engine`, `sitemap_url`, `status="accepted"`. 접수 성공이며 다운로드·파싱·글 수집·색인 완료가 아니다.
+- 존재하는 활성 메인 사이트만 지원한다. 개별 글 ID·없는 ID는 404, 비활성은 409. 사이트맵은 같은 스킴·호스트·유효 포트와 하위 경로여야 한다. 입력·범위 오류 422, 한도 429, 엔진 오류 502, 인증 설정 503, 시간 초과 504.
+- Google은 쿼리 없이 `/`로 끝나는 URL-prefix 속성, 이 API의 Bing 지원 범위는 쿼리·하위 경로 없는 루트 사이트다.
+- 외부 제출 전 조회 트랜잭션 종료. Google 토큰 갱신 잠금은 기존 검사와 공유하며 동기 요청은 스레드풀 실행. Google·Bing 자원은 성공·실패 모두 정리한다. 자동 재시도 없음.
+- 사이트맵 파일 생성·갱신·제출 이력·설정·색인 상태 DB 저장은 없다. 이 기능에 신규 마이그레이션은 필요 없다.
+- 프론트 **색인 상태 확인 → 사이트·Google/Bing 선택 → ‘사이트맵 제출’ → URL 확인·수정 → 엔진에 제출** 흐름을 연결했다. 기존 ‘인덱스 업데이트’ 버튼은 오해를 줄이기 위해 **‘색인 상태 조회’**로 변경했다.
+- 사이트맵 폼은 버튼 클릭으로 열리며 선택 엔진·메인 사이트를 표시한다. 개별 글을 선택해도 부모 메인 사이트 ID로 제출한다. 네이버·미선택·비활성 사이트에서는 제출 버튼을 막는다.
+- 제출 중 중복 클릭 방지, 응답의 사이트·엔진·URL·accepted 검증, 실패 시 입력 유지, 다른 사이트·엔진에 이전 피드백을 섞지 않도록 처리했다. 예시 모드는 외부 요청하지 않는다.
+- 성공 문구: **‘Google 사이트맵 제출 접수 완료. 수집·색인 반영에는 시간이 걸릴 수 있습니다.’** 사용자가 눈에 띄게 요청해 ‘색인됨’ 배지와 같은 초록색 **#27775f**로 변경했다. 실패 문구는 `inspection-error` 빨간색을 유지한다.
+- 실패 메시지는 `extension/src/main.ts`의 `submitSitemap()` catch에서 조합한다. 인계 시 **868~872줄**, 872줄 `sitemapFeedback` 대입. 렌더는 `sitemapForm()`(약 242줄), 색상은 `styles.css`의 `.sitemap-feedback` 규칙(약 228~229줄). 줄 번호는 후속 수정으로 달라질 수 있다.
+- 백엔드 원인별 고정 메시지는 `app/services/sitemap.py`의 `messages`(약 66줄). 프론트는 인증·권한·한도·URL 오류를 안내하고, 통신·시간 초과 등은 **‘접수 여부를 확인하지 못했습니다. 자동 재전송하지 않습니다.’**라고 표시한다.
+
+### 남은 변경 정리와 PR 범위
+
+- `037a394`: Google 인증 오류 세부 코드 전달, 검사 `error_code` 저장·조회·성공 시 초기화, 관련 테스트, **0003 마이그레이션 파일**, 검사 API 문서를 함께 커밋했다. 신규 환경에서는 API 실행 전에 `alembic upgrade head`가 필요하다.
+- `988fb0d`: pgAdmin 서비스·전용 볼륨·로컬 5050 포트와 `.env.example`의 빈 로그인 설정, 실행 안내를 함께 커밋했다. Compose 전체 설정을 검증하므로 db만 시작해도 `PGADMIN_DEFAULT_EMAIL`, `PGADMIN_DEFAULT_PASSWORD`가 필요하다. 실제 값은 `.env`에만 둔다.
+- 세 번째 커밋은 `app/main.py`의 기존 라우터 설명과 이 인계 문서 정리다. 최신 main의 확장 전환 문서·README·실행 기록 규칙도 함께 반영하며 인계 문서 충돌을 해결한다.
+- `main`과 비교한 PR에는 기존 IndexNow 설정·글 저장/목록·검사 API와 기본 프론트·대시보드·사이트맵 커밋도 포함된다. PR 제목·본문은 전체 변경 범위를 설명해야 한다.
+- 최종 문서 커밋 이후 원격 상태·PR URL·충돌·검사 상태는 `gh pr view`와 `git status`로 확인한다. main 직접 push·자동 병합은 하지 않는다.
+- 기존 AI 로그인봇 실험은 `feat/ai-login-bot`에 보존하며 이 브랜치에 가져오지 않는다. 실제 브라우저·확장 검증 전 `.cursor/rules/bot-execution-records.mdc`를 읽고 민감값 없는 실행 기록을 비공개로 남긴다.
+
+### 실제 개발 DB — 2026-11-04 재확인
+
+- 인계 시 로컬 DB를 읽기 전용 SQL로 조회했다: **alembic_version=0003**, **site_engine_statuses.error_code 존재=true**.
+- 따라서 과거의 ‘0002·error_code 없음’ 불일치는 현재 확인 결과와 다르다. 이 인계 요청에서 마이그레이션을 적용하거나 데이터를 변경하지 않았다.
+- 0003 파일과 관련 코드도 이제 `037a394`에 커밋됐다. 개발 DB는 이미 0003이므로 임의 롤백·초기화하지 않는다. 이번 커밋·PR 검증에서는 개발 DB 마이그레이션을 재적용하지 않았다.
+
+### 실행 환경·현재 프론트 구성
+
+- Python은 Miniconda `startpress`, 직접 실행 시 `PYTHONNOUSERSITE=1`. `.venv` 생성·`uv sync`·`uv run` 금지.
+- DB는 Docker `db` 서비스(PostgreSQL 18.6), 호스트 접근 `127.0.0.1:5432`. pgAdmin은 `http://127.0.0.1:5050/browser/`, 컨테이너에서 DB 호스트는 `db`다. 비밀값은 출력하지 않는다.
+- 프론트 로컬 실행: 프로젝트의 `extension/`에서 `npm run dev` → `http://127.0.0.1:5173/`. 예시는 `/?mode=demo`. Vite의 `/api` 프록시가 FastAPI `127.0.0.1:8000`으로 전달한다.
+- FastAPI 실행: `PYTHONNOUSERSITE=1 /opt/miniconda3/envs/startpress/bin/python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000`. 중복 시작 전에 기존 포트 확인.
+- **Manifest V3 실행 구성이 추가되어 있다.** `extension/public/manifest.json`, `src/background.ts`, `src/runtime.ts` 참조. `npm run build` 후 Chrome 개발자 모드에서 `extension/dist`를 압축해제 로드하면 아이콘 클릭으로 관리 탭을 연다. 확장에서는 로컬 API 8000으로 직접 요청한다.
+- 빌드 후 확장 새로고침과 관리 탭 재열기가 필요하다. 네이버 탭 연결·Content Script·GUI 조회·팀원 로그인은 아직 구현하지 않았다. 자세한 실행법은 `extension/README.md`.
+
+### 검증 근거·한계
+
+- 이번 커밋·PR 정리 단계에서 **전체 백엔드 650 passed**를 다시 확인했다. 인증 오류 코드·저장·성공 시 초기화와 임시 PostgreSQL의 마이그레이션 upgrade/downgrade 검증을 포함한다.
+- 프론트 **42 passed**, TypeScript·Vite 빌드 통과. 실제 화면 코드를 jsdom에서 실행한 고객사 전환·초안 분리·늦은 응답·사이트맵 이벤트와 접수 문구 검증을 포함한다. 현재 초록색 CSS 변경도 포함한 작업 트리에서 실행했다.
+- `docker compose config --quiet`, 비밀값 없는 `.env.example`에 테스트용 환경변수를 주입한 Compose 설정 검증, `git diff --check`를 통과했다.
+- 개발 DB 대신 UUID 이름의 임시 DB만 생성·삭제하고 외부 엔진은 모의 응답으로 검증했다. 실제 검색엔진 제출·상태 검사를 반복하지 않았다.
+- 실제 브라우저 도구는 연결 불가였으므로 화면 배치·반응형 시각 검증은 하지 못했다. 팀원 인증·운영 배포·네이버 탭 연결은 구현 범위 밖이다.
+- 이전 단계의 647개·609개 백엔드 및 28개·35개 프론트 수치는 각 커밋 사본 기준의 과거 기록이다. 최신 650개·42개와 합산하지 않는다.
+
+### 다음 작업
+
+1. main 대상 PR의 변경 범위·충돌·검사 상태를 확인하고 리뷰를 받는다. 사용자 요청은 PR 생성까지이며 병합은 하지 않는다.
+2. 다음 핵심 기능이나 화면 개선은 사용자 요청에 따라 진행한다. 사이트맵은 이미 완료이며 `/pages` 자동 연결·신규 도메인 등록/소유 확인을 추가하지 않는다.
+3. 네이버 GUI 조회·주기 검사·팀원 인증·운영 배포는 후속 범위다. 브라우저 작업을 재개할 때 main에서 합류한 실행 기록 규칙을 먼저 읽는다.
+
+### 관련 파일
+
+- 사이트맵: `app/api/sitemaps.py` → `app/services/sitemap.py` → `app/engines/sitemap.py` → 기존 `GoogleEngine.submit_sitemap()` / `BingEngine.submit_sitemap()`. 스키마 `app/schemas/sitemap.py`.
+- 명세: [sitemaps-api.md](sitemaps-api.md), [dashboard-api.md](dashboard-api.md), [pages-api.md](pages-api.md), [inspections-api.md](inspections-api.md), [indexnow-settings-api.md](indexnow-settings-api.md).
+- 프론트: `extension/src/main.ts`, `api.ts`, `types.ts`, `styles.css`, `errors.ts`, `forms.ts`, `dashboard.ts`.
+- 테스트: `tests/test_sitemap_runner.py`, `tests/integration/test_sitemaps_api.py`, `extension/tests/sitemap.test.mjs`, `extension/tests/workspace.test.mjs`.
+- DB 변경: `migrations/versions/0003_add_inspection_error_code.py`.
+- `.env`·`.secrets/`·OAuth 토큰·API 키·기존 공개 검증 파일·개발 데이터를 보존한다. 비밀값을 문서에 옮기지 않는다.
+
+## 과거 전환 결정 — 2026-11-03
+
+이 절의 미구현 상태는 당시 기록이며 2026-11-04 최신 구현 요약이 우선한다.
 
 아래 과거 인계보다 [Chrome 확장 프로그램 전환 결정](extension-transition.md)을 우선한다. 확장 프로그램은 아직 미구현이다. AI 로그인봇 실험은 `feat/ai-login-bot`에 보존하며 이 문서 PR에 코드·의존성을 포함하지 않는다. 설치형 앱 배포는 진행하지 않는다.
 
 main에는 고객사/사이트 API·DB·Google/Bing API·IndexNow 서비스가 이미 있다. 다음 작업은 로그인된 기존 네이버 결과 탭 읽기부터 시작한다. 추가 실로그인은 자동 실행하지 않는다. 상세 실험 성공 범위와 인증 유지 실패의 원인 미확정 사항은 전환 문서를 확인한다.
+
+
+---
+
+## 최신 추가 진행 — 저장된 글 목록 GET / 2026-11-03
+
+이 절은 아래 과거 기록의 ‘글 목록 GET 미구현’ 설명보다 우선한다.
+
+- `GET /sites/{main_site_id}/pages` 추가. 기존 POST와 같은 경로에서 저장된 글 목록·ID를 items 배열로 반환한다.
+- 부모가 메인 사이트인지 확인하고 parent_site_id·target_type=page·부모 client_id로 필터링한다. 생성 시각·ID 오름차순, limit 1~100(기본 100)·offset 0 이상(기본 0)을 지원한다.
+- 비활성 부모·글도 조회 가능하다. 빈 목록은 200·items=[], 미존재 부모·글 ID를 부모로 지정한 경우 404, UUID·페이지 조건 오류는 422다.
+- 외부 엔진·인증·IndexNow 클라이언트를 호출하지 않으며 마이그레이션은 없다.
+- 관련 사이트 API 통합 테스트 **55 passed**, git diff --check 통과. 임시 DB에서만 검증했으며 실제 외부 호출·개발 데이터 추가는 하지 않았다.
+- [pages-api.md](pages-api.md)에 GET 계약을 추가했다. 커밋·push는 아직 하지 않았으며 기존 extension/은 보존했다.
+
+## 최신 추가 진행 — 수집·색인 상태 검사 POST·GET / 2026-11-03
+
+이 절은 아래 과거의 ‘Google·Bing 상태 검사 FastAPI·DB 연결 미구현’ 설명보다 우선한다.
+
+- 같은 `/sites/{site_id}/inspections`에 POST·GET을 구현했다. POST 본문은 `{"engine":"google"}` 또는 bing이며 기존 GoogleEngine.inspect_url·BingEngine.inspect_url을 호출하고 site_engine_statuses에 최신 요약 상태를 저장한다.
+- GET은 엔진별 저장 상태만 읽으며 인증 준비·외부 호출을 하지 않는다. 대상이 존재하고 상태 행이 없으면 items=[]이다.
+- 메인페이지·글 모두 지원하며 글은 부모 속성 URL을 사용한다. 부모 관계·고객사·소유 구분·활성 상태·출처·경로와 엔진별 지원 URL을 검증한다.
+- Google 동기 인증·요청은 스레드풀에서 실행하고 Google 세션·Bing 클라이언트는 종료 시 정리한다. 토큰 갱신 파일 쓰기는 프로세스 내 잠금으로 직렬화한다.
+- DB 트랜잭션은 외부 조회 중 열어두지 않는다. 성공 결과는 최신 checked_at 기준으로 upsert하고 실패는 기존 판정·확인 시각을 보존하며 안전한 오류만 저장한다. 첫 실패는 unknown·last_checked_at=null이다. 성공 재조회 시 오류를 지운다.
+- 기존 0002 테이블만 사용해 마이그레이션은 없다. 상세 canonical·크롤링 시각 저장·검사 이력·예약·자동 재시도·프론트 연결은 이번 범위에 포함하지 않았다. Bing은 crawled·unknown만 판정한다.
+- 전체 PostgreSQL 통합 포함 **599 passed**. 엔진 연결·스레드·자원 정리·GET 읽기 전용·오류 상태 보존·오래된 관측 차단·기존 기능 회귀를 확인했다. 실제 외부 조회·개발 DB 테스트 행 생성은 하지 않았다.
+- 사용 명세: [inspections-api.md](inspections-api.md). 커밋·push는 아직 하지 않았고 기존 extension/은 보존했다.
+
+## 최신 추가 진행 — 글 등록과 기본 발행 알림 / 2026-11-03
+
+이 절은 아래 과거의 ‘개별 글 등록 미구현’·‘다음 작업은 별도 제출 API’ 설명보다 우선한다.
+
+- 사용자 요청에 따라 별도 `/submissions` API·제출 이력 테이블 구현은 롤백했다. 개발 DB는 기존 0002이며 기존 데이터는 유지했다. 커밋된 IndexNow 설정 PUT·GET은 유지한다.
+- `POST /sites/{main_site_id}/pages` 구현. 본문은 name·url·선택 notify_search_engines(기본 true). 한 요청으로 글을 저장한 뒤 기존 notify_published_urls()를 호출한다.
+- 부모는 활성 메인 사이트여야 하며 글 URL의 출처·경로 범위를 확인한다. 고객사·소유 구분은 부모에서 가져오고 target_type=page·parent_site_id를 서버가 지정한다.
+- 부모 IndexNow 설정은 같은 저장 트랜잭션에서 읽는다. 글을 커밋하고 트랜잭션·잠금을 해제한 뒤 공통 엔드포인트로 한 번 전송한다.
+- 저장 성공은 HTTP 201. 응답은 page와 submission으로 나누며 알림은 accepted·key_pending·failed·unknown·skipped를 반환한다. 키 누락·불일치·외부 실패에도 글을 보존한다. notify_search_engines=false이면 저장만 한다.
+- 중복 URL은 409이며 자동 재전송하지 않는다. 외부 알림 결과는 응답으로만 제공하고 별도 제출 테이블·기존 색인 관측값에 저장하지 않는다. 신규 마이그레이션은 없다.
+- 전체 PostgreSQL 통합 포함 **567 passed**. 전송 전 글 커밋, 외부 실패 후 글 유지, DB 저장 실패 시 롤백·전송 차단, 동시 중복의 단일 저장·단일 전송, 부모 검증·URL 범위·입력 검증을 확인했다. 실제 외부 제출·개발 데이터 추가는 하지 않았다.
+- 상세 사용법: [pages-api.md](pages-api.md). 글 목록 GET·화면 연결·재알림 API·예약·제출 이력은 이번 범위에 포함하지 않았다.
+- 커밋·push는 하지 않았으며 기존 미추적 extension/은 보존했다.
+
+## 최신 추가 진행 — IndexNow 설정 조회·교체 / 2026-11-03
+
+이 절은 아래 과거 기록의 ‘기존 사이트의 IndexNow 설정 변경 미구현’ 설명보다 우선한다.
+
+- `PUT /sites/{main_site_id}/indexnow-settings`, `GET /sites/{main_site_id}/indexnow-settings` 구현.
+- PUT은 기존 스키마로 입력·사이트 범위를 검증하고 Naver·Bing 설정을 같은 트랜잭션에서 upsert한다. 사이트 행 잠금으로 같은 사이트의 변경을 직렬화한다. 기존 등록 상태·확인 시각·오류는 유지한다.
+- GET은 미설정 시 `configured=false`, 완전한 두 엔진 설정이 일치하면 `configured=true`와 파일 주소를 반환한다. 불완전·불일치 설정은 409이며 PUT으로 복구한다.
+- 없는 사이트·개별 글은 404. 키 원문은 성공 응답과 새 라우터의 검증 오류에서 제외한다. 공개 파일 주소 자체에는 키 문자열이 포함될 수 있다.
+- 기존 컬럼을 사용하므로 새 마이그레이션은 없다. 외부 제출·파일 배포·화면 연결은 이번 범위에 포함하지 않았다.
+- 검증: DB 없는 테스트 469 passed, 관련 사이트 API·서비스 PostgreSQL 통합 테스트 42 passed. 통합 테스트는 별도 임시 DB를 생성·삭제했으며 개발 DB 데이터는 변경하지 않았다.
+- Docker Desktop과 기존 PostgreSQL 컨테이너를 시작했다. 실제 외부 검색엔진 호출·원격 push·커밋은 실행하지 않았다. 기존 미추적 `extension/`은 보존했다.
+- 상세 계약: [indexnow-settings-api.md](indexnow-settings-api.md). 다음 작업은 DB 기반 URL 제출 서비스·API다.
 
 ## 현재 세션 인계 요약 — IndexNow / 2026-10-27
 
@@ -498,7 +655,7 @@ API 문서는 [Swagger UI](http://127.0.0.1:8000/docs)에서 확인한다.
 
 Notion은 요구사항·설계 자료다. 실제 구현·적용 여부는 이 문서의 최신 구현 상태와 코드·Alembic 버전을 기준으로 확인한다. 원문의 브라우저 자동화 제안은 이 문서의 공식 API 중심 합의와 구분한다. 초기 조회 이후 IndexNow 세션에서 DB 컬럼·입력 항목·저장 구현 상태를 수정했다. 연결·권한은 변경하지 않았다.
 
-## 마지막 상태
+## 과거 마지막 상태 — 2026-10-27
 
 - 갱신일: **2026-10-27 / Asia/Seoul**.
 - 작업 디렉터리: `/Users/kim-yudam/Desktop/study/sideProject/webmaster_automation`.
@@ -512,3 +669,54 @@ Notion은 요구사항·설계 자료다. 실제 구현·적용 여부는 이 �
 - 보존: Google 세션 기록·기존 공개 검증 파일·로컬 ERD 자료. .env·토큰은 커밋·출력하지 않는다.
 
 새 세션에서: **‘docs/HANDOFF.md의 현재 세션 인계 요약을 읽고 이어서 진행해줘. Google은 1765f5b에 커밋됐고 IndexNow 클라이언트·설정 저장은 codex/indexnow-integration 브랜치에 커밋했어. 실제 Vercel 블로그 제출은 HTTP 200이었으며 기록된 URL을 테스트 목적으로 반복 제출하지 마. 추가 변경과 원격 push는 별도 요청 범위에 맞춰 진행해.’**
+
+
+## 과거 마지막 상태 — 2026-11-03
+
+- 브랜치: **feat/chrome-extension**. HEAD: **730f7d0 — [feat] 부모 사이트별 글 목록 조회 API 구현**.
+- 네 API 기능 커밋은 위 최신 요약을 따른다. 원격 push는 하지 않았다.
+- 미커밋: 인증 오류 세분화·error_code 저장·관련 테스트, pgAdmin compose 변경, 새 0003 오류 코드 마이그레이션, 미추적 extension/.
+- 실제 개발 DB는 **0002**, error_code 컬럼 없음. **새 0003은 미적용**이며 코드·DB 불일치를 다음 작업에서 먼저 확인한다.
+- 검증 기록: 전체 599개는 검사 API 구현 시점, 관련 55개는 글 목록 추가 시점. 현재 미커밋 전체는 미검증이다.
+- 다음 작업: 미커밋 변경·DB 정합성 검증 → 프론트 글 목록·검사 API 연결 마무리·전체 흐름 확인.
+- .env·OAuth 토큰·API 키·기존 운영 검증 파일·개발 데이터를 보존한다. 별도 /submissions 구현은 복구하지 않는다.
+- 이 요청에서는 docs/HANDOFF.md만 업데이트했다. 인계 문서는 아직 커밋하지 않았다.
+
+새 세션 시작 문구: **“docs/HANDOFF.md의 맨 위 현재 인계 요약을 읽고 이어서 진행해줘. HEAD는 730f7d0이고 extension/과 인증 오류 코드 변경은 미커밋이야. 새 0003 오류 코드 마이그레이션은 실제 DB에 아직 적용되지 않았으니 먼저 코드·DB 상태부터 확인해줘. 핵심 기능을 우선하고 별도 submissions API는 만들지 마.”**
+
+
+## 추가 인계 기록 — 2026-11-04
+
+- 브랜치 **feat/chrome-extension**, HEAD **afa2ef8**. 이번 세 커밋은 **f4283ba → 27a6b3a → afa2ef8** 순서이며 원격 push는 하지 않았다.
+- `extension/`은 커밋 완료. 고객사 선택·대시보드와 Google·Bing 사이트맵 제출 API·화면까지 구현돼 있다.
+- 마지막 커밋 사본 검증: 백엔드 **647 passed**, 프론트 **42 passed**, TypeScript·Vite 빌드 통과. 다른 시점 테스트와 합산하지 않는다.
+- 개발 DB는 이번 인계 확인 기준 **0003**, **error_code 컬럼 존재**. 해당 마이그레이션 소스는 여전히 미추적이며 이번 요청에서 적용한 것은 아니다.
+- 남은 미커밋은 인증 오류 코드 관련 소스·테스트·0003·문서, pgAdmin compose, 기존 라우터 설명 주석이다. 임의로 되돌리거나 커밋하지 않는다.
+- 대시보드의 Google 색인 0개는 **메인페이지 제외·등록 글 0개** 때문임을 확인했다. 메인페이지는 Google indexed다. 메인페이지 상태 분리 표시는 개선 후보이며 아직 구현 요청은 없다.
+- 이번 인계 요청은 **docs/HANDOFF.md만 갱신**했다. 문서 커밋·push·DB 변경·외부 검색엔진 호출은 하지 않았다.
+
+새 세션 시작 문구: **“docs/HANDOFF.md의 맨 위 현재 인계 요약과 맨 아래 최신 상태를 읽고 이어서 진행해줘. feat/chrome-extension의 HEAD는 afa2ef8이고 프론트·대시보드·사이트맵을 세 커밋으로 나눴어. 개발 DB는 0003·error_code 있음이 확인됐지만 인증 오류 코드와 마이그레이션 소스는 아직 미커밋이야. 대시보드는 등록 글만 집계해 메인페이지 색인과 숫자가 다를 수 있으니 구분해줘. 실제 외부 제출을 테스트 목적으로 반복하지 마.”**
+
+
+## 과거 마지막 상태 — 2026-11-04
+
+- 브랜치 **feat/chrome-extension**, HEAD **afa2ef8 — [feat] Google·Bing 사이트맵 제출 API와 화면 연결**.
+- 사이트맵은 `POST /sites/{main_site_id}/sitemaps`와 프론트 버튼 연결까지 완료했다. `/pages`에 자동 제출을 추가하지 않는다.
+- 성공은 초록색 `#27775f`, 실패는 빨간색. 실패 메시지 조합은 `extension/src/main.ts`의 `submitSitemap()` catch, 현재 약 868~872줄이다.
+- 개발 DB를 읽기 전용으로 재확인: **0003**, **error_code 컬럼 존재**. 다만 0003 파일과 인증 오류 코드 변경은 미커밋이다.
+- 대시보드·Chrome Manifest V3 실행 구성·extension/은 커밋되어 있다. app/main.py의 미커밋 라우터·주석 변경도 보존한다.
+- 검증 기록: 사이트맵 신규 백엔드 38 passed, 당시 전체 백엔드 650 passed, 버튼 연결 후 프론트 42 passed·빌드 통과. 색상 변경 후에는 diff 검사만 수행했다.
+- 현재 요청에서는 docs/HANDOFF.md만 갱신했다. 커밋·push·실제 검색엔진 요청·DB 변경은 하지 않았다.
+
+새 세션 시작 문구: **“docs/HANDOFF.md의 맨 위 현재 인계 요약을 읽고 이어서 진행해줘. HEAD는 afa2ef8이고 사이트맵 API·프론트 버튼은 완료됐어. DB는 0003과 error_code 컬럼이 확인됐지만 관련 마이그레이션·인증 오류 코드 변경은 아직 미커밋이야. 기존 변경을 보존하고, 신규 도메인 등록·소유권 확인은 현재 범위에서 제외해.”**
+
+
+## 마지막 상태 — 최신 / 2026-11-04 커밋·PR 정리
+
+- 작업 브랜치는 **feat/chrome-extension**, PR 대상은 **main**이다. 기존 프론트·대시보드·사이트맵 커밋 위에 오류 코드 **037a394**, pgAdmin **988fb0d**, 문서·main 동기화 커밋을 순서대로 추가한다. 최신 HEAD는 `git log -1`로 확인한다.
+- 오류 코드와 **0003 소스도 커밋 완료**다. 개발 DB는 0003·error_code 있음이 확인됐으며 기존 데이터는 보존했다.
+- 마지막 검증은 **백엔드 650개**, **프론트 42개**, TypeScript·Vite 빌드·Compose 설정·diff 공백 검사 통과다. 실제 엔진 호출은 하지 않았다.
+- main의 문서 변경과 HANDOFF 충돌을 해결해 PR에 반영한다. 기존 AI 로그인봇 실험과 네이버 실로그인은 범위 밖이며, 브라우저 작업 전 실행 기록 규칙을 확인한다.
+- 사용자 승인 범위는 이 브랜치 push와 main 대상 PR 생성까지다. 원격 PR URL·상태는 `gh pr view`로 확인하며 main 직접 push·PR 병합을 하지 않는다.
+
+새 세션 시작 문구: **“docs/HANDOFF.md의 최신 인계 요약을 읽고 이어서 진행해줘. feat/chrome-extension에서 오류 코드·0003·pgAdmin까지 커밋했고 main 대상 PR 생성 작업을 진행했어. gh pr view와 git status로 최종 원격 상태를 먼저 확인해줘. DB·실제 검색엔진 상태를 테스트 목적으로 바꾸지 말고 신규 도메인 등록·소유 확인은 현재 범위에서 제외해.”**

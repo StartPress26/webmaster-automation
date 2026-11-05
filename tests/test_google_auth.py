@@ -88,3 +88,18 @@ def test_refresh_failure_is_sanitized(token_file: Path, monkeypatch: pytest.Monk
     assert "test-secret" not in str(caught.value)
     assert caught.value.__suppress_context__
     assert token_file.read_text() == original
+    assert caught.value.code == "refresh_failed"
+
+
+# 토큰 설정 누락과 권한 부족을 비밀값 없이 구분합니다.
+def test_auth_error_codes(token_file: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    data = json.loads(token_file.read_text()) | {"scopes": []}
+    token_file.write_text(json.dumps(data))
+    with pytest.raises(GoogleAuthError) as error:
+        load_credentials(token_file.parents[1])
+    assert error.value.code == "insufficient_scopes"
+    assert "test-secret" not in error.value.public_message
+    monkeypatch.setenv("GOOGLE_TOKEN_FILE", "")
+    with pytest.raises(GoogleAuthError) as missing:
+        load_credentials(token_file.parents[1])
+    assert missing.value.code == "configuration_missing"

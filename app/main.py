@@ -7,7 +7,12 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.api.clients import router as clients_router
+from app.api.dashboard import router as dashboard_router
+from app.api.indexnow_settings import router as indexnow_settings_router
 from app.api.sites import router as sites_router
+from app.api.pages import router as pages_router
+from app.api.inspections import router as inspections_router
+from app.api.sitemaps import router as sitemaps_router
 from app.core.database import dispose_database
 
 
@@ -22,8 +27,20 @@ async def lifespan(_: FastAPI) -> AsyncGenerator[None, None]:
 
 
 app = FastAPI(title="StartPress Admin", lifespan=lifespan)
+# 고객사를 등록하고 목록을 조회합니다.
 app.include_router(clients_router)
+# 선택한 고객사의 블로그·글·엔진별 저장 상태 통계를 조회합니다.
+app.include_router(dashboard_router)
+# 메인 사이트 정보를 등록하고 고객사별 사이트 목록을 조회합니다.
 app.include_router(sites_router)
+# 메인 사이트의 네이버·Bing 공통 IndexNow 키 설정을 조회·변경합니다.
+app.include_router(indexnow_settings_router)
+# 메인 사이트에 속한 글을 저장·조회하고, 저장 시 선택적으로 IndexNow 알림을 보냅니다.
+app.include_router(pages_router)
+# Google·Bing 상태를 새로 검사하고, DB에 저장된 엔진별 최신 결과를 조회합니다.
+app.include_router(inspections_router)
+# sitemap 제출
+app.include_router(sitemaps_router)
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 

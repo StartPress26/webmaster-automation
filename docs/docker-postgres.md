@@ -1,6 +1,6 @@
 # Docker PostgreSQL 로컬 실행
 
-이 설정은 PostgreSQL만 컨테이너에서 실행합니다. FastAPI와 Google API 검증 스크립트는
+이 설정은 PostgreSQL과 DB 관리 도구 pgAdmin을 컨테이너에서 실행합니다. FastAPI와 Google API 검증 스크립트는
 기존 Conda startpress 환경에서 실행합니다. Python 환경은 [environment.md](environment.md)를 참고하세요.
 
 ## 구성
@@ -27,6 +27,8 @@ Google·Bing 인증정보는 DB 컨테이너에 전달하지 않습니다.
 2. 프로젝트 루트의 .env에 POSTGRES_DB, POSTGRES_USER, POSTGRES_PASSWORD를 설정합니다.
    현재 컴퓨터에서는 설정 과정에서 생성한 무작위 비밀번호를 사용합니다.
    다른 컴퓨터에서는 .env.example을 참고해 각자 새 비밀번호를 설정합니다.
+   pgAdmin의 PGADMIN_DEFAULT_EMAIL과 PGADMIN_DEFAULT_PASSWORD도 설정합니다.
+   Compose는 전체 서비스 설정을 검증하므로 db만 실행할 때도 두 값이 필요합니다.
 3. 프로젝트 루트에서 실행합니다.
 
 ```bash
@@ -37,6 +39,17 @@ docker compose ps
 
 db가 healthy이면 PostgreSQL이 접속을 받을 준비가 된 것입니다.
 처음에는 공식 이미지를 내려받으므로 시간이 걸릴 수 있습니다.
+
+## pgAdmin으로 DB 보기
+
+```bash
+docker compose up -d pgadmin
+```
+
+`http://127.0.0.1:5050/browser/`에서 `.env`에 지정한 pgAdmin 계정으로 로그인합니다.
+새 서버를 추가할 때 호스트는 `db`, 포트는 `5432`이며 DB 이름·사용자·비밀번호는
+`POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` 값을 사용합니다.
+pgAdmin 로그인과 DB 로그인은 별개입니다. 두 서비스의 포트는 이 컴퓨터에서만 접근할 수 있습니다.
 
 ## 접속과 확인
 

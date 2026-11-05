@@ -1,0 +1,14 @@
+{
+  "manifest_version": 3,
+  "name": "StartPress Console",
+  "version": "0.1.0",
+  "description": "고객사 사이트와 글 URL의 검색엔진 상태를 관리합니다.",
+  "action": {
+    "default_title": "StartPress 관리 화면 열기"
+  },
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "host_permissions": ["http://127.0.0.1/*"]
+}
