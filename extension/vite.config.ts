@@ -19,7 +19,7 @@ export default defineConfig({
   server: {
     proxy: {
       '/api': {
-        target: 'http://127.0.0.1:8000',
+        target: 'http://127.0.0.1:18000',
         changeOrigin: true,
         // 개발 요청의 접두사를 제거해 기존 FastAPI 경로를 그대로 사용합니다.
         rewrite: (path: string): string => path.replace(/^\/api/, ''),

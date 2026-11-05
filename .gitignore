@@ -1,7 +1,9 @@
 .env
 .env.*
 !.env.example
+!.env.prod.example
 .secrets/
+/*.dump
 .venv/
 .cache/
 __pycache__/
