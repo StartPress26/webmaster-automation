@@ -69,16 +69,19 @@ async def get_dashboard(session: AsyncSession, client_id: UUID) -> ClientDashboa
     # aliased - 같은 테이블을 한 쿼리에서 여러 역할로 사용할 때 별명을 붙이는 SQLAlchemy 함수
     page = aliased(Site)
     google = aliased(SiteEngineStatus)
+    naver = aliased(SiteEngineStatus)
     bing = aliased(SiteEngineStatus)
     rows = (await session.execute(
         select(
             Site.id, Site.name, Site.url, Site.is_active,
             func.count(page.id).label("page_count"),
             *engine_columns(google, page, "google"),
+            *engine_columns(naver, page, "naver"),
             *engine_columns(bing, page, "bing"),
         )
         .outerjoin(page, (page.parent_site_id == Site.id) & (page.client_id == client_id) & (page.target_type == "page"))
         .outerjoin(google, (google.site_id == page.id) & (google.engine == "google"))
+        .outerjoin(naver, (naver.site_id == page.id) & (naver.engine == "naver"))
         .outerjoin(bing, (bing.site_id == page.id) & (bing.engine == "bing"))
         .where(Site.client_id == client_id, Site.target_type == "site")
         .group_by(Site.id)
@@ -88,6 +91,7 @@ async def get_dashboard(session: AsyncSession, client_id: UUID) -> ClientDashboa
         DashboardSite(
             id=row["id"], name=row["name"], url=row["url"], is_active=row["is_active"],
             page_count=row["page_count"], google=engine_summary(row, "google"),
+            naver=engine_summary(row, "naver"),
             bing=engine_summary(row, "bing"),
         ) for row in rows
     )
@@ -95,5 +99,6 @@ async def get_dashboard(session: AsyncSession, client_id: UUID) -> ClientDashboa
     return ClientDashboard(
         client=ClientRead.model_validate(client), site_count=len(sites),
         page_count=sum(site.page_count for site in sites),
-        google=total_summary(sites, "google"), bing=total_summary(sites, "bing"), sites=sites,
+        google=total_summary(sites, "google"), naver=total_summary(sites, "naver"),
+        bing=total_summary(sites, "bing"), sites=sites,
     )

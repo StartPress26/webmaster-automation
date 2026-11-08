@@ -51,7 +51,7 @@ async function workspace(override = () => undefined, query = '', chromeClient) {
     else if (path.pathname.endsWith('/dashboard')) {
       const id = path.pathname.split('/')[3];
       const selectedSites = sites.filter((site) => site.client_id === id);
-      data = { client: clients.find((client) => client.id === id), site_count: selectedSites.length, page_count: 0, google: summary, bing: summary, sites: selectedSites.map((site) => ({ ...site, page_count: 0, google: summary, bing: summary })) };
+      data = { client: clients.find((client) => client.id === id), site_count: selectedSites.length, page_count: 0, google: summary, naver: summary, bing: summary, sites: selectedSites.map((site) => ({ ...site, page_count: 0, google: summary, naver: summary, bing: summary })) };
     } else if (path.pathname.endsWith('/indexnow-settings')) data = { configured: false, key_location: null };
     else if (path.pathname.endsWith('/pages') || path.pathname.endsWith('/inspections')) data = { items: [] };
     else throw new Error(`예상하지 않은 요청: ${url}`);
@@ -148,7 +148,7 @@ test('늦게 도착한 이전 고객사 통계는 현재 고객사의 화면을 
     app.choose('#client-select', 'b');
     app.choose('#client-select', 'a');
     await waitFor(() => app.document.querySelector('[data-dashboard-site="a1"]'));
-    resolveOld(new Response(JSON.stringify({ client: clients[1], sites: [], site_count: 99, page_count: 99, google: summary, bing: summary })));
+    resolveOld(new Response(JSON.stringify({ client: clients[1], sites: [], site_count: 99, page_count: 99, google: summary, naver: summary, bing: summary })));
     await delay(20);
     assert.equal(app.document.querySelector('#client-select').value, 'a');
     assert.ok(app.document.querySelector('[data-dashboard-site="a1"]'));

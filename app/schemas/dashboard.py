@@ -30,6 +30,7 @@ class DashboardSite(BaseModel):
     is_active: bool
     page_count: int
     google: EngineSummary
+    naver: EngineSummary
     bing: EngineSummary
 
 
@@ -40,5 +41,6 @@ class ClientDashboard(BaseModel):
     site_count: int
     page_count: int
     google: EngineSummary
+    naver: EngineSummary
     bing: EngineSummary
     sites: tuple[DashboardSite, ...]

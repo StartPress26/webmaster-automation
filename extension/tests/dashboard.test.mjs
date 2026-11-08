@@ -39,6 +39,10 @@ test('예시 통계는 고객사·메인페이지를 분리하며 Bing 크롤링
     { propertyId: 'a1', path: '/post', engine: 'bing', status: 'crawled' },
     { propertyId: 'a1', path: '/pending', engine: 'google', status: 'waiting' },
     { propertyId: 'b1', path: '/other', engine: 'google', status: 'indexed' },
+    { propertyId: 'a1', path: '/', engine: 'naver', status: 'indexed' },
+    { propertyId: 'a1', path: '/post', engine: 'naver', status: 'indexed' },
+    { propertyId: 'a1', path: '/pending', engine: 'naver', status: 'waiting' },
+    { propertyId: 'b1', path: '/other', engine: 'naver', status: 'indexed' },
   ];
   const data = demoDashboard(client, properties, rows);
 
@@ -48,6 +52,9 @@ test('예시 통계는 고객사·메인페이지를 분리하며 Bing 크롤링
   assert.equal(data.google.unknown, 1);
   assert.equal(data.bing.crawled, 1);
   assert.equal(data.bing.indexed, 0);
+  assert.equal(data.naver.indexed, 1);
+  assert.equal(data.naver.unknown, 1);
+  assert.equal(data.naver.not_indexed, 0);
 
   const html = dashboardContent(data);
 
@@ -55,10 +62,14 @@ test('예시 통계는 고객사·메인페이지를 분리하며 Bing 크롤링
   assert.ok(!html.includes('<블로그 A>'));
   assert.ok(!html.includes('b.example'));
   assert.ok(html.includes('data-dashboard-site="a2"'));
+  assert.ok(html.includes('네이버 · 등록 글 상태'));
+  assert.ok(html.includes('네이버 색인 확인'));
+  assert.ok(!html.includes('네이버 대시보드 집계는 아직 지원하지 않습니다'));
 });
 
 test('블로그가 없는 고객사는 사이트 등록 안내를 제공한다', () => {
   const data = demoDashboard({ id: 'empty', name: '빈 고객사', manager: '' }, properties, []);
   assert.equal(data.page_count, 0);
+  assert.equal(data.naver.unknown, 0);
   assert.ok(dashboardContent(data).includes('data-view="register"'));
 });
