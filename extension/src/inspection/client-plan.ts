@@ -20,6 +20,8 @@ export interface ClientInspectionTask {
   readonly status:
     | 'queued'
     | 'running'
+    | 'saving'
+    | 'save_failed'
     | 'succeeded'
     | 'partial'
     | 'observed'

@@ -8,10 +8,10 @@ import { renderClientInspection } from '../src/inspection/client-view.ts';
 import { ApiError } from '../src/errors.ts';
 
 // 외부 탭 없이 엔진별 작업을 준비하는 컨트롤러를 만듭니다.
-function parallelController(naver, bing) {
-  const tabs = [{ tabId: 1, engine: 'naver' }, { tabId: 2, engine: 'bing' }];
+function parallelController(naver, bing, overrides = {}) {
+  const tabs = [{ tabId: 1, engine: 'naver', title: '네이버', url: 'https://searchadvisor.naver.com/console/board' }, { tabId: 2, engine: 'bing', title: 'Bing', url: 'https://www.bing.com/webmasters/' }];
   const factory = () => createWorkTabController({ list: async () => tabs, check: async (tab) => ({ connected: true, tab }), available: () => true });
-  return createController(fakeApi(), undefined, { naver: factory(), bing: factory() }, naver, bing);
+  return createController(fakeApi(overrides), undefined, { naver: factory(), bing: factory() }, naver, bing);
 }
 
 // 테스트에서 엔진의 완료 순서를 직접 제어합니다.
@@ -39,7 +39,7 @@ test('네이버가 끝나기 전에 Bing도 시작하고 두 엔진이 모두 �
   const runner = (engine) => async (_, targets, hooks) => {
     started.push(engine); hooks.onStart(targets[0]);
     await gates[engine].promise;
-    for (const target of targets) hooks.onResult(target, guiResult(engine, target));
+    for (const target of targets) await hooks.onResult(target, guiResult(engine, target));
   };
   const controller = parallelController(runner('naver'), runner('bing'));
   const running = controller.start('a', 'A');
@@ -48,10 +48,10 @@ test('네이버가 끝나기 전에 Bing도 시작하고 두 엔진이 모두 �
     assert.deepEqual(started, ['naver', 'bing']);
     gates.bing.resolve(); await flushController();
     assert.equal(controller.getState().phase, 'running');
-    assert.equal(controller.getState().tasks.filter((task) => task.engine === 'bing' && task.status === 'observed').length, 3);
+    assert.equal(controller.getState().tasks.filter((task) => task.engine === 'bing' && task.route === 'gui' && task.status === 'succeeded').length, 3);
     gates.naver.resolve(); await running;
     assert.equal(controller.getState().phase, 'finished');
-    assert.equal(controller.getState().tasks.filter((task) => task.status === 'observed').length, 6);
+    assert.equal(controller.getState().tasks.filter((task) => task.route === 'gui' && task.status === 'succeeded').length, 6);
   } finally { gates.naver.resolve(); gates.bing.resolve(); await running; }
 });
 
@@ -63,7 +63,7 @@ test('GUI 한쪽 실패는 다른 엔진의 진행·취소 신호·결과에 영
       if (engine === failing) throw new Error('해당 엔진 실패');
       await gate.promise;
       assert.equal(hooks.signal.aborted, false);
-      for (const target of targets) hooks.onResult(target, guiResult(engine, target));
+      for (const target of targets) await hooks.onResult(target, guiResult(engine, target));
     };
     const controller = parallelController(runner('naver'), runner('bing'));
     const running = controller.start('a', 'A');
@@ -73,7 +73,7 @@ test('GUI 한쪽 실패는 다른 엔진의 진행·취소 신호·결과에 영
       assert.equal(controller.getState().phase, 'running');
       assert.equal(controller.getState().tasks.filter((task) => task.engine === failing && task.route === 'gui' && task.status === 'failed').length, 1);
       gate.resolve(); await running;
-      assert.equal(controller.getState().tasks.filter((task) => task.route === 'gui' && task.status === 'observed').length, 3);
+      assert.equal(controller.getState().tasks.filter((task) => task.route === 'gui' && task.status === 'succeeded').length, 3);
       assert.equal(controller.getState().phase, 'finished');
     } finally { gate.resolve(); await running; }
   }
@@ -83,7 +83,7 @@ test('전체 취소는 동시에 실행 중인 두 GUI에 전달하고 이미 �
   const signals = [];
   const runner = (engine) => async (_, targets, hooks) => {
     signals.push(hooks.signal);
-    hooks.onStart(targets[0]); hooks.onResult(targets[0], guiResult(engine, targets[0]));
+    hooks.onStart(targets[0]); await hooks.onResult(targets[0], guiResult(engine, targets[0]));
     hooks.onStart(targets[1]);
     await new Promise((_, reject) => hooks.signal.addEventListener('abort', () => reject(new Error('취소')), { once: true }));
     assert.fail('취소 이후 다음 조회 금지');
@@ -96,9 +96,9 @@ test('전체 취소는 동시에 실행 중인 두 GUI에 전달하고 이미 �
     controller.cancel(); await running;
     assert.ok(signals.every((signal) => signal.aborted));
     assert.equal(controller.getState().phase, 'cancelled');
-    assert.equal(controller.getState().tasks.filter((task) => task.status === 'observed').length, 2);
+    assert.equal(controller.getState().tasks.filter((task) => task.route === 'gui' && task.status === 'succeeded').length, 2);
     assert.equal(controller.getState().tasks.filter((task) => task.route === 'gui' && task.status === 'cancelled').length, 4);
-    assert.equal(controller.getState().tasks.filter((task) => task.status === 'partial' || task.status === 'succeeded').length, 6);
+    assert.equal(controller.getState().tasks.filter((task) => task.route === 'api' && (task.status === 'partial' || task.status === 'succeeded')).length, 6);
   } finally { controller.cancel(); await running; }
 });
 
@@ -110,12 +110,12 @@ function createClientInspectionController(api, changed) {
   return createController(api, changed, { naver: factory(), bing: factory() }, async (selected, targets, hooks) => {
     for (const item of targets) {
       hooks.onStart(item);
-      hooks.onResult(item, { kind: 'verified_gui', siteUrl: item.siteUrl, targetUrl: item.url, indexStatus: 'unknown', message: 'URL 검사 결과가 없습니다.', queriedAt: new Date().toISOString(), readAt: new Date().toISOString(), targetVerified: true });
+      await hooks.onResult(item, { kind: 'verified_gui', siteUrl: item.siteUrl, targetUrl: item.url, indexStatus: 'unknown', message: 'URL 검사 결과가 없습니다.', queriedAt: new Date().toISOString(), readAt: new Date().toISOString(), targetVerified: true });
     }
   }, async (selected, targets, hooks) => {
     for (const item of targets) {
       hooks.onStart(item);
-      hooks.onResult(item, { kind: 'verified_bing_gui', siteUrl: item.siteUrl, targetUrl: item.url, indexStatus: 'indexed', message: '색인화되었습니다.', reason: '<제외 사유>', canonicalUrl: 'https://one.example/?x=<script>', crawlStatus: 'succeeded', lastCrawledText: null, queriedAt: new Date().toISOString(), readAt: new Date().toISOString(), targetVerified: true });
+      await hooks.onResult(item, { kind: 'verified_bing_gui', siteUrl: item.siteUrl, targetUrl: item.url, indexStatus: 'indexed', message: '색인화되었습니다.', reason: '<제외 사유>', canonicalUrl: 'https://one.example/?x=<script>', crawlStatus: 'succeeded', lastCrawledText: null, queriedAt: new Date().toISOString(), readAt: new Date().toISOString(), targetVerified: true });
     }
   });
 }
@@ -133,9 +133,110 @@ function fakeApi(overrides = {}) {
     listSites: async (id) => { assert.equal(id, 'a'); return sites; },
     listPages: async (id) => id === 's1' ? [page, { ...page, id: 'inactive', is_active: false }] : [],
     inspect: async (id, engine) => ({ site_id: id, engine, index_status: 'unknown' }),
+    saveGuiInspection: async (id, data) => ({ site_id: id, engine: data.engine, index_status: data.index_status, last_checked_at: data.observed_at, next_check_at: null, error_message: null }),
     ...overrides,
   };
 }
+
+test('GUI 결과의 필드·대상 ID를 저장 API에 전달하고 저장 완료까지 기다린다', async () => {
+  const calls = [];
+  const gate = deferred();
+  const runner = (engine) => async (_, targets, hooks) => {
+    for (const target of targets) {
+      hooks.onStart(target);
+      await hooks.onResult(target, guiResult(engine, target));
+    }
+  };
+  const controller = parallelController(runner('naver'), runner('bing'), {
+    saveGuiInspection: async (id, data) => {
+      calls.push([id, data]);
+      await gate.promise;
+      return { site_id: id, engine: data.engine, index_status: data.index_status, last_checked_at: data.observed_at, next_check_at: null, error_message: null };
+    },
+  });
+  const running = controller.start('a', 'A');
+  try {
+    await flushController();
+    assert.equal(calls.length, 2);
+    assert.equal(controller.getState().phase, 'running');
+    assert.equal(controller.getState().tasks.filter((task) => task.status === 'saving').length, 2);
+    assert.ok(renderClientInspection(controller.getState(), 'a', 'A', false).includes('GUI 관측 저장 중'));
+    gate.resolve();
+    await running;
+    assert.equal(calls.length, 6);
+    for (const [id, data] of calls) {
+      const task = controller.getState().tasks.find((item) => item.target.id === id && item.engine === data.engine && item.route === 'gui');
+      const observation = task.guiObservation;
+      assert.deepEqual(data, {
+        engine: task.engine, site_url: observation.siteUrl, target_url: observation.targetUrl,
+        index_status: observation.indexStatus, queried_at: observation.queriedAt, observed_at: observation.readAt,
+      });
+    }
+    assert.equal(controller.getState().tasks.filter((task) => task.route === 'gui' && task.status === 'succeeded').length, 6);
+  } finally { gate.resolve(); await running; }
+});
+
+test('GUI 저장 실패는 관측을 보존하고 해당 엔진만 중단하며 자동 재시도하지 않는다', async () => {
+  for (const status of [0, 409, 500]) {
+    const calls = [];
+    const runner = (engine) => async (_, targets, hooks) => {
+      for (const target of targets) {
+        hooks.onStart(target);
+        await hooks.onResult(target, guiResult(engine, target));
+      }
+    };
+    const controller = parallelController(runner('naver'), runner('bing'), {
+      saveGuiInspection: async (id, data) => {
+        calls.push(data.engine);
+        if (data.engine === 'naver') throw new ApiError(status, '저장 오류');
+        return { site_id: id, engine: data.engine, index_status: data.index_status, last_checked_at: data.observed_at, next_check_at: null, error_message: null };
+      },
+    });
+    await controller.start('a', 'A');
+    const run = controller.getState();
+    assert.equal(calls.filter((engine) => engine === 'naver').length, 1);
+    assert.equal(calls.filter((engine) => engine === 'bing').length, 3);
+    const failure = run.tasks.find((task) => task.status === 'save_failed');
+    assert.ok(failure.guiObservation);
+    assert.match(failure.message, status === 409 ? /DB 저장 실패/ : /DB 저장 응답 미확인/);
+    assert.equal(run.tasks.filter((task) => task.engine === 'naver' && task.status === 'blocked').length, 2);
+    assert.equal(run.tasks.filter((task) => task.engine === 'bing' && task.route === 'gui' && task.status === 'succeeded').length, 3);
+    const html = renderClientInspection(run, 'a', 'A', false);
+    assert.match(html, /GUI 저장 확인 실패/);
+    assert.match(html, /GUI 저장 확인 3건/);
+  }
+});
+
+test('GUI 저장 중 취소하면 현재 저장 응답을 보존하고 후속 URL은 실행하지 않는다', async () => {
+  const gate = deferred();
+  const calls = [];
+  const runner = (engine) => async (_, targets, hooks) => {
+    for (const target of targets) {
+      if (hooks.signal.aborted) throw new Error('취소');
+      hooks.onStart(target);
+      await hooks.onResult(target, guiResult(engine, target));
+    }
+  };
+  const controller = parallelController(runner('naver'), runner('bing'), {
+    saveGuiInspection: async (id, data) => {
+      calls.push([id, data.engine]);
+      await gate.promise;
+      return { site_id: id, engine: data.engine, index_status: data.index_status, last_checked_at: data.observed_at, next_check_at: null, error_message: null };
+    },
+  });
+  const running = controller.start('a', 'A');
+  try {
+    await flushController();
+    controller.cancel();
+    assert.equal(controller.getState().phase, 'running');
+    gate.resolve();
+    await running;
+    assert.equal(calls.length, 2);
+    assert.equal(controller.getState().phase, 'cancelled');
+    assert.equal(controller.getState().tasks.filter((task) => task.route === 'gui' && task.status === 'succeeded').length, 2);
+    assert.equal(controller.getState().tasks.filter((task) => task.status === 'cancelled').length, 4);
+  } finally { gate.resolve(); await running; }
+});
 
 test('활성 사이트와 글을 스냅샷으로 수집하고 각 URL에 API와 GUI 작업을 나눠 만든다', async () => {
   const parents = [];
@@ -191,9 +292,9 @@ test('API 저장과 네이버 GUI 관측을 구분하고 Bing 크롤링을 색�
   const run = controller.getState();
 
   assert.equal(run.targetCount, 3);
-  assert.equal(run.tasks.filter((task) => task.status === 'succeeded').length, 3);
+  assert.equal(run.tasks.filter((task) => task.route === 'api' && task.status === 'succeeded').length, 3);
   assert.equal(run.tasks.filter((task) => task.status === 'partial').length, 3);
-  assert.equal(run.tasks.filter((task) => task.status === 'observed').length, 6);
+  assert.equal(run.tasks.filter((task) => task.route === 'gui' && task.status === 'succeeded').length, 6);
 
   const html = renderClientInspection(run, 'a', '<고객사>', false);
 

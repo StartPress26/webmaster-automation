@@ -385,7 +385,7 @@ input[type=radio],input[type=checkbox] { accent-color: var(--blue); width: 15px;
 .inspection-result-url { margin-top: 3px; color: #6a7077; font-size: 11px; overflow-wrap: anywhere; }
 .inspection-result-status { display: inline-block; white-space: nowrap; font-size: 11px; color: #6a7077; }
 .inspection-result-status.succeeded, .inspection-result-status.partial { color: #276647; }
-.inspection-result-status.failed, .inspection-result-status.blocked { color: #b3261e; }
+.inspection-result-status.failed, .inspection-result-status.save_failed, .inspection-result-status.blocked { color: #b3261e; }
 .inspection-result-status.gui_required { color: #865a10; }
 .inspection-result-message { color: #6a7077; line-height: 1.7; max-width: 55ch; }
 .inspection-help summary { color: #5f6368; font-size: 11px; font-weight: 400; }

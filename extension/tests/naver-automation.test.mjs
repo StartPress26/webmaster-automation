@@ -94,6 +94,27 @@ test('사이트 A의 URL들을 처리하고 목록으로 돌아가 사이트 B�
   assert.equal(results.length, 3);
 });
 
+test('네이버는 비동기 결과 저장이 끝나기 전 다음 URL을 검사하지 않는다', async () => {
+  const fixture = fakeClient();
+  let release;
+  let entered;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const started = new Promise((resolve) => { entered = resolve; });
+  let results = 0;
+  const running = runNaverAutomation({ tabId: 7, engine: 'naver' }, [target, { ...target, id: 'p2', url: `${site}second` }], {
+    signal: new AbortController().signal,
+    onStart: () => {},
+    onResult: async () => { results += 1; entered(); await gate; },
+  }, fixture.client);
+  try {
+    await started;
+    assert.equal(fixture.events.filter(([action]) => action === 'inspect').length, 1);
+    release();
+    await running;
+    assert.equal(results, 2);
+  } finally { release(); await running; }
+});
+
 test('취소 뒤 다음 URL로 이동하지 않고 다른 대상의 응답을 거부한다', async () => {
   const fixture = fakeClient();
   const abort = new AbortController();

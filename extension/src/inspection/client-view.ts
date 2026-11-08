@@ -8,6 +8,8 @@ const engineNames = { google: 'Google', naver: '네이버', bing: 'Bing' } as co
 const statusNames: Readonly<Record<ClientInspectionTask['status'], string>> = {
   queued: '조회 대기',
   running: '조회 중',
+  saving: 'GUI 관측 저장 중',
+  save_failed: 'GUI 저장 확인 실패',
   succeeded: '관측 저장',
   partial: '크롤링 관측 저장',
   observed: 'GUI 관측 · DB 미저장',
@@ -68,7 +70,7 @@ function taskRow(task: ClientInspectionTask): string {
 function inspectionHelp(): string {
   return `<details class="inspection-help"><summary>조회 범위 및 주의사항</summary><div>
     <p>선택 고객사의 활성 메인 사이트와 등록된 활성 글을 모두 조회합니다. 아래 블로그·엔진 필터는 저장 결과를 보는 용도입니다.</p>
-    <p>Google은 색인 상태, Bing은 크롤링 상태를 API로 조회합니다. 네이버·Bing은 사이트 선택과 URL별 GUI 색인 조회를 수행하고 이번 실행 화면에 결과를 보관합니다. GUI 관측의 DB 저장은 아직 지원하지 않습니다. 탭 준비나 API 요청 성공이 색인 완료를 뜻하지 않습니다.</p>
+    <p>Google은 색인 상태, Bing은 크롤링 상태를 API로 조회합니다. 네이버·Bing은 사이트 선택과 URL별 GUI 색인 조회를 수행하고 결과를 URL별로 DB에 저장합니다. GUI 저장 실패는 조회 실패와 구분하며, 해당 엔진의 후속 조회를 중단합니다. 탭 준비나 저장 성공이 색인 완료를 뜻하지 않습니다.</p>
     <p>취소하면 현재 요청의 결과를 확인한 뒤 중단합니다. 실행 목록은 이 관리 탭에서만 유지되며, 탭을 닫거나 새로고침하면 자동 재개하지 않습니다.</p>
   </div></details>`;
 }
@@ -88,20 +90,21 @@ export function renderClientInspection(
   const done = apiTasks.filter(
     (task): boolean => !['queued', 'running'].includes(task.status),
   ).length;
-  const saved = apiTasks.filter(
+  const saved = (visible ? run.tasks : []).filter(
     (task): boolean => task.status === 'succeeded' || task.status === 'partial',
   ).length;
-  const failed = apiTasks.filter((task): boolean => task.status === 'failed').length;
-  const blocked = apiTasks.filter((task): boolean => task.status === 'blocked').length;
+  const failed = (visible ? run.tasks : []).filter((task): boolean => ['failed', 'save_failed'].includes(task.status)).length;
+  const blocked = (visible ? run.tasks : []).filter((task): boolean => task.status === 'blocked').length;
   const gui = visible
-    ? run.tasks.filter((task): boolean => task.route === 'gui' && task.status === 'observed').length
+    ? run.tasks.filter((task): boolean => task.route === 'gui' && !!task.guiObservation).length
     : 0;
+  const guiSaved = visible ? run.tasks.filter((task): boolean => task.route === 'gui' && task.status === 'succeeded').length : 0;
   const bingTasks = visible
     ? run.tasks.filter((task): boolean => task.engine === 'bing' && task.route === 'gui')
     : [];
-  const bingDone = bingTasks.filter((task): boolean => task.status === 'observed').length;
+  const bingDone = bingTasks.filter((task): boolean => !!task.guiObservation).length;
   const naverTasks = visible ? run.tasks.filter((task): boolean => task.engine === 'naver') : [];
-  const naverDone = naverTasks.filter((task): boolean => task.status === 'observed').length;
+  const naverDone = naverTasks.filter((task): boolean => !!task.guiObservation).length;
   const tabPanels = visible
     ? (['naver', 'bing'] as const)
         .map((engine): string => {
@@ -133,7 +136,7 @@ export function renderClientInspection(
         <div aria-label="관측 저장 ${saved}건"><dt>관측 저장</dt><dd>${saved}<span>건</span></dd></div>
         <div aria-label="GUI 관측 ${gui}건"><dt>GUI 관측</dt><dd>${gui}<span>건</span></dd></div>
       </dl>
-      <div class="inspection-progress-footer"><span>처리 현황이며, 색인 완료율이 아닙니다.</span><span>실패 ${failed}건 <span aria-hidden="true">·</span> 중단 ${blocked}건 <span aria-hidden="true">·</span> 엔진 작업 ${run.tasks.length}건</span><span>네이버 GUI 관측 ${naverDone}/${naverTasks.length}건 · Bing GUI 관측 ${bingDone}/${bingTasks.length}건 · DB 미저장</span></div>
+      <div class="inspection-progress-footer"><span>처리 현황이며, 색인 완료율이 아닙니다.</span><span>실패 ${failed}건 <span aria-hidden="true">·</span> 중단 ${blocked}건 <span aria-hidden="true">·</span> 엔진 작업 ${run.tasks.length}건</span><span>네이버 GUI 관측 ${naverDone}/${naverTasks.length}건 · Bing GUI 관측 ${bingDone}/${bingTasks.length}건 · GUI 저장 확인 ${guiSaved}건</span></div>
       ${apiTasks.length ? `<progress class="inspection-progress-bar" value="${done}" max="${apiTasks.length}" aria-label="API 요청 처리 진행률">${done}/${apiTasks.length}</progress>` : ''}
     </div>`
         : `<div class="inspection-coverage" aria-label="검색엔진별 조회 범위"><span class="inspection-engine-name"><span class="engine-symbol google" aria-hidden="true">G</span>Google <span>색인 상태</span></span><span class="inspection-engine-name"><span class="engine-symbol naver" aria-hidden="true">N</span>네이버 <span>GUI 색인 조회</span></span><span class="inspection-engine-name"><span class="engine-symbol bing" aria-hidden="true">b</span>Bing <span>GUI 색인 조회 · API 크롤링</span></span>${demo ? '<span class="inspection-demo-note">예시 모드 · 실행하지 않음</span>' : ''}</div>`
@@ -147,7 +150,7 @@ export function renderClientInspection(
     </details>`
         : ''
     }
-    ${visible && run.tasks.length ? `<details class="inspection-results" ${[...naverTasks, ...bingTasks].some((task): boolean => ['observed', 'failed', 'blocked'].includes(task.status)) ? 'open' : ''}><summary><span>사이트·URL·엔진별 작업 결과</span><span>${run.tasks.length}건</span></summary><div class="table-scroll"><table class="inspection-results-table"><thead><tr><th scope="col">사이트 / URL</th><th scope="col">검색엔진</th><th scope="col">처리 상태</th><th scope="col">안내</th></tr></thead><tbody>${run.tasks.map(taskRow).join('')}</tbody></table></div></details>` : ''}
+    ${visible && run.tasks.length ? `<details class="inspection-results" ${[...naverTasks, ...bingTasks].some((task): boolean => ['succeeded', 'saving', 'save_failed', 'observed', 'failed', 'blocked'].includes(task.status)) ? 'open' : ''}><summary><span>사이트·URL·엔진별 작업 결과</span><span>${run.tasks.length}건</span></summary><div class="table-scroll"><table class="inspection-results-table"><thead><tr><th scope="col">사이트 / URL</th><th scope="col">검색엔진</th><th scope="col">처리 상태</th><th scope="col">안내</th></tr></thead><tbody>${run.tasks.map(taskRow).join('')}</tbody></table></div></details>` : ''}
     ${inspectionHelp()}
   </section>`;
 }

@@ -420,9 +420,9 @@ function apiInspectionView(): string {
   const failure = inspectionError ?? previousError;
   const explanation =
     state.engine === 'naver'
-      ? '고객사 전체 조회에서 네이버 사이트·URL별 GUI 검사를 수행합니다. 이번 GUI 관측은 전체 작업 결과에 표시하며 서버 저장 상태와 구분합니다.'
+      ? '고객사 전체 조회에서 네이버 사이트·URL별 GUI 검사를 수행하고 최신 결과를 저장합니다.'
       : state.engine === 'bing'
-        ? 'Bing은 현재 API로 크롤링 상태를 조회합니다. 실제 색인 여부를 추정하지 않습니다.'
+        ? 'Bing은 API로 크롤링 상태, GUI로 색인 상태를 조회합니다. 같은 대상의 가장 최근 관측을 표시합니다.'
         : 'Google URL Inspection API로 저장된 색인 상태를 조회합니다. URL 제출이나 색인 요청은 실행하지 않습니다.';
 
   return `<div class="page-heading"><div><h1>색인 상태 확인</h1><p>블로그·메인페이지·글·엔진을 선택해 저장된 상태를 확인하세요.</p></div>${inspectionActions()}</div>

@@ -8,6 +8,7 @@ import type {
   SiteWrite,
   PageRead,
   InspectionRead,
+  GuiInspectionCreate,
 } from './types';
 
 import { ApiError, httpError } from './errors.ts';
@@ -28,6 +29,7 @@ export interface ApiClient {
   readonly listPages: (id: string) => Promise<readonly PageRead[]>;
   readonly getInspections: (id: string) => Promise<readonly InspectionRead[]>;
   readonly inspect: (id: string, engine: 'google' | 'bing') => Promise<InspectionRead>;
+  readonly saveGuiInspection: (id: string, data: GuiInspectionCreate) => Promise<InspectionRead>;
   readonly submitSitemap: (
     id: string,
     engine: 'google' | 'bing',
@@ -202,6 +204,22 @@ export function createApi(
           code: 'INVALID_RESPONSE',
           operation: 'inspect',
         });
+      return result;
+    },
+    // GUI 관측을 한 번 저장하고 서버가 보관한 최신 결과를 반환합니다.
+    saveGuiInspection: async (id: string, data: GuiInspectionCreate): Promise<InspectionRead> => {
+      const result = validateInspection(
+        await request(`/sites/${encodeURIComponent(id)}/gui-inspections`, 'POST', data, 'save'),
+        id,
+        'save',
+      );
+      if (result.engine !== data.engine || !['naver', 'bing'].includes(result.engine) ||
+          !result.last_checked_at || !/(Z|[+-]\d{2}:\d{2})$/i.test(result.last_checked_at) ||
+          !Number.isFinite(Date.parse(result.last_checked_at))) {
+        throw new ApiError(0, 'GUI 저장 응답의 엔진·확인 시각을 확인하지 못했습니다.', {
+          code: 'INVALID_RESPONSE', operation: 'save',
+        });
+      }
       return result;
     },
     // 고객사 목록을 모두 읽습니다.

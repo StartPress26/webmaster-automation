@@ -20,7 +20,7 @@ export interface BingAutomationHooks {
   readonly signal: AbortSignal;
   readonly onStart: (target: ClientInspectionTarget) => void;
   readonly onStage?: (target: ClientInspectionTarget, stage: BingAutomationStage) => void;
-  readonly onResult: (target: ClientInspectionTarget, result: BingAutomationObservation) => void;
+  readonly onResult: (target: ClientInspectionTarget, result: BingAutomationObservation) => void | Promise<void>;
 }
 
 export interface BingAutomationClient {
@@ -357,7 +357,7 @@ export async function runBingAutomation(
       );
       if (current.documentToken !== page.documentToken)
         throw new BingAutomationError('page_changed');
-      hooks.onResult(target, result);
+      await hooks.onResult(target, result);
     }
   }
 }

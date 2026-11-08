@@ -18,7 +18,7 @@ import type { ClientInspectionTarget } from '../../inspection/client-plan';
 export interface NaverAutomationHooks {
   readonly signal: AbortSignal;
   readonly onStart: (target: ClientInspectionTarget) => void;
-  readonly onResult: (target: ClientInspectionTarget, result: NaverAutomationObservation) => void;
+  readonly onResult: (target: ClientInspectionTarget, result: NaverAutomationObservation) => void | Promise<void>;
 }
 
 export interface NaverAutomationClient {
@@ -269,7 +269,7 @@ export async function runNaverAutomation(
       if (current.documentToken !== page.documentToken)
         throw new NaverAutomationError('page_changed');
 
-      hooks.onResult(target, observation as NaverAutomationObservation);
+      await hooks.onResult(target, observation as NaverAutomationObservation);
     }
 
     await navigate(client, selected.tabId, NAVER_BOARD_URL, hooks.signal);

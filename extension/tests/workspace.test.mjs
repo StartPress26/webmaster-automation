@@ -445,6 +445,10 @@ test('전체 조회 버튼은 네이버 사이트별 URL 조회를 실행하고 
   } };
 
   const app = await workspace((url, options) => {
+    if (url.endsWith('/gui-inspections')) {
+      const data = JSON.parse(options.body);
+      return new Response(JSON.stringify({ site_id: url.split('/')[3], engine: data.engine, index_status: data.index_status, last_checked_at: data.observed_at, next_check_at: null, error_message: null }));
+    }
     if (options.method === 'POST') return new Response(JSON.stringify({ site_id: url.split('/')[3], engine: JSON.parse(options.body).engine, index_status: 'unknown', last_checked_at: null, next_check_at: null, error_message: null }));
     if (url.startsWith('/api/sites/a1/pages')) return new Response(JSON.stringify({ items: [{ id: 'p1', client_id: 'a', parent_site_id: 'a1', name: '등록 글', url: 'https://a.example/post', is_active: true }] }));
   }, '', chromeClient);
@@ -457,8 +461,10 @@ test('전체 조회 버튼은 네이버 사이트별 URL 조회를 실행하고 
     assert.deepEqual(inspected, ['https://a.example/', 'https://a.example/post', 'https://second.example/']);
     assert.equal(new URL(naverUrl).pathname, '/console/board');
     assert.match(app.document.querySelector('#client-inspection-progress').textContent, /네이버 GUI 관측 3\/3건/);
-    assert.equal(app.document.querySelectorAll('.inspection-result-status.observed').length, 3);
-    assert.ok(app.calls.filter((call) => call.options.method === 'POST').every((call) => JSON.parse(call.options.body).engine !== 'naver'));
+    assert.equal(app.document.querySelectorAll('.inspection-result-status.succeeded').length, 6);
+    const guiPosts = app.calls.filter((call) => call.url.endsWith('/gui-inspections'));
+    assert.equal(guiPosts.length, 3);
+    assert.ok(guiPosts.every((call) => call.options.method === 'POST' && JSON.parse(call.options.body).engine === 'naver'));
     await waitFor(() => !app.document.querySelector('#refresh-index').disabled);
   } finally { await delay(0); app.dom.window.close(); }
 });
@@ -490,6 +496,10 @@ test('전체 조회는 Bing 사이트를 바꿔 URL들을 검사하고 API 저�
   } };
 
   const app = await workspace((url, options) => {
+    if (url.endsWith('/gui-inspections')) {
+      const data = JSON.parse(options.body);
+      return new Response(JSON.stringify({ site_id: url.split('/')[3], engine: data.engine, index_status: data.index_status, last_checked_at: data.observed_at, next_check_at: null, error_message: null }));
+    }
     if (options.method === 'POST') return new Response(JSON.stringify({ site_id: url.split('/')[3], engine: JSON.parse(options.body).engine, index_status: 'unknown', last_checked_at: null, next_check_at: null, error_message: null }));
     if (url.startsWith('/api/sites/a1/pages')) return new Response(JSON.stringify({ items: [{ id: 'p1', client_id: 'a', parent_site_id: 'a1', name: '등록 글', url: 'https://a.example/post', is_active: true }] }));
   }, '', chromeClient);
@@ -502,7 +512,8 @@ test('전체 조회는 Bing 사이트를 바꿔 URL들을 검사하고 API 저�
     assert.deepEqual(events, [['select', 'https://a.example/'], ['inspect', 'https://a.example/'], ['inspect', 'https://a.example/post'], ['select', 'https://second.example/'], ['inspect', 'https://second.example/']]);
     assert.match(app.document.querySelector('#client-inspection-progress').textContent, /Bing GUI 관측 3\/3건/);
     assert.equal(app.document.querySelectorAll('.inspection-result-status.partial').length, 3);
-    assert.equal(app.document.querySelectorAll('.inspection-result-status.observed').length, 3);
+    assert.equal(app.document.querySelectorAll('.inspection-result-status.succeeded').length, 6);
+    assert.equal(app.calls.filter((call) => call.url.endsWith('/gui-inspections')).length, 3);
     assert.match(app.document.querySelector('.inspection-results-table').textContent, /Bing API/);
     assert.match(app.document.querySelector('.inspection-results-table').textContent, /Bing GUI/);
   } finally { await delay(0); app.dom.window.close(); }
