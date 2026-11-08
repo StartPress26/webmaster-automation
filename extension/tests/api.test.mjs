@@ -6,7 +6,7 @@ import { defaultApiBase } from '../src/runtime.ts';
 
 test('설치된 확장 프로그램은 프록시 없이 로컬 API 경로로 목록을 요청한다', async () => {
   const api = createApi(async (url) => {
-    assert.equal(url, 'http://127.0.0.1:8000/clients?limit=100&offset=0');
+    assert.equal(url, 'http://127.0.0.1:18001/clients?limit=100&offset=0');
     return json({ items: [] });
   }, defaultApiBase('chrome-extension:'));
   assert.deepEqual(await api.listClients(), []);
