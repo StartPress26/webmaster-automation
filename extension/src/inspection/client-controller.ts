@@ -136,7 +136,65 @@ export function createClientInspectionController(
     await runTasks(false);
   }
 
-  // API 관측 이후 선택한 네이버 탭에서 사이트별 GUI 검사를 순차 실행합니다.
+  // 네이버 탭의 사이트·URL은 순차 검사하며 오류는 네이버 작업에만 반영합니다.
+  async function runNaverGui(includeGui: boolean): Promise<void> {
+    const naverTasks = state.tasks.filter((task): boolean => task.engine === 'naver' && task.status === 'queued');
+    const naverTab = state.tabs.naver?.selected;
+
+    if (!state.cancelRequested && includeGui && naverTab && naverTasks.length) {
+      try {
+        await naverAutomation(naverTab, naverTasks.map((task) => task.target), {
+          signal: naverAbort.signal,
+          onStart: (target): void => {
+            updateTask(`${target.id}:naver`, { status: 'running', message: '네이버 사이트·검사 화면 확인 및 새 결과 대기' });
+          },
+          onResult: (target, observation): void => {
+            updateTask(`${target.id}:naver`, { status: 'observed', guiObservation: observation,
+              message: `${observation.indexStatus === 'indexed' ? '색인됨 확인' : '수집 확인 안 됨 · 검사 결과 없음(수집 데이터 또는 URL 확인 필요)'} · 새 GUI 응답 관측 · DB 미저장` });
+          },
+        });
+      } catch (error: unknown) {
+        if (!state.cancelRequested) update({ tasks: state.tasks.map((task): ClientInspectionTask => task.engine === 'naver' && ['queued', 'running'].includes(task.status)
+          ? { ...task, status: task.status === 'running' ? 'failed' : 'blocked', message: error instanceof NaverAutomationError ? error.message : '네이버 탭 연결 또는 화면 전환에 실패해 중단했습니다.' } : task) });
+      }
+    } else if (!state.cancelRequested) {
+      update({ tasks: state.tasks.map((task): ClientInspectionTask => task.engine === 'naver' && task.status === 'queued'
+        ? { ...task, status: 'gui_required', message: 'GUI 탭 준비를 건너뛰어 네이버 조회는 실행하지 않았습니다.' } : task) });
+    }
+  }
+
+  // Bing 탭의 사이트·URL은 순차 검사하며 오류는 Bing GUI 작업에만 반영합니다.
+  async function runBingGui(includeGui: boolean): Promise<void> {
+    const bingTasks = state.tasks.filter((task): boolean => task.engine === 'bing' && task.route === 'gui' && task.status === 'queued');
+    const bingTab = state.tabs.bing?.selected;
+
+    if (!state.cancelRequested && includeGui && bingTab && bingTasks.length) {
+      try {
+        await bingAutomation(bingTab, bingTasks.map((task) => task.target), {
+          signal: bingAbort.signal,
+          onStart: (target): void => {
+            updateTask(`${target.id}:bing-gui`, { status: 'running', message: 'Bing 사이트·검사 URL 확인 및 새 결과 대기' });
+          },
+          onStage: (target, stage): void => {
+            const message = `Bing ${BING_STAGE_LABELS[stage]} 중`;
+            updateTask(`${target.id}:bing-gui`, { message });
+          },
+          onResult: (target, observation): void => {
+            const status = { indexed: '색인됨 확인', not_indexed: '색인되지 않음', unknown: '색인 상태 미확인' }[observation.indexStatus];
+            updateTask(`${target.id}:bing-gui`, { status: 'observed', guiObservation: observation, message: `${status} · 새 GUI 응답 관측 · DB 미저장` });
+          },
+        });
+      } catch (error: unknown) {
+        if (!state.cancelRequested) update({ tasks: state.tasks.map((task): ClientInspectionTask => task.engine === 'bing' && task.route === 'gui' && ['queued', 'running'].includes(task.status)
+          ? { ...task, status: task.status === 'running' ? 'failed' : 'blocked', message: error instanceof BingAutomationError ? error.message : 'Bing 탭 연결 또는 화면 전환에 실패해 중단했습니다.' } : task) });
+      }
+    } else if (!state.cancelRequested) {
+      update({ tasks: state.tasks.map((task): ClientInspectionTask => task.engine === 'bing' && task.route === 'gui' && task.status === 'queued'
+        ? { ...task, status: 'gui_required', message: 'GUI 탭 준비를 건너뛰어 Bing 색인 조회는 실행하지 않았습니다.' } : task) });
+    }
+  }
+
+  // API는 순차 조회하고 두 GUI는 동시에 시작해 모두 종료된 후 실행을 마칩니다.
   async function runTasks(includeGui: boolean): Promise<void> {
     update({ phase: 'running', message: '확정된 대상의 API 조회를 순차 실행합니다.' });
 
@@ -173,60 +231,8 @@ export function createClientInspectionController(
       }
     }
 
-    const naverTasks = state.tasks.filter((task): boolean => task.engine === 'naver' && task.status === 'queued');
-    const naverTab = state.tabs.naver?.selected;
-
-    if (!state.cancelRequested && includeGui && naverTab && naverTasks.length) {
-      try {
-        await naverAutomation(naverTab, naverTasks.map((task) => task.target), {
-          signal: naverAbort.signal,
-          onStart: (target): void => {
-            update({ message: `네이버: ${target.siteName} 사이트 선택·URL 검사 중` });
-            updateTask(`${target.id}:naver`, { status: 'running', message: '네이버 사이트·검사 화면 확인 및 새 결과 대기' });
-          },
-          onResult: (target, observation): void => {
-            updateTask(`${target.id}:naver`, { status: 'observed', guiObservation: observation,
-              message: `${observation.indexStatus === 'indexed' ? '색인됨 확인' : '수집 확인 안 됨 · 검사 결과 없음(수집 데이터 또는 URL 확인 필요)'} · 새 GUI 응답 관측 · DB 미저장` });
-          },
-        });
-      } catch (error: unknown) {
-        if (!state.cancelRequested) update({ tasks: state.tasks.map((task): ClientInspectionTask => task.engine === 'naver' && ['queued', 'running'].includes(task.status)
-          ? { ...task, status: task.status === 'running' ? 'failed' : 'blocked', message: error instanceof NaverAutomationError ? error.message : '네이버 탭 연결 또는 화면 전환에 실패해 중단했습니다.' } : task) });
-      }
-    } else if (!state.cancelRequested) {
-      update({ tasks: state.tasks.map((task): ClientInspectionTask => task.engine === 'naver' && task.status === 'queued'
-        ? { ...task, status: 'gui_required', message: 'GUI 탭 준비를 건너뛰어 네이버 조회는 실행하지 않았습니다.' } : task) });
-    }
-
-    const bingTasks = state.tasks.filter((task): boolean => task.engine === 'bing' && task.route === 'gui' && task.status === 'queued');
-    const bingTab = state.tabs.bing?.selected;
-
-    if (!state.cancelRequested && includeGui && bingTab && bingTasks.length) {
-      try {
-        await bingAutomation(bingTab, bingTasks.map((task) => task.target), {
-          signal: bingAbort.signal,
-          onStart: (target): void => {
-            update({ message: `Bing: ${target.siteName} 사이트 선택·URL 검사 중` });
-            updateTask(`${target.id}:bing-gui`, { status: 'running', message: 'Bing 사이트·검사 URL 확인 및 새 결과 대기' });
-          },
-          onStage: (target, stage): void => {
-            const message = `Bing ${BING_STAGE_LABELS[stage]} 중`;
-            update({ message: `${message} · ${target.siteName}` });
-            updateTask(`${target.id}:bing-gui`, { message });
-          },
-          onResult: (target, observation): void => {
-            const status = { indexed: '색인됨 확인', not_indexed: '색인되지 않음', unknown: '색인 상태 미확인' }[observation.indexStatus];
-            updateTask(`${target.id}:bing-gui`, { status: 'observed', guiObservation: observation, message: `${status} · 새 GUI 응답 관측 · DB 미저장` });
-          },
-        });
-      } catch (error: unknown) {
-        if (!state.cancelRequested) update({ tasks: state.tasks.map((task): ClientInspectionTask => task.engine === 'bing' && task.route === 'gui' && ['queued', 'running'].includes(task.status)
-          ? { ...task, status: task.status === 'running' ? 'failed' : 'blocked', message: error instanceof BingAutomationError ? error.message : 'Bing 탭 연결 또는 화면 전환에 실패해 중단했습니다.' } : task) });
-      }
-    } else if (!state.cancelRequested) {
-      update({ tasks: state.tasks.map((task): ClientInspectionTask => task.engine === 'bing' && task.route === 'gui' && task.status === 'queued'
-        ? { ...task, status: 'gui_required', message: 'GUI 탭 준비를 건너뛰어 Bing 색인 조회는 실행하지 않았습니다.' } : task) });
-    }
+    if (includeGui && !state.cancelRequested) update({ message: '네이버·Bing 작업 탭에서 GUI 조회를 병렬 실행합니다.' });
+    await Promise.all([runNaverGui(includeGui), runBingGui(includeGui)]);
 
     if (state.cancelRequested) { finishCancelled(); return; }
 

@@ -7,6 +7,101 @@ import { createWorkTabController } from '../src/tabs/controller.ts';
 import { renderClientInspection } from '../src/inspection/client-view.ts';
 import { ApiError } from '../src/errors.ts';
 
+// 외부 탭 없이 엔진별 작업을 준비하는 컨트롤러를 만듭니다.
+function parallelController(naver, bing) {
+  const tabs = [{ tabId: 1, engine: 'naver' }, { tabId: 2, engine: 'bing' }];
+  const factory = () => createWorkTabController({ list: async () => tabs, check: async (tab) => ({ connected: true, tab }), available: () => true });
+  return createController(fakeApi(), undefined, { naver: factory(), bing: factory() }, naver, bing);
+}
+
+// 테스트에서 엔진의 완료 순서를 직접 제어합니다.
+function deferred() {
+  let resolve;
+  const promise = new Promise((done) => { resolve = done; });
+  return { promise, resolve: () => resolve() };
+}
+
+// 병렬 제어 검증에 필요한 엔진별 정상 관측을 만듭니다.
+function guiResult(engine, item) {
+  const common = { siteUrl: item.siteUrl, targetUrl: item.url, queriedAt: new Date().toISOString(), readAt: new Date().toISOString(), targetVerified: true };
+  return engine === 'naver'
+    ? { ...common, kind: 'verified_gui', indexStatus: 'unknown', message: 'URL 검사 결과가 없습니다.' }
+    : { ...common, kind: 'verified_bing_gui', indexStatus: 'indexed', message: '색인화되었습니다.', reason: null, canonicalUrl: null, crawlStatus: 'unknown', lastCrawledText: null };
+}
+
+// Promise 대기 중인 컨트롤러의 상태를 타이머 없이 확인합니다.
+async function flushController() {
+  for (let i = 0; i < 80; i += 1) await Promise.resolve();
+}
+
+test('네이버가 끝나기 전에 Bing도 시작하고 두 엔진이 모두 끝나야 전체 완료한다', async () => {
+  const started = []; const gates = { naver: deferred(), bing: deferred() };
+  const runner = (engine) => async (_, targets, hooks) => {
+    started.push(engine); hooks.onStart(targets[0]);
+    await gates[engine].promise;
+    for (const target of targets) hooks.onResult(target, guiResult(engine, target));
+  };
+  const controller = parallelController(runner('naver'), runner('bing'));
+  const running = controller.start('a', 'A');
+  try {
+    await flushController();
+    assert.deepEqual(started, ['naver', 'bing']);
+    gates.bing.resolve(); await flushController();
+    assert.equal(controller.getState().phase, 'running');
+    assert.equal(controller.getState().tasks.filter((task) => task.engine === 'bing' && task.status === 'observed').length, 3);
+    gates.naver.resolve(); await running;
+    assert.equal(controller.getState().phase, 'finished');
+    assert.equal(controller.getState().tasks.filter((task) => task.status === 'observed').length, 6);
+  } finally { gates.naver.resolve(); gates.bing.resolve(); await running; }
+});
+
+test('GUI 한쪽 실패는 다른 엔진의 진행·취소 신호·결과에 영향을 주지 않는다', async () => {
+  for (const failing of ['naver', 'bing']) {
+    const gate = deferred(); const started = [];
+    const runner = (engine) => async (_, targets, hooks) => {
+      started.push(engine); hooks.onStart(targets[0]);
+      if (engine === failing) throw new Error('해당 엔진 실패');
+      await gate.promise;
+      assert.equal(hooks.signal.aborted, false);
+      for (const target of targets) hooks.onResult(target, guiResult(engine, target));
+    };
+    const controller = parallelController(runner('naver'), runner('bing'));
+    const running = controller.start('a', 'A');
+    try {
+      await flushController();
+      assert.deepEqual(started, ['naver', 'bing']);
+      assert.equal(controller.getState().phase, 'running');
+      assert.equal(controller.getState().tasks.filter((task) => task.engine === failing && task.route === 'gui' && task.status === 'failed').length, 1);
+      gate.resolve(); await running;
+      assert.equal(controller.getState().tasks.filter((task) => task.route === 'gui' && task.status === 'observed').length, 3);
+      assert.equal(controller.getState().phase, 'finished');
+    } finally { gate.resolve(); await running; }
+  }
+});
+
+test('전체 취소는 동시에 실행 중인 두 GUI에 전달하고 이미 완료된 관측은 보존한다', async () => {
+  const signals = [];
+  const runner = (engine) => async (_, targets, hooks) => {
+    signals.push(hooks.signal);
+    hooks.onStart(targets[0]); hooks.onResult(targets[0], guiResult(engine, targets[0]));
+    hooks.onStart(targets[1]);
+    await new Promise((_, reject) => hooks.signal.addEventListener('abort', () => reject(new Error('취소')), { once: true }));
+    assert.fail('취소 이후 다음 조회 금지');
+  };
+  const controller = parallelController(runner('naver'), runner('bing'));
+  const running = controller.start('a', 'A');
+  try {
+    await flushController();
+    assert.equal(signals.length, 2);
+    controller.cancel(); await running;
+    assert.ok(signals.every((signal) => signal.aborted));
+    assert.equal(controller.getState().phase, 'cancelled');
+    assert.equal(controller.getState().tasks.filter((task) => task.status === 'observed').length, 2);
+    assert.equal(controller.getState().tasks.filter((task) => task.route === 'gui' && task.status === 'cancelled').length, 4);
+    assert.equal(controller.getState().tasks.filter((task) => task.status === 'partial' || task.status === 'succeeded').length, 6);
+  } finally { controller.cancel(); await running; }
+});
+
 // API 실행 검증에서는 엔진별 탭 하나를 실제 탭 모듈로 자동 준비합니다.
 function createClientInspectionController(api, changed) {
   const tabs = ['naver', 'bing'].map((engine, index) => ({ tabId: index + 1, engine, title: engine, url: `https://${engine}.example/` }));
