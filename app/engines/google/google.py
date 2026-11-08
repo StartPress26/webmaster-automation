@@ -122,6 +122,7 @@ class GoogleEngine:
         # 등록 후 입력 오류로 중단되지 않도록 외부 요청 전에 두 주소를 확인합니다.
         self._validate_http_url(site_url, site_root=True)
         self._validate_http_url(sitemap_url)
+
         site = self.get_site(site_url)
 
         if site is None:
@@ -137,6 +138,7 @@ class GoogleEngine:
 
             # 설치 완료 입력은 사용자 의사 표시이며 실제 소유 확인은 Google이 수행합니다.
             self.verify_ownership(site_url)
+
             verified_site = self.get_site(site_url)
             if verified_site is None or verified_site.permission_level != "siteOwner":
                 raise GoogleEngineError(
@@ -144,16 +146,19 @@ class GoogleEngine:
                 )
 
         self.submit_sitemap(site_url, sitemap_url)
+
         return GoogleSiteSetup(site_url=site_url, status="completed")
 
     # 정확한 Search Console 속성을 조회하고, 현재 계정에서 찾지 못하면 None을 반환합니다.
     def get_site(self, site_url: str) -> GoogleSite | None:
         self._validate_property(site_url)
+
         response = self._request(
             "get", f"{SITES_ENDPOINT}/{quote(site_url, safe='')}", allow_not_found=True
         )
         if response is None:
             return None
+
         data = self._read_json(response)
         permission_level = data.get("permissionLevel")
         if (
@@ -164,6 +169,7 @@ class GoogleEngine:
             )
         ):
             raise GoogleEngineError("response", "Google 사이트 응답 필드를 확인하세요.", 200)
+
         return GoogleSite(site_url=site_url, permission_level=permission_level)
 
     # Search Console에 속성을 추가하며, 소유 확인이나 색인 완료를 의미하지 않습니다.
@@ -172,11 +178,13 @@ class GoogleEngine:
         self._request(
             "put", f"{SITES_ENDPOINT}/{quote(site_url, safe='')}", success_codes=(200, 204)
         )
+
         return True
 
     # FILE 방식 인증 파일 정보를 발급하며, 파일 생성·배포는 호출자가 담당합니다.
     def get_verification_token(self, site_url: str) -> GoogleVerificationFile:
         self._validate_http_url(site_url, site_root=True)
+
         response = self._request(
             "post", f"{VERIFICATION_ENDPOINT}/token",
             json={
@@ -192,6 +200,7 @@ class GoogleEngine:
             or re.fullmatch(r"google[A-Za-z0-9_-]+\.html", token) is None
         ):
             raise GoogleEngineError("response", "Google 인증 파일 응답이 올바르지 않습니다.", 200)
+
         return GoogleVerificationFile(
             file_name=token,
             file_content=f"google-site-verification: {token}",
@@ -201,6 +210,7 @@ class GoogleEngine:
     # 사용자가 인증 파일을 배포한 뒤 Google에 실제 소유 확인을 요청합니다.
     def verify_ownership(self, site_url: str) -> GoogleOwnership:
         self._validate_http_url(site_url, site_root=True)
+
         response = self._request(
             "post", f"{VERIFICATION_ENDPOINT}/webResource",
             params={"verificationMethod": "FILE"},
@@ -217,6 +227,7 @@ class GoogleEngine:
             or not resource_id.strip()
         ):
             raise GoogleEngineError("response", "Google 소유 확인 응답이 올바르지 않습니다.", 200)
+
         # 다른 소유자의 이메일 등 불필요한 개인정보는 결과에 포함하지 않습니다.
         return GoogleOwnership(site_url=site_url, resource_id=resource_id)
 
@@ -224,11 +235,14 @@ class GoogleEngine:
     def submit_sitemap(self, site_url: str, sitemap_url: str) -> bool:
         self._validate_property(site_url)
         self._validate_http_url(sitemap_url)
+
         endpoint = (
             f"{SITES_ENDPOINT}/{quote(site_url, safe='')}/sitemaps/"
             f"{quote(sitemap_url, safe='')}"
         )
+
         self._request("put", endpoint, success_codes=(200, 204))
+
         return True
 
     # =============================================================
@@ -239,6 +253,7 @@ class GoogleEngine:
     def inspect_url(self, site_url: str, page_url: str) -> GoogleUrlInspection:
         self._validate_http_url(site_url, site_root=True)
         self._validate_http_url(page_url)
+
         # URL-prefix 속성의 정확한 접두어를 사용하며 경계 밖의 URL은 호출 전에 거부합니다.
         if not page_url.startswith(site_url):
             raise ValueError("검사할 URL은 지정한 Search Console 속성 아래에 있어야 합니다.")
@@ -251,6 +266,7 @@ class GoogleEngine:
         inspection = data.get("inspectionResult")
         if not isinstance(inspection, dict):
             raise GoogleEngineError("response", "Google URL 검사 응답이 올바르지 않습니다.", 200)
+
         index = inspection.get("indexStatusResult")
         if not isinstance(index, dict):
             raise GoogleEngineError("response", "Google 색인 검사 결과가 없습니다.", 200)
@@ -260,6 +276,7 @@ class GoogleEngine:
         last_crawl_time = self._parse_crawl_time(crawl_value)
         # 제외·오류 판정은 수집 이력보다 우선하며 번역된 coverageState로 분류하지 않습니다.
         status: IndexStatus = "unknown"
+
         if verdict == "PASS":
             status = "indexed"
         elif verdict in ("FAIL", "NEUTRAL"):
@@ -293,6 +310,7 @@ class GoogleEngine:
             return None
         if not isinstance(value, str) or not value.strip():
             raise GoogleEngineError("response", "Google URL 검사 응답 필드가 올바르지 않습니다.", 200)
+
         return value
 
     # 마지막 크롤링 시각을 시간대가 있는 UTC 시각으로 변환합니다.
@@ -300,12 +318,14 @@ class GoogleEngine:
     def _parse_crawl_time(value: str | None) -> datetime | None:
         if value is None:
             return None
+
         try:
             parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
             if parsed.tzinfo is None:
                 raise ValueError
         except ValueError:
             raise GoogleEngineError("response", "Google 크롤링 시각 형식이 올바르지 않습니다.", 200) from None
+
         return parsed.astimezone(timezone.utc)
 
     # 속성 식별자의 공백·제어 문자를 거부하며, 정확한 속성 주소는 변경하지 않습니다.
@@ -318,6 +338,7 @@ class GoogleEngine:
     @staticmethod
     def _validate_http_url(url: str, *, site_root: bool = False) -> None:
         GoogleEngine._validate_property(url)
+
         try:
             parsed = urlsplit(url)
             valid = (
@@ -329,6 +350,7 @@ class GoogleEngine:
             )
         except ValueError:
             valid = False
+
         if not valid:
             raise ValueError(
                 "FILE 인증은 /로 끝나는 HTTP·HTTPS 사이트 주소가 필요합니다."
@@ -347,10 +369,13 @@ class GoogleEngine:
         params: dict[str, str] | None = None,
     ) -> Response | None:
         options: dict[str, object] = {"timeout": REQUEST_TIMEOUT, "allow_redirects": False}
+
         if json is not None:
             options = options | {"json": json}
+
         if params is not None:
             options = options | {"params": params}
+
         try:
             response = getattr(self._session, method)(endpoint, **options)
         except Timeout:
@@ -367,6 +392,7 @@ class GoogleEngine:
             raise GoogleEngineError("authentication", "Google 인증을 확인하세요.", 401)
         if response.status_code == 429:
             raise GoogleEngineError("rate_limit", "Google 호출 한도를 초과했습니다.", 429)
+
         if response.status_code == 403:
             # Google은 일부 호출 제한도 403으로 반환하므로 권한 오류와 구분합니다.
             try:
@@ -384,11 +410,15 @@ class GoogleEngine:
                 )
             except (ValueError, AttributeError, TypeError):
                 limited = False
+
             if limited:
                 raise GoogleEngineError("rate_limit", "Google 호출 한도를 초과했습니다.", 403)
+
             raise GoogleEngineError("permission", "Google 사이트 접근 권한을 확인하세요.", 403)
+
         if response.status_code not in success_codes:
             raise GoogleEngineError("response", "Google API 요청이 실패했습니다.", response.status_code)
+
         return response
 
     # 성공 응답의 JSON 객체를 검증하고 응답 원문은 오류에 포함하지 않습니다.
@@ -396,10 +426,13 @@ class GoogleEngine:
     def _read_json(response: Response | None) -> dict[str, object]:
         if response is None:
             raise GoogleEngineError("response", "Google API 응답이 없습니다.")
+
         try:
             data = response.json()
         except ValueError:
             raise GoogleEngineError("response", "Google API 응답 형식이 올바르지 않습니다.", response.status_code) from None
+
         if not isinstance(data, dict):
             raise GoogleEngineError("response", "Google API 응답 필드를 확인하세요.", response.status_code)
+
         return data

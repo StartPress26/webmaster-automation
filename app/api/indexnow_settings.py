@@ -28,6 +28,7 @@ class PrivateValidationRoute(APIRoute):
                     {name: item[name] for name in ("loc", "type", "msg")}
                     for item in error.errors()
                 ]) from None
+
         return private_handler
 
 

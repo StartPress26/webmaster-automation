@@ -36,8 +36,10 @@ async def test_google_runs_in_worker(monkeypatch: pytest.MonkeyPatch) -> None:
 # 인증 오류 원문이 밖으로 전달되지 않고 인증 실패로 분류돼야 합니다.
 async def test_google_auth_error_is_sanitized(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(runner, "load_credentials", Mock(side_effect=GoogleAuthError("secret-token")))
+
     with pytest.raises(GoogleEngineError) as error:
         await runner.inspect_url("google", "https://example.com/", "https://example.com/post")
+
     assert error.value.code == "authentication"
     assert "secret-token" not in str(error.value)
 
@@ -47,9 +49,12 @@ async def test_google_auth_reason_is_preserved(monkeypatch: pytest.MonkeyPatch) 
     from app.services.inspection import _public_error
 
     monkeypatch.setattr(runner, "load_credentials", Mock(side_effect=GoogleAuthError("secret-token", code="refresh_failed")))
+
     with pytest.raises(GoogleEngineError) as error:
         await runner.inspect_url("google", "https://example.com/", "https://example.com/post")
+
     public = _public_error(error.value)
+
     assert public.code == "GOOGLE_AUTH_REFRESH_FAILED"
     assert "갱신" in str(public)
     assert "secret-token" not in str(public)
@@ -63,16 +68,22 @@ async def test_google_session_cleanup(monkeypatch: pytest.MonkeyPatch, fail: boo
     credentials = Mock()
     adapter = MagicMock()
     adapter.__enter__.return_value = adapter
+
     if fail:
         adapter.inspect_url.side_effect = GoogleEngineError("timeout", "시간 초과")
+
     monkeypatch.setattr(runner, "load_credentials", Mock(return_value=credentials))
+
     factory = Mock(return_value=adapter)
+
     monkeypatch.setattr(runner, "GoogleEngine", factory)
+
     if fail:
         with pytest.raises(GoogleEngineError):
             await runner.inspect_url("google", "https://example.com/", "https://example.com/post")
     else:
         await runner.inspect_url("google", "https://example.com/", "https://example.com/post")
+
     factory.assert_called_once_with(credentials)
     adapter.__exit__.assert_called_once()
 
@@ -81,9 +92,11 @@ async def test_google_session_cleanup(monkeypatch: pytest.MonkeyPatch, fail: boo
 async def test_bing_client_cleanup(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("BING_API_KEY", raising=False)
     monkeypatch.setattr(runner, "dotenv_values", Mock(return_value={"BING_API_KEY": "test-key"}))
+
     result = Mock()
     adapter = Mock(inspect_url=AsyncMock(return_value=result))
     factory = Mock(return_value=adapter)
+
     monkeypatch.setattr(runner, "BingEngine", factory)
     assert await runner.inspect_url("bing", "https://example.com/", "https://example.com/post") is result
     assert factory.call_args.kwargs["api_key"] == "test-key"

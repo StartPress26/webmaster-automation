@@ -14,6 +14,7 @@ def test_credentials_cannot_leave_secrets_directory(tmp_path: Path) -> None:
         "GOOGLE_OAUTH_CLIENT_FILE=public/client.json\n"
         "GOOGLE_TOKEN_FILE=.secrets/token.json\n"
     )
+
     with pytest.raises(ValueError, match=".secrets"):
         load_settings(tmp_path)
 
@@ -32,6 +33,7 @@ def test_non_google_token_endpoint_is_rejected() -> None:
 
 def test_saved_token_is_private_even_when_replacing_existing_file(tmp_path: Path) -> None:
     path = tmp_path / "token.json"
+
     path.write_text("old")
     path.chmod(0o644)
     save_token(path, '{"token":"test-only"}')
@@ -45,8 +47,11 @@ def test_sites_summary_excludes_other_sites_and_error_body() -> None:
         {"siteUrl": "https://private.example/", "permissionLevel": "siteOwner"},
     ]}
     summary = summarize_sites(data, 200)
+
     assert len(summary["target_matches"]) == 1
     assert "private.example" not in json.dumps(summary)
+
     failure = summarize_sites({"error": {"message": "test-secret"}}, 403)
+
     assert failure["api_request_succeeded"] is False
     assert "test-secret" not in json.dumps(failure)

@@ -30,6 +30,7 @@ async def execute_admin(database_url: str, statement: str) -> None:
         database_url, isolation_level="AUTOCOMMIT", poolclass=NullPool,
         hide_parameters=True,
     )
+
     try:
         async with engine.connect() as connection:
             await connection.execute(text(statement))
@@ -48,7 +49,9 @@ def migrated_database_url() -> Iterator[str]:
     database_url = make_url(admin_url).set(database=database_name).render_as_string(
         hide_password=False
     )
+
     asyncio.run(execute_admin(admin_url, f'CREATE DATABASE "{database_name}"'))
+
     try:
         command.upgrade(migration_config(database_url), "head")
         yield database_url
@@ -67,9 +70,11 @@ async def db_session(migrated_database_url: str) -> AsyncIterator[AsyncSession]:
     engine = create_async_engine(
         migrated_database_url, poolclass=NullPool, hide_parameters=True
     )
+
     try:
         async with engine.connect() as connection:
             transaction = await connection.begin()
+
             try:
                 async with AsyncSession(bind=connection, expire_on_commit=False) as session:
                     yield session

@@ -23,8 +23,10 @@ test('대시보드는 선택 고객사 ID로 GET만 요청한다', async () => {
     assert.equal(url, '/api/clients/client%2Fid/dashboard');
     assert.equal(options.method, 'GET');
     assert.equal(options.body, undefined);
+
     return new Response(JSON.stringify({ client: { id: 'client/id' }, sites: [] }));
   });
+
   assert.equal((await api.getDashboard('client/id')).client.id, 'client/id');
   assert.equal(calls, 1);
 });
@@ -39,13 +41,16 @@ test('예시 통계는 고객사·메인페이지를 분리하며 Bing 크롤링
     { propertyId: 'b1', path: '/other', engine: 'google', status: 'indexed' },
   ];
   const data = demoDashboard(client, properties, rows);
+
   assert.equal(data.site_count, 2);
   assert.equal(data.page_count, 2);
   assert.equal(data.google.indexed, 1);
   assert.equal(data.google.unknown, 1);
   assert.equal(data.bing.crawled, 1);
   assert.equal(data.bing.indexed, 0);
+
   const html = dashboardContent(data);
+
   assert.ok(html.includes('&lt;블로그 A&gt;'));
   assert.ok(!html.includes('<블로그 A>'));
   assert.ok(!html.includes('b.example'));

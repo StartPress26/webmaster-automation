@@ -33,6 +33,7 @@ def run_migrations_offline() -> None:
         compare_type=True,
         compare_server_default=True,
     )
+
     with context.begin_transaction():
         context.run_migrations()
 
@@ -44,6 +45,7 @@ def do_run_migrations(connection: Connection) -> None:
         compare_type=True,
         compare_server_default=True,
     )
+
     with context.begin_transaction():
         context.run_migrations()
 
@@ -52,6 +54,7 @@ async def run_async_migrations() -> None:
     engine = create_async_engine(
         get_database_url(), poolclass=pool.NullPool, hide_parameters=True
     )
+
     try:
         async with engine.connect() as connection:
             await connection.run_sync(do_run_migrations)

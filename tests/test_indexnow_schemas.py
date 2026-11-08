@@ -21,8 +21,10 @@ def _request(**updates: object) -> IndexNowRequest:
 def test_validation_returns_deduplicated_copy() -> None:
     urls = ("https://example.com/", "http://example.com/post", "https://example.com/")
     request = _request(urls=urls)
+
     assert request.urls == urls[:2]
     assert len(urls) == 3
+
     with pytest.raises(ValidationError, match="frozen_instance"):
         request.host = "other.test"
 
@@ -105,6 +107,7 @@ def test_key_directory_allows_descendants() -> None:
         host="EXAMPLE.COM", key_location="https://example.com/blog/key.txt",
         urls=("https://example.com/blog/post?q=1", "https://example.com/blog/%ED%95%9C%EA%B8%80"),
     )
+
     assert len(request.urls) == 2
 
 
@@ -191,8 +194,11 @@ def test_invalid_result_is_rejected() -> None:
 def test_schema_types_and_extra_fields() -> None:
     with pytest.raises(ValidationError):
         _request(host=123)
+
     with pytest.raises(ValidationError):
         _request(key=12345678)
+
     with pytest.raises(ValidationError):
         _request(unexpected=True)
+
     assert REQUEST.key not in repr(REQUEST)

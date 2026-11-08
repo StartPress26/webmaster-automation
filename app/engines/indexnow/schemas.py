@@ -36,12 +36,14 @@ def _parse_url(value: str) -> SplitResult:
         or re.search(r"%(?![0-9a-fA-F]{2})", value)
     ):
         raise ValueError("URL에 공백·제어 문자·역슬래시·프래그먼트·잘못된 인코딩을 넣을 수 없습니다.")
+
     try:
         parsed = urlsplit(value)
         AnyHttpUrl(value)
         port = parsed.port
     except (ValueError, ValidationError):
         raise ValueError("유효한 HTTP 또는 HTTPS URL이 필요합니다.") from None
+
     if (
         parsed.scheme not in {"http", "https"}
         or not parsed.hostname
@@ -50,6 +52,7 @@ def _parse_url(value: str) -> SplitResult:
         or (port is not None and port == 0)
     ):
         raise ValueError("인증정보 없는 HTTP 또는 HTTPS URL이 필요합니다.")
+
     # 서버별 경로 해석 차이로 키 적용 범위가 달라지는 모호한 경로는 거부합니다.
     path = unquote(parsed.path)
     if (
@@ -59,6 +62,7 @@ def _parse_url(value: str) -> SplitResult:
         or any(ord(character) < 32 or ord(character) == 127 for character in path)
     ):
         raise ValueError("URL 경로에 상위·현재 경로 참조나 모호한 인코딩을 넣을 수 없습니다.")
+
     return parsed
 
 
@@ -103,12 +107,14 @@ class IndexNowRequest(BaseModel):
     @model_validator(mode="after")
     def validate_scope(self) -> Self:
         key_directory = "/"
+
         if self.key_location is not None:
             location = urlsplit(self.key_location)
             if location.hostname != self.host.lower():
                 raise ValueError("키 파일은 host와 같은 호스트에 있어야 합니다.")
             if not location.path or location.path.endswith("/") or "?" in self.key_location:
                 raise ValueError("key_location에는 쿼리 없는 키 파일 주소를 입력하세요.")
+
             key_directory = unquote(location.path).rsplit("/", 1)[0] + "/"
 
         for url in self.urls:
@@ -117,6 +123,7 @@ class IndexNowRequest(BaseModel):
                 raise ValueError("모든 URL은 host와 같은 호스트에 속해야 합니다.")
             if not (unquote(parsed.path) or "/").startswith(key_directory):
                 raise ValueError("URL이 키 파일 디렉터리의 적용 범위를 벗어났습니다.")
+
         return self
 
 
@@ -136,4 +143,5 @@ class IndexNowResult(BaseModel):
             return "accepted"
         if self.http_status == 202:
             return "key_pending"
+
         return "failed"

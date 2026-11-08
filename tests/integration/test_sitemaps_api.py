@@ -46,6 +46,7 @@ async def sitemap_api(migrated_database_url: str) -> AsyncIterator[tuple[AsyncCl
 
     app.dependency_overrides[get_db] = database
     app.dependency_overrides[get_submitter] = dependency
+
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as api:
             yield api, submitter
@@ -58,10 +59,12 @@ async def sitemap_api(migrated_database_url: str) -> AsyncIterator[tuple[AsyncCl
 # 기존 API로 서로 독립적인 고객사와 메인 사이트를 만듭니다.
 async def create_site(api: AsyncClient, root: str = "https://example.com/") -> str:
     client = (await api.post("/clients", json={"name": "사이트맵 테스트"})).json()
+
     response = await api.post("/sites", json={
         "client_id": client["id"], "name": "블로그", "url": root, "owner_type": "client",
     })
     assert response.status_code == 201
+
     return response.json()["id"]
 
 
@@ -71,6 +74,7 @@ async def test_submit_success(
     sitemap_api: tuple[AsyncClient, AsyncMock], migrated_database_url: str, engine_name: str,
 ) -> None:
     api, submitter = sitemap_api
+
     site_id = await create_site(api)
     response = await api.post(f"/sites/{site_id}/sitemaps", json={
         "engine": engine_name, "sitemap_url": "https://example.com/sitemap.xml",
@@ -81,7 +85,9 @@ async def test_submit_success(
         "sitemap_url": "https://example.com/sitemap.xml", "status": "accepted",
     }
     submitter.assert_awaited_once_with(engine_name, "https://example.com/", "https://example.com/sitemap.xml")
+
     db = create_async_engine(migrated_database_url, poolclass=NullPool)
+
     try:
         async with AsyncSession(db) as session:
             assert await session.scalar(select(EngineRegistration).where(
@@ -97,15 +103,19 @@ async def test_submit_success(
 # 없는 ID와 개별 글은 메인 사이트 제출 대상으로 허용하지 않습니다.
 async def test_reject_missing_and_page(sitemap_api: tuple[AsyncClient, AsyncMock]) -> None:
     api, submitter = sitemap_api
+
     site_id = await create_site(api)
+
     page = (await api.post(f"/sites/{site_id}/pages", json={
         "name": "글", "url": "https://example.com/post", "notify_search_engines": False,
     })).json()["page"]
+
     for target in (str(uuid4()), page["id"]):
         response = await api.post(f"/sites/{target}/sitemaps", json={
             "engine": "google", "sitemap_url": "https://example.com/sitemap.xml",
         })
         assert response.status_code == 404
+
     submitter.assert_not_awaited()
 
 
@@ -114,13 +124,17 @@ async def test_reject_inactive(
     sitemap_api: tuple[AsyncClient, AsyncMock], migrated_database_url: str,
 ) -> None:
     api, submitter = sitemap_api
+
     site_id = await create_site(api)
+
     db = create_async_engine(migrated_database_url, poolclass=NullPool)
+
     try:
         async with AsyncSession(db) as session, session.begin():
             await session.execute(update(Site).where(Site.id == UUID(site_id)).values(is_active=False))
     finally:
         await db.dispose()
+
     response = await api.post(f"/sites/{site_id}/sitemaps", json={
         "engine": "bing", "sitemap_url": "https://example.com/sitemap.xml",
     })
@@ -157,6 +171,7 @@ async def test_path_scope(
     sitemap_api: tuple[AsyncClient, AsyncMock], engine_name: str, url: str, expected: int,
 ) -> None:
     api, submitter = sitemap_api
+
     site_id = await create_site(api, "https://example.com/blog/")
     assert (await api.post(f"/sites/{site_id}/sitemaps", json={
         "engine": engine_name, "sitemap_url": url,
@@ -175,8 +190,11 @@ async def test_upstream_errors(
     error_type: type[GoogleEngineError] | type[BingEngineError], code: str, status: int,
 ) -> None:
     api, submitter = sitemap_api
+
     site_id = await create_site(api)
+
     submitter.side_effect = error_type(code, "secret-token")
+
     response = await api.post(f"/sites/{site_id}/sitemaps", json={
         "engine": "google" if error_type is GoogleEngineError else "bing",
         "sitemap_url": "https://example.com/sitemap.xml",

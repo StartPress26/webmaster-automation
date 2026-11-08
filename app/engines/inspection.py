@@ -34,6 +34,7 @@ def _inspect_google(site_url: str, page_url: str) -> GoogleUrlInspection:
             credentials = load_credentials()
     except GoogleAuthError as error:
         raise GoogleInspectionAuthError(error) from None
+
     with GoogleEngine(credentials) as engine:
         return engine.inspect_url(site_url, page_url)
 
@@ -43,7 +44,9 @@ async def inspect_url(engine: InspectionEngine, site_url: str, page_url: str) ->
     if engine == "google":
         # thread에서 실행해서 비동기적으로 처리
         return await run_in_threadpool(_inspect_google, site_url, page_url)
+
     values = dotenv_values(PROJECT_ROOT / ".env") | dict(os.environ)
+
     async with httpx.AsyncClient() as client:
         adapter = BingEngine(api_key=values.get("BING_API_KEY") or "", http_client=client)
         return await adapter.inspect_url(site_url, page_url)

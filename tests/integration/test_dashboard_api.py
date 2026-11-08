@@ -27,8 +27,11 @@ async def dashboard_api(db_session: AsyncSession) -> AsyncIterator[AsyncClient]:
         yield db_session
 
     application = FastAPI()
+
     application.include_router(router)
+
     application.dependency_overrides[get_db] = test_db
+
     async with AsyncClient(transport=ASGITransport(app=application), base_url="http://test") as client:
         yield client
 
@@ -76,8 +79,10 @@ async def test_dashboard_counts_pages_without_cross_client_or_engine_duplicates(
     fourth = await add_target(db_session, client, site)
     fifth = await add_target(db_session, client, site)
     foreign = await add_target(db_session, other, other_site)
+
     checked = datetime(2026, 11, 4, 1, tzinfo=timezone.utc)
     later = datetime(2026, 11, 4, 2, tzinfo=timezone.utc)
+
     await add_status(db_session, first, "google", "indexed", checked, "최근 인증 오류")
     await add_status(db_session, first, "bing", "crawled", later)
     await add_status(db_session, second, "google", "not_indexed", checked)
@@ -90,7 +95,9 @@ async def test_dashboard_counts_pages_without_cross_client_or_engine_duplicates(
 
     response = await dashboard_api.get(f"/clients/{client}/dashboard")
     assert response.status_code == 200
+
     result = response.json()
+
     assert result["client"]["id"] == str(client)
     assert result["site_count"] == 2
     assert result["page_count"] == 5
@@ -102,7 +109,9 @@ async def test_dashboard_counts_pages_without_cross_client_or_engine_duplicates(
     assert result["bing"]["indexed"] == 0
     assert result["bing"]["crawled"] == 1
     assert result["bing"]["unknown"] == 4
+
     empty = next(row for row in result["sites"] if row["id"] == str(empty_site))
+
     assert empty["page_count"] == 0
     assert empty["google"]["unknown"] == 0
     assert empty["google"]["last_checked_at"] is None

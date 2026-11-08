@@ -51,15 +51,18 @@ def get_token_path(root: Path) -> Path:
     configured = values.get("GOOGLE_TOKEN_FILE")
     if not configured:
         raise GoogleAuthError("GOOGLE_TOKEN_FILE 설정이 필요합니다.", code="configuration_missing")
+
     path = (root / configured).resolve()
     if not path.is_relative_to((root / ".secrets").resolve()):
         raise GoogleAuthError("토큰 파일은 .secrets 폴더 내부에 있어야 합니다.", code="invalid_token_path")
+
     return path
 
 
 # 갱신한 토큰을 소유자만 읽을 수 있는 임시 파일에 쓴 뒤 원자적으로 교체합니다.
 def save_credentials(path: Path, credentials: Credentials) -> None:
     temporary_path: Path | None = None
+
     try:
         with tempfile.NamedTemporaryFile(
             mode="w", encoding="utf-8", dir=path.parent, delete=False
@@ -68,6 +71,7 @@ def save_credentials(path: Path, credentials: Credentials) -> None:
             temporary.write(credentials.to_json())
             temporary.flush()
             os.fsync(temporary.fileno())
+
         os.replace(temporary_path, path)
     except Exception:
         raise GoogleAuthError("갱신된 Google 토큰을 저장하지 못했습니다.", code="token_save_failed") from None
@@ -79,6 +83,7 @@ def save_credentials(path: Path, credentials: Credentials) -> None:
 # 토큰과 권한을 검증하고, 만료된 토큰은 갱신·저장한 뒤 인증 객체를 반환합니다.
 def load_credentials(root: Path = PROJECT_ROOT) -> Credentials:
     path = get_token_path(root)
+
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -86,6 +91,7 @@ def load_credentials(root: Path = PROJECT_ROOT) -> Credentials:
 
     if not isinstance(data, dict) or data.get("token_uri") != TOKEN_ENDPOINT:
         raise GoogleAuthError("Google 공식 토큰 엔드포인트가 필요합니다.", code="token_format")
+
     try:
         credentials = Credentials.from_authorized_user_info(data)
     except Exception:
@@ -97,14 +103,17 @@ def load_credentials(root: Path = PROJECT_ROOT) -> Credentials:
     if not credentials.valid:
         if not credentials.refresh_token:
             raise GoogleAuthError("갱신 토큰이 없습니다. 다시 로그인·동의하세요.", code="refresh_token_missing")
+
         try:
             with Session() as session:
                 credentials.refresh(partial(Request(session=session), timeout=30))
         except Exception:
             # Google 오류 본문에 토큰이 포함될 수 있으므로 원본 예외를 전달하지 않습니다.
             raise GoogleAuthError("Google 토큰 갱신에 실패했습니다. 연결 또는 재인증을 확인하세요.", code="refresh_failed") from None
+
         if not credentials.valid or not credentials.has_scopes(SCOPES):
             raise GoogleAuthError("갱신된 Google 인증 또는 접근 권한이 유효하지 않습니다.", code="token_invalid")
+
         save_credentials(path, credentials)
 
     return credentials

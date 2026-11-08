@@ -23,6 +23,7 @@ def make_request(**changes: object) -> SiteCreate:
 # 이름 공백 제거와 선택 입력의 기본값을 확인합니다.
 def test_site_create_defaults_and_name() -> None:
     request = make_request(name="  유담 블로그  ")
+
     assert request.name == "유담 블로그"
     assert request.cms_type is None
     assert request.can_edit_site is None
@@ -78,9 +79,12 @@ def test_invalid_urls_are_rejected(url: str) -> None:
 def test_url_byte_limit_after_normalization() -> None:
     prefix = "https://example.com/"
     at_limit = prefix + "a" * (2048 - len(prefix))
+
     assert len(make_request(url=at_limit).url.encode("utf-8")) == 2048
+
     with pytest.raises(ValidationError):
         make_request(url=at_limit + "a")
+
     # 한글 경로는 URL 인코딩 후 길이가 늘어나므로 변환한 주소를 기준으로 검사합니다.
     with pytest.raises(ValidationError):
         make_request(url=prefix + "가" * 300)
@@ -96,6 +100,7 @@ def test_site_read_from_orm_and_list_serialization() -> None:
     )
     site = SiteRead.model_validate(row)
     payload = SiteList(items=(site,)).model_dump(mode="json")
+
     assert payload["items"][0]["id"] == str(row.id)
     assert payload["items"][0]["target_type"] == "site"
     assert payload["items"][0]["parent_site_id"] is None

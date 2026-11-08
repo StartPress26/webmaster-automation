@@ -37,12 +37,15 @@ async def test_publication_submits_once(
         key_location="https://example.com/key.txt",
     )
     handler = Mock(return_value=httpx.Response(http_status))
+
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
         result = await notify_published_urls(request, client=IndexNowClient(http_client))
         assert not http_client.is_closed
 
     handler.assert_called_once()
+
     sent = handler.call_args.args[0]
+
     assert sent.method == "POST"
     assert str(sent.url) == "https://api.indexnow.org/indexnow"
     assert json.loads(sent.content) == {
@@ -66,7 +69,9 @@ async def test_publication_propagates_transport_error_without_retry(
         host="example.com", key="a1b2c3d4", urls=("https://example.com/new-post",),
     )
     handler = Mock(side_effect=error_type("테스트 통신 오류"))
+
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
         with pytest.raises(expected_error):
             await notify_published_urls(request, client=IndexNowClient(http_client))
+
     handler.assert_called_once()

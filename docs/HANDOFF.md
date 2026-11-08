@@ -1,8 +1,177 @@
 # 작업 인계 문서
 
-## 현재 인계 요약 — 2026-11-05 / Asia/Seoul
+## 현재 인계 요약 — 2026-11-08 / Asia/Seoul
 
-**새 세션은 이 절과 맨 아래 2026-11-05 마지막 상태를 먼저 읽는다. 이전 날짜의 배포 미구현·PR 미병합·현재 브랜치 설명은 과거 기록이다. 기존 API의 상세 계약은 아래 2026-11-04 기능 요약을 참고한다.**
+**새 세션은 이 절과 맨 아래 `마지막 상태 — 최신 / 2026-11-08`을 먼저 읽는다. GUI 결과 저장·운영 인증 연결은 아래 최신 코드 상태가 기준이다. 과거 절의 main·8000 포트·GUI 미구현·DB 미저장 설명은 당시 기록이며, 기존 API 계약과 Lightsail 배포 자료만 필요한 범위에서 참고한다.**
+
+### 현재 목표와 확정 범위
+
+- 한국어로 간결하게 설명하며 사용자가 코드를 이해하고 따라갈 수 있게 지도한다. 안내 문구 정리·인계 문서 갱신·세 커밋 계획을 마친 뒤, 사용자가 **커밋·push·PR 생성까지 후속 요청**했다. 이번 작업에서 병합·Lightsail 배포는 수행하지 않는다.
+- **로그인된 기존 네이버·Bing 탭에서 사이트별 URL을 검사하는 Chrome 확장 기능을 구현했다. API 조회 후 네이버와 Bing GUI를 병렬 실행하며, 각 엔진 안에서는 사이트·URL을 순차 처리한다.**
+- Google은 기존 공식 API, Bing은 기존 크롤링 API와 GUI 색인 관측을 함께 사용한다. 과거의 Google·Bing API 전용 방향 중 Bing GUI 제한은 이번 사용자 요청으로 변경됐다.
+- 신규 도메인 등록·소유권 확인 UI/API, 자동 로그인·인증정보 수집, 주기 실행은 이번 범위에 포함하지 않는다. 사이트맵 제출은 별도 버튼으로 유지하고 `/pages` 등록에 자동 연결하지 않는다.
+- **네이버·Bing GUI 결과는 `POST /sites/{id}/gui-inspections`로 기존 `site_engine_statuses`에 요약 상태를 저장한다. 같은 대상·엔진의 최신 관측 하나만 유지하며 Bing API·GUI도 같은 행을 갱신한다. 신규 테이블·마이그레이션은 없다.**
+- 저장한 상태·시각은 기존 `GET /sites/{id}/inspections`에서 읽는다. 실행 목록과 GUI 판정 원문·대표 URL·제외 사유 등의 상세 관측은 관리 탭 메모리에만 남는다. 네이버 대시보드 집계는 아직 지원하지 않는다.
+- 사용자의 별도 블로그 canonical 문제는 `nextjs-notion-starter-kit`에서 별도로 처리하기로 했다. 이 프로젝트는 Bing에 표시된 대표 URL·제외 사유를 읽으며 사이트 코드 수정·대표 URL 자동 재검사·색인 요청은 수행하지 않는다.
+
+### 완료된 작업
+
+- [x] 설치된 확장과 Vite 개발 화면의 API 연결을 Mac SSH 터널 `127.0.0.1:18001`로 통일했다.
+- [x] 검색엔진 작업 탭 조회·엔진별 선택·재검증·현재 실행 범위 고정 기능을 구현했다.
+- [x] 고객사의 활성 메인 사이트와 등록 글 전체 목록을 확정한 뒤 API·GUI 작업을 생성하고 실행한다.
+- [x] 네이버의 기존 결과 읽기 미리보기와 사이트·URL별 새 GUI 검사 기능을 구분해 구현했다.
+- [x] Bing의 사이트 선택·URL 검사·색인 결과 및 상세 필드 판독과 단계별 오류 안내를 구현했다.
+- [x] Bing API 크롤링 저장과 Bing GUI 관측을 작업 표의 별도 행으로 분리했다.
+- [x] 네이버와 Bing의 병렬 시작·실패 분리·전체 취소·양쪽 완료 대기를 구현했다.
+- [x] GUI 관측의 대상·부모·고객사·URL·시각 검증과 최신 상태 저장 API를 구현했다.
+- [x] 확장이 URL별 GUI 저장 응답을 기다린 뒤 다음 URL을 조회하도록 연결했다. 저장 실패는 관측을 보존하고 해당 엔진의 후속 조회를 중단한다.
+- [x] 운영 Compose에 Google 토큰 경로·Bing API 키 전달과 토큰 폴더 연결을 추가했다. `.env.prod.example`은 두 인증 변수의 빈 입력란을 제공하고 준비 방법·권한은 이 문서에 정리했다. 서버 적용은 아직 확인하지 않았다.
+- [x] 대시보드의 네이버 연결 준비 중 문구와 README의 GUI 결과 DB 미저장 설명을 현재 구현에 맞게 수정했다.
+
+### 현재 Git과 보존할 변경
+
+- 현재 브랜치: **`feat/webmaster-tab-automation`**. GUI 저장 기능 기준 커밋은 **`f8f049fa822af4952f1e233264dfed3fd834b7f5`**, 이 문서 커밋 직전 HEAD는 **`c305c58`**이다. 문서 자체를 포함한 최종 HEAD는 `git log -1`로 확인한다.
+- 후속 요청에서 `git fetch origin`과 기존 PR 조회를 완료했다. 시작 시 로컬·원격 작업 브랜치는 `f8f049f`로 일치했고 원격 main보다 9커밋 앞서 있으며 누락된 main 커밋은 없었다. 같은 작업 브랜치의 기존 PR은 없었다. 아래 세 커밋을 완료한 뒤 작업 브랜치 push·main 대상 PR 생성을 진행한다. 최종 원격 HEAD와 PR 상태는 생성 후 다시 조회한다.
+
+| 커밋 | 완료 내용 |
+|---|---|
+| `58805ce` | 확장·Vite의 Lightsail SSH 터널 `18001` 연결 |
+| `f72d54a` | 검색엔진 작업 탭 조회와 선택 |
+| `ba43bf9` | 고객사 전체 색인 조회와 네이버 GUI 자동화 연결 |
+| `6242f86` | 기능 단위 소스·테스트 줄 간격 정리 |
+| `b0706f0` | Bing GUI 조회·메뉴 보임 판정 수정·단계별 오류 표시 |
+| `499f553` | 네이버·Bing GUI 병렬 실행 |
+| `b7dffc3` | 소스 줄바꿈·들여쓰기 정리 |
+| `ee93834` | GUI 검사 결과 저장 API |
+| `f8f049f` | 확장의 GUI 결과 저장 연결 |
+| `cf71d18` | GUI 조회·저장 안내와 README 정리 |
+| `c305c58` | 운영 Google·Bing 인증 전달과 토큰 폴더 연결 |
+
+- 안내·운영 인증 네 파일은 위 두 커밋으로 완료했고, 이 인계 문서를 세 번째 커밋으로 묶는다. 기존 `extension/src/engines/bing/.gitkeep`는 미추적 상태로 보존하고 커밋에서 제외한다.
+- 과거 미커밋으로 기록한 Python 두 파일은 현재 작업 트리에 차이가 없다. main/master 직접 push 금지, 새 브랜치는 `feat/`·`fix/` 등 사용, 한국어 `[타입] 제목`, Git 작성자 유지, 공동 작성자 트레일러 없음.
+
+### 전체 조회와 탭 준비
+
+1. 대시보드 또는 색인 상태 화면의 **고객사 전체 색인 조회**를 누르면 시작 고객사와 실행 ID를 고정한다. 화면의 블로그·엔진 필터는 저장 결과 필터이며 전체 실행 대상을 제한하지 않는다.
+2. 활성 메인 사이트와 활성 등록 글의 목록을 모두 읽고 고객사·부모 관계를 검증한다. 수집 실패 시 일부 대상만 실행하지 않고 시작을 중단한다. 메인 URL도 검사 대상에 포함된다.
+3. 네이버·Bing 작업 탭을 먼저 준비한다. 엔진별 후보가 하나면 자동 선택·재검증하고, 여러 개면 사용자 선택을 기다린다. 닫힘·주소 변경·로딩·메모리 해제·시크릿 탭 등을 구분한다. 탭 준비 성공은 로그인·선택 사이트·조회 성공을 뜻하지 않는다.
+4. 탭 준비를 건너뛰는 **탭 없이 API 조회만 계속**은 GUI 작업을 미실행으로 남긴다. 일반 웹 개발 화면에는 Chrome 탭 API가 없어 설치된 확장에서 GUI 기능을 사용한다.
+5. Google·Bing API 요청은 기존 순차 실행을 유지한다. 그 후 `Promise.all([runNaverGui(...), runBingGui(...)])`로 두 GUI를 동시에 시작한다. 각 GUI 내부의 사이트·URL 순서는 유지한다.
+6. 한 GUI의 인증·탭·조회·저장 실패는 해당 엔진의 남은 작업을 중단하고 다른 GUI는 계속한다. 저장 실패·응답 미확인은 조회 실패와 구분하고 이미 얻은 관측을 보존한다. 전체 취소는 두 `AbortController`에 전달하며 이미 보낸 API·GUI 저장 요청의 응답은 확인한다. 아직 보내지 않은 저장 요청과 다음 조회는 실행하지 않는다. 자동 재전송하지 않는다.
+7. 양쪽 GUI가 모두 종료돼야 전체 완료한다. 전체 진행 문구는 병렬 실행을 표시하고 세부 단계는 각 엔진의 결과 행에 표시한다. 관리 탭을 닫거나 새로고침하면 실행 목록·GUI 상세 관측을 잃지만 DB에 저장한 요약 상태는 남으며 자동 재개하지 않는다.
+
+### 네이버 구현과 판정
+
+- 흐름: `/console/board` → 목표 메인 사이트 링크 선택 → 사이트 요약 확인 → `/console/site/check/inspection` → URL별 입력·확인·새 결과 판독 → 목록 복귀 → 다음 사이트.
+- `engines/naver/content.ts`는 같은 확장의 관리 페이지가 보낸 고정 명령만 수신한다. `requestId`·문서 토큰·작업 중복·취소를 확인하고 프레임 0에서 작업한다. 쿠키·비밀번호·토큰·페이지 원문은 수집하지 않는다.
+- 자동 검사 관측은 `kind='verified_gui'`, `targetVerified=true`이며 사이트·URL·새 결과와 시각을 다시 검증한다. 이전 결과의 제거·교체·문구 변화가 없으면 새 응답으로 인정하지 않는다.
+- **`문서가 성공적으로 색인됐습니다. 해당 문서를 검색할 수 있습니다.` → `indexed`**. **`URL 검사 결과가 없습니다.` → `unknown`**, 화면에서는 **수집 확인 안 됨**으로 안내한다. 실제 미수집·미색인으로 확정하지 않는다.
+- **현재 네이버 결과 읽기**는 기존 화면을 읽는 미리보기다. `kind='visible_preview'`, `targetVerified=false`로 자동 검사와 구분한다. 입력 URL과 기존 결과의 연결·새 조회 여부를 입증하지 못하므로 상태·전체 완료 건수·DB를 변경하지 않는다.
+- 실제 문제와 수정: 로딩 중 Chrome 탭의 URL 정보가 잠시 비는 것을 즉시 `page_changed`로 판정하던 대기를 수정했다. 탭 소실·다른 출처 등은 계속 중단한다. `error_outline` 등 아이콘 텍스트가 결과 제목에 섞여 정확 일치가 실패하던 판독도 수정했다. 아이콘·숨김 장식을 제거하고 실제 판정 문구를 비교한다.
+- 네이버 대기 기준: 화면·명령 약 18초, 새 DOM 결과 기본 15초, 기존 결과 읽기 기본 8초. 자동 재조회·수집 요청 버튼 클릭은 하지 않는다.
+
+### Bing 구현과 판정
+
+- 흐름: 처음 `/webmasters/urlinspection` 준비 → 왼쪽 위 사이트 메뉴 → 일치하는 실제 사이트 링크 확인 → 선택한 탭을 그 링크로 이동 → 사이트·검사 화면 준비 확인 → 메인·글 URL별 검사 → 다음 사이트 선택.
+- 메뉴의 표시 이름 대신 링크의 `siteUrl`로 비교한다. 같은 Bing 출처·URL 검사 경로·정확한 사이트인지 콘텐츠 스크립트와 실행 모듈에서 재검증한 뒤 `chrome.tabs.update`로 이동한다. 합성 링크 클릭 호출만으로 사이트 선택 성공을 가정하지 않는다.
+- 핵심 선택자: `userSeletedSite`, `userSitesList`, `data-tag="urlInspectionInput"`, `inspectBtn`, `BingdexTab`, `urlInspectionIndexCard`, `urlInspectionIndexDetails`. React가 만드는 번호형 ID에는 의존하지 않는다. 로딩 표시는 실제 ID `inpsectionProgressTitle`을 사용한다.
+- **실제 중단 원인:** Fluent UI의 `ms-Layer` 부모는 `visibility:hidden`, `ms-Layer-content` 자식은 `visibility:visible`이다. 부모만 보고 메뉴 전체를 숨김으로 판정해 사이트 선택 메뉴에서 대기 초과가 발생했다. 현재는 대상의 최종 계산된 visibility를 확인하고 부모 체인은 `display:none`만 검사한다. 보이는 메뉴와 실제 숨김 메뉴의 회귀 테스트를 추가했다.
+- 메뉴가 먼저 생기고 항목이 나중에 로딩될 수 있어 최대 15초 기다린다. 화면 전환·명령 대기는 25초, 새 검사 결과 기본 대기는 20초다. **네이버가 먼저 대기한 시간은 Bing 제한 시간에 포함되지 않는다.**
+- 진행·시간 초과 단계: URL 검사 화면 준비 / 사이트 목록에서 항목 확인 / 사이트 선택 후 화면 전환 / 검사할 URL 입력 준비 / URL 검사 결과 확인 / 검사 후 사이트 확인. 공통 timeout 문구만으로 원인을 단정하지 말고 단계와 실제 화면을 대조한다.
+- 검사 중 표시·카드 교체·제목 변경 등 새 결과 증거와 사이트·입력 URL·결과 주소의 `urlToInspect` 일치를 확인한다. 이중 인코딩된 검사 주소를 처리하며 **Bing 색인** 탭의 결과만 읽는다. **라이브 URL·색인화 요청·정식 URL 검사 버튼은 누르지 않는다.**
+- 관측은 `kind='verified_bing_gui'`, `targetVerified=true`. 명시적 성공은 `indexed`, 명시적 미색인은 `not_indexed`, 낯선 문구는 `unknown`이다. 원문 판정·제외 사유·대표 URL·페이지 가져오기 성공·표시된 마지막 크롤링 시각·조회/판독 시각을 함께 읽는다.
+- URL 하나당 작업은 **Google API / 네이버 GUI / Bing API / Bing GUI**로 나눈다. Bing API는 `crawled|unknown`, Bing GUI는 `indexed|not_indexed|unknown`을 저장한다. DB에는 같은 대상·Bing 조합의 최신 상태 한 행만 남고 더 최신 API 관측이 GUI 판정을 갱신할 수도 있다. 작업 표는 두 작업과 GUI 관측·저장 건수를 구분한다.
+
+### 검증 결과와 남은 한계
+
+- 직전 전체 검수에서 **백엔드 691 passed(단위 531 + PostgreSQL 통합 160), 프론트 121 passed**, TypeScript 검사·Vite 빌드·운영 Compose 설정 검사·`git diff --check`가 통과했다. 통합 테스트는 UUID 이름의 임시 DB만 생성·삭제하고 개발 DB를 보존했다. 과거 검증 수치와 합산하지 않는다.
+- 이번 안내 문구 변경 후에도 **프론트 121 passed**, TypeScript·Vite 빌드·운영 Compose 설정·diff 검사가 통과했다. 백엔드 소스는 바꾸지 않았으므로 위 백엔드 수치는 직전 전체 검수 결과다.
+- 빌드는 관리 화면·백그라운드와 import 없는 IIFE `dist/naver-content.js`, `dist/bing-content.js`를 생성한다. 빌드 산출물은 커밋하지 않는다.
+- 네이버: 이전 비공개 실행 기록에 **설치된 확장에서 기존 결과 읽기 성공**이 있다(`2026-11-08-naver-reader-debug-d71f16c0.json`). 이후 자동 순회의 탭 URL 누락·결과 제목 판독 문제를 실제 화면에서 진단하고 코드·모의 테스트로 보완했다. 수정 후 여러 실제 사이트 전체 자동 순회 완료를 확인한 것으로 설명하지 않는다.
+- Bing: 사용자가 확장을 다시 로드해 조회를 시작했고, 에이전트가 실제 Bing 탭에서 **사이트 선택을 통과해 등록 글 URL의 색인 결과 카드에 도달한 것**을 확인했다. 여러 실제 사이트 간 전환·관리 화면의 최종 관측 건수와 DB 저장은 검증한 범위가 아니다.
+- **현재 HEAD의 네이버·Bing 실제 병렬 실행·여러 사이트 전체 순회·GUI 결과의 Lightsail DB 저장은 아직 미검증**이다. 탭·DOM·두 사이트 순회·취소·응답 불일치·URL별 저장 대기와 전체 화면 연결은 모의 테스트 및 임시 DB 통합 테스트로 검증했다.
+- 이 대화의 브라우저 도구는 `chrome-extension://` 접근을 보안 정책으로 차단했다. 확장 내부 버튼은 우회 조작하지 않고 사용자가 실행하도록 요청한 뒤 HTTPS 네이버/Bing 탭을 관찰했다. 도구 접근 제한과 제품의 조회 실패를 구분한다.
+- 실행 기록은 Git 제외된 `.secrets/bot_runs/`에 보존했다. Bing 기록: `bing-content-20261108.jsonl`, `bing-debug-20261108T055608373051.jsonl`, `bing-site-transition-20261108T060218513229.jsonl`. 실제 실행 전 `.cursor/rules/bot-execution-records.mdc`를 읽고 0700 디렉터리·0600 파일, 민감값·실제 입력·쿼리/프래그먼트 제외 규칙을 따른다.
+- 2026-11-04의 백엔드 650 passed와 Lightsail·DB 연결은 과거 검증이다. 이번 검수·인계에서는 원격 서버·운영 DB 상태를 다시 검증하거나 스키마를 바꾸지 않았다.
+
+### 실행 환경과 다음에 해야 할 작업
+
+- 설치된 확장의 API 기본값(`extension/src/runtime.ts`)과 Vite 프록시(`extension/vite.config.ts`)는 모두 `http://127.0.0.1:18001`이다. SSH 터널 이후 경로는 Lightsail `127.0.0.1:18000` → API 컨테이너 `8000`이다. 설치된 확장의 API가 여전히 Mac `8000`이라는 과거 설명은 현재 코드와 다르다.
+- Lightsail 운영·팀 배포 결정은 2026-11-05 기록을 유지한다. Google/Bing 운영 인증용 로컬 배포 설정은 아래와 같이 준비했다. 공개 HTTPS API·팀원 인증·고정 IP·외부 DB 백업은 별도 후속 작업이며 실제 운영 상태는 필요할 때 재조회한다.
+- Python은 기존 Miniconda `startpress`, `PYTHONNOUSERSITE=1` 원칙을 유지한다. `.venv` 재생성·`uv sync`·`uv run`을 사용하지 않는다. 확장 검증은 프로젝트 루트에서 다음 npm 스크립트를 사용한다.
+
+```bash
+npm --prefix extension test
+npm --prefix extension run check
+npm --prefix extension run build
+```
+
+1. **후속 요청의 Git 작업:** 아래 세 묶음의 커밋을 마무리하고 작업 브랜치에 push·main 대상 PR을 생성한다. 기존 PR이 없음을 확인했으며 완료 후 원격 PR의 head와 로컬 HEAD 일치 여부를 검증한다. main 직접 push나 요청 없는 병합을 하지 않는다.
+2. **병합 후 Lightsail 반영:** 서버의 main을 갱신하고 `.env.prod`·토큰 전용 폴더·컨테이너 쓰기 권한을 확인한 뒤 서버에서 컨테이너를 재생성한다. 로컬 파일 수정이나 Mac의 Docker 실행은 Lightsail 배포가 아니다.
+3. **배포 후 실검증:** 확장 새로고침 → 로그인된 네이버·Bing 탭 새로고침 → 관리 탭 다시 열기 → 고객사 전체 색인 조회. Google/Bing API 인증, 두 GUI의 동시 진행·사이트/URL 대응·오류 분리·전체 취소, 저장 완료 뒤 GET 재조회까지 확인한다. 실제 실행 기록과 모의 테스트 범위를 구분하고 검증 목적으로 색인 요청·사이트맵·IndexNow 제출을 반복하지 않는다.
+4. **후속 운영:** 네이버 대시보드 집계, 필요 시 GUI 상세 관측·출처·이력 저장 계약, 공개 HTTPS·팀원 인증·고정 IP·외부 백업/복구·인계 절차는 별도 요청 범위다. 이전 AI 로그인봇 실험을 자동 재개하지 않는다.
+
+### Google·Bing 인증과 Lightsail 배포 준비
+
+- Google은 API 키 대신 `.secrets/google-token.json`의 사용자 OAuth 인증을 사용한다. 기존 데스크톱 OAuth 클라이언트 JSON과 토큰의 클라이언트 정보가 일치하고 필요한 scope·refresh token이 있는 것을 확인했다. 운영 API는 토큰 JSON만 읽으며 최초 발급용 클라이언트 JSON을 별도로 서버에 올릴 필요는 없다.
+- 이번 대화의 실제 로컬 검증에서 Google 토큰 갱신과 파일 저장이 성공했고 Search Console 사이트 목록 GET이 HTTP 200, 접근 가능한 속성 1개였다. 인증정보·속성 URL은 출력하지 않았다. Google OAuth 앱의 Testing/Production 설정과 장기 유효성은 별도 확인이 필요하다.
+- 로컬 토큰은 `600`, 비공개 폴더는 `700`이었다. 클라이언트 JSON은 `644`에서 `600`으로 제한했다. 두 파일은 Git에서 제외되고 현재 추적되지 않는다. 인증파일·키·원본 오류를 커밋·로그·확장 빌드·Docker 이미지에 포함하지 않는다.
+- Bing은 서버 `.env.prod`의 `BING_API_KEY`를 사용한다. Bing Webmaster Tools 계정의 API 키이며 웹 로그인 쿠키·OAuth 토큰·IndexNow 공개 키와 별개다. 이번 대화에서 Bing 키의 실제 유효성은 확인하지 않았다.
+- **사용자는 Google 토큰의 Lightsail 전송을 완료했다고 확인했다.** 안내한 전용 위치는 `/home/ubuntu/webmaster-secrets/google-token.json`이다. 에이전트가 원격 파일·소유권·Bing 설정·컨테이너 상태를 직접 검증한 것은 아니다.
+- 로컬 `compose.prod.yaml`은 API에 기존 `DATABASE_URL`과 `GOOGLE_TOKEN_FILE`, `BING_API_KEY`를 전달한다. 두 인증 설정이 비어 있으면 기동 전에 실패하도록 했다. `.env.prod.example`의 두 입력란은 비어 있으며 실제 값과 토큰 경로는 서버 `.env.prod`에 채운다. 작업 중 예시 파일이 간결한 형태로 바뀐 것을 확인해 그 형식을 보존했다.
+- API의 bind mount는 서버 `/home/ubuntu/webmaster-secrets` → 컨테이너 `/srv/startpress/.secrets`다. `create_host_path: false`이므로 서버 폴더가 없으면 실패한다. Google 토큰의 원자적 교체를 위해 폴더 전체에 쓰기 권한이 필요하며 폴더·파일 소유자는 `10001:10001`, 권한은 각각 `700`·`600`이어야 한다. 다른 비밀파일·브라우저 실행 기록은 이 전용 폴더에 함께 넣지 않는다.
+- 서버 `.env.prod`에는 `GOOGLE_TOKEN_FILE=.secrets/google-token.json`과 실제 `BING_API_KEY`를 별도로 설정하고 기존 DB 설정을 유지한다. `.env.prod`는 배포 사용자 소유·권한 `600`으로 관리한다. 실제 값은 Git으로 배포하지 않는다.
+- 현재 API에는 팀원 인증이 없으므로 `127.0.0.1:18000` 바인딩과 SSH 터널 접근을 유지한다. `/health`는 앱 응답만 확인하며 DB·검색엔진 인증 성공을 보장하지 않는다.
+
+main 병합 후 **Lightsail SSH 터미널의 서버 프로젝트 폴더**에서 아래 순서로 실행한다. 서버 작업 트리에 변경이 있으면 먼저 보존·확인하고 `git pull`을 강행하지 않는다. 비공개 설정과 토큰 권한을 준비한 뒤 `up`을 실행한다.
+
+```bash
+cd ~/webmaster-automation
+git status --short
+git switch main
+git pull --ff-only origin main
+docker compose --env-file .env.prod -f compose.prod.yaml up -d --build api
+docker compose --env-file .env.prod -f compose.prod.yaml ps
+```
+
+### 커밋 구성 — 후속 사용자 요청으로 실행 중
+
+| 순서 | 커밋 메시지 | 포함 파일 |
+|---|---|---|
+| 1 | `[fix] GUI 조회와 저장 안내를 현재 동작에 맞게 수정` | `extension/src/dashboard.ts`, `extension/README.md` |
+| 2 | `[chore] 운영 Google·Bing 인증 환경변수와 토큰 폴더 연결` | `compose.prod.yaml`, `.env.prod.example` |
+| 3 | `[docs] GUI 저장과 운영 인증 배포 인계 갱신` | `docs/HANDOFF.md` |
+
+`ee93834`·`f8f049f`의 GUI 저장 기능은 이미 커밋돼 있으므로 재커밋하지 않는다. 첫 두 묶음은 각각 `cf71d18`·`c305c58`로 커밋했고 이 문서를 세 번째로 커밋한다. `.gitkeep`·실제 `.env.prod`·토큰·빌드 산출물은 제외한다. 사용자 요청 범위는 작업 브랜치 push·PR 생성까지이며 main 병합은 별도다.
+
+### 관련 파일
+
+| 위치 | 역할 |
+|---|---|
+| `extension/src/inspection/client-plan.ts` | 전체 대상 수집·API/GUI 작업 생성 |
+| `extension/src/inspection/client-controller.ts` | 실행 범위·API 순차/GUI 병렬 실행·취소·엔진별 실패 분리 |
+| `extension/src/inspection/client-view.ts`, `format.ts` | 진행·결과 표·API 저장과 GUI 관측 표시 |
+| `extension/src/tabs/{client,controller,view}.ts` | 공통 작업 탭 조회·선택·재검증·UI |
+| `extension/src/engines/naver/{content,observation,automation}.ts` | 메시지 수신·화면 판독·사이트별 순회 |
+| `extension/src/engines/naver/{preview,view}.ts` | 기존 결과 읽기·미리보기 표시 |
+| `extension/src/engines/bing/{content,observation,automation}.ts` | Bing 메시지·DOM·실제 사이트 링크·단계별 순회 |
+| `extension/src/main.ts` | 대시보드/검사 화면의 전체 조회·탭 선택·미리보기 이벤트 연결 |
+| `extension/public/manifest.json`, `extension/vite.content.config.ts`, `extension/package.json` | 콘텐츠 스크립트 권한·엔진별 IIFE 빌드 |
+| `extension/src/runtime.ts`, `extension/vite.config.ts` | SSH 터널 `18001` API 연결 |
+| `extension/tests/{client-inspection,workspace,naver-automation,naver-reader,bing-automation,work-tab}.test.mjs` | 실행·판독·병렬·취소·화면 연결 테스트 |
+| `extension/README.md` | 설치·조회·엔진별 동작·검증 한계 |
+| `app/api/inspections.py`, `app/schemas/inspection.py`, `app/services/gui_inspection.py` | GUI 저장 요청·대상·URL·시각 검증과 최신 관측 저장 |
+| `extension/src/api.ts`, `types.ts` | GUI 저장 요청·응답 계약 |
+| `extension/src/dashboard.ts` | 네이버 조회·저장 지원과 집계 미지원 안내 |
+| `compose.prod.yaml`, `.env.prod.example`, `Dockerfile` | 운영 인증 전달·토큰 폴더 연결·컨테이너 사용자 |
+
+## 과거 기록 안내
+
+아래 절의 현재·최신·다음 작업 표현과 새 세션 시작 문구는 각 작성 시점의 기록이다. 2026-11-08 병렬 실행까지만 다루던 기록도 GUI 저장 구현 이전 상태다. 현재 구현·배포 준비는 최상단 요약과 맨 아래 최신 상태를 우선한다.
+
+## 이전 인계 요약 — 2026-11-05 / Asia/Seoul
+
+**아래는 2026-11-05 당시 배포 기록이다. 최신 브랜치·포트·네이버/Bing GUI·다음 작업은 최상단 2026-11-08 요약을 따른다. 기존 배포 설정·SSH 터널 설명은 필요한 범위에서 참고한다.**
 
 ### 사용자의 작업 방식과 현재 목표
 
@@ -799,7 +968,7 @@ Notion은 요구사항·설계 자료다. 실제 구현·적용 여부는 이 �
 
 새 세션 시작 문구: **“docs/HANDOFF.md의 최신 인계 요약을 읽고 이어서 진행해줘. feat/chrome-extension에서 오류 코드·0003·pgAdmin까지 커밋했고 main 대상 PR 생성 작업을 진행했어. gh pr view와 git status로 최종 원격 상태를 먼저 확인해줘. DB·실제 검색엔진 상태를 테스트 목적으로 바꾸지 말고 신규 도메인 등록·소유 확인은 현재 범위에서 제외해.”**
 
-## 마지막 상태 — 최신 / 2026-11-05 Lightsail 배포와 확장 개발 인계
+## 과거 마지막 상태 — 2026-11-05 Lightsail 배포와 확장 개발 인계
 
 - 로컬은 `main`, HEAD `4444868`이며 PR #4까지 병합됐다. 기존 미커밋 Vite 변경은 프록시를 SSH 터널 포트 `18001`에 연결한다. 이 요청에서 `docs/HANDOFF.md`를 추가로 갱신했다.
 - 사용자가 시드니 Lightsail에 FastAPI·PostgreSQL을 배포하고 Mac의 SSH 터널과 대시보드에서 고객사 저장·새로고침 후 조회까지 확인했다. AWS 컨테이너는 계속 실행해두기로 했다.
@@ -809,3 +978,28 @@ Notion은 요구사항·설계 자료다. 실제 구현·적용 여부는 이 �
 - 현재 요청에서는 인계 문서를 업데이트하고 diff만 검증했다. 서버 기동·고객사 저장·복구의 사용자 확인과 이전 도구 검증 결과를 구분해 기록했다.
 
 새 세션에서는 **“docs/HANDOFF.md의 2026-11-05 최신 요약을 읽고 이어서 진행해줘. main 4444868에 배포 PR까지 병합했고 Lightsail API·DB와 SSH 터널 18001을 통한 저장·조회를 확인했어. 로컬 Vite의 미커밋 변경을 보존하고 최신 main 기준 확장 개발 브랜치에서 로그인된 네이버 탭 선택·결과 읽기부터 한 단계씩 진행해줘.”**라고 전달한다.
+
+
+## 과거 마지막 상태 — 2026-11-08 GUI 저장 구현 전 병렬 실행 인계
+
+- 브랜치 `feat/webmaster-tab-automation`, HEAD `499f553`이며 같은 원격 브랜치에 push 완료했다. 현재 원격 추적 HEAD도 일치한다. 실제 원격 상태는 다음 Git 작업 직전에 재확인한다.
+- 네이버 탭 선택·기존 결과 읽기·사이트별 URL 검사, Bing 사이트 선택·색인 결과/상세 판독과 메뉴 visibility 수정, API 처리 이후 두 GUI 병렬 실행까지 구현했다.
+- **Google/Bing API 관측은 기존 DB 저장, 네이버/Bing GUI 관측은 이번 실행 화면에만 보관한다.** GUI 관측을 DB 저장·대시보드 통계 갱신으로 설명하지 않는다.
+- 최신 검증은 프론트 102 passed·타입 검사·빌드 통과다. 실제 네이버 기존 결과 읽기와 Bing 단일 사이트의 등록 글 검사 결과 도달을 확인했다. 수정 후 네이버 전체 자동 순회·여러 실제 사이트 전환·두 GUI 실제 병렬 실행·관리 화면 최종 건수는 아직 미검증이다.
+- 두 API 연결 경로는 Mac `18001` SSH 터널로 통일했다. 원격 서버·DB의 현재 상태는 이번 인계에서 다시 조회하지 않았다.
+- 보존할 미커밋: Python 두 파일의 빈 줄 변경과 Bing 디렉터리의 `.gitkeep`. 이번 `docs/HANDOFF.md` 업데이트도 미커밋으로 남긴다. 소스·DB 변경·실제 외부 재조회 없이 문서와 Git 차이만 확인했다.
+- 다음 작업은 실제 병렬 실행 검증, 이후 요청 시 GUI 결과 저장 계약·API/DB 연결이다. 로그는 `.secrets/bot_runs/`에만 남기고 인증정보·실제 입력·쿼리를 기록하지 않는다.
+
+새 세션 시작 문구: **“docs/HANDOFF.md의 2026-11-08 최신 요약을 읽고 이어서 진행해줘. feat/webmaster-tab-automation의 499f553까지 push했고 네이버·Bing GUI를 병렬 실행해. GUI 관측은 DB 미저장이며 실제 두 엔진 병렬·여러 사이트 순회는 아직 미검증이야. 기존 미커밋 변경을 보존하고, 먼저 확장·작업 탭·관리 탭 빌드 상태와 로그인 상태를 확인해줘.”**
+
+## 마지막 상태 — 최신 / 2026-11-08 GUI 저장·운영 인증 준비와 최종 검수
+
+- 브랜치 `feat/webmaster-tab-automation`, GUI 저장 기능 기준은 `f8f049fa822af4952f1e233264dfed3fd834b7f5`다. 후속 요청으로 원격과 기존 PR을 확인하고 안내 정리 `cf71d18`·운영 인증 `c305c58`을 커밋했다. 이 문서 커밋 후 push·PR 생성까지 진행하며, 최종 HEAD·PR 상태는 Git/GitHub에서 조회한다.
+- 네이버·Bing의 GUI 요약 관측을 기존 `site_engine_statuses`에 저장하며 Bing API·GUI는 같은 대상의 최신 상태 한 행을 공유한다. 별도 테이블·새 마이그레이션은 없다. 실행 목록과 판정 원문·대표 URL·제외 사유 등 상세 관측은 화면 메모리에만 남는다.
+- 대시보드의 네이버 연결 준비 중 문구를 조회·저장 지원/집계 미지원으로 수정했고 README의 GUI DB 미저장 설명과 저장 API 목록을 정리했다.
+- 로컬 운영 Compose에 Google·Bing 환경변수 전달과 서버 토큰 전용 폴더 연결을 준비했다. 사용자는 Google 토큰 전송 완료를 확인했다. Google 로컬 토큰 갱신·Search Console GET HTTP 200은 실제 검증했지만 Lightsail 파일·권한·Bing 키·컨테이너 반영은 아직 미확인이다.
+- 직전 전체 검수는 백엔드 691 passed(단위 531 + 임시 PostgreSQL 통합 160), 프론트 121 passed·TypeScript·Vite 빌드·Compose 설정·diff 검사 통과였다. 이번 안내 문구 변경 후 프론트 검사 결과는 최상단 검증 절을 따른다. 실제 Chrome 전체 순회·병렬 GUI 저장·Lightsail 배포 검증은 수행하지 않았다.
+- 다섯 파일을 대시보드/README 안내 수정, 운영 인증 Compose/예시 설정, 인계 문서의 세 커밋으로 정리한다. 미추적 `extension/src/engines/bing/.gitkeep`와 모든 비밀파일은 제외한다. 사용자는 후속 요청에서 커밋·push·PR 생성을 승인했다. 병합·배포는 수행하지 않는다.
+- 다음 순서: 인계 문서 커밋 → push·PR 생성 후 최종 상태 검증 → main 병합 후 서버 main 갱신 → 서버 비공개 설정·토큰 권한 준비 → **서버 SSH 터미널에서** `docker compose --env-file .env.prod -f compose.prod.yaml up -d --build api` → API 인증·GUI 저장 후 GET 확인이다. 팀원 인증 전에는 localhost 바인딩과 SSH 터널을 유지한다.
+
+새 세션 시작 문구: **“docs/HANDOFF.md의 최상단과 맨 아래 최신 상태를 읽고 이어서 진행해줘. feat/webmaster-tab-automation에서 GUI 저장 기능과 안내·운영 인증 배포 설정을 커밋했고, 사용자가 push·PR 생성까지 요청했어. 실제 완료 상태는 git status·HEAD와 기존 PR을 조회해 확인해줘. Google 토큰은 로컬 인증 성공·서버 전송 사용자 확인까지이며 Lightsail 반영과 실제 전체 GUI 저장은 미검증이야. 키·토큰·.gitkeep는 제외하고 병합·서버 배포는 별도 요청 범위로 유지해줘.”**

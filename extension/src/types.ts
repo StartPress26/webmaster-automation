@@ -70,6 +70,15 @@ export interface InspectionRead {
   readonly error_code?: string | null;
 }
 
+export interface GuiInspectionCreate {
+  readonly engine: 'naver' | 'bing';
+  readonly site_url: string;
+  readonly target_url: string;
+  readonly index_status: 'indexed' | 'not_indexed' | 'unknown';
+  readonly queried_at: string;
+  readonly observed_at: string;
+}
+
 export interface SitemapSubmission {
   readonly main_site_id: string;
   readonly engine: 'google' | 'bing';

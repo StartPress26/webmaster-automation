@@ -29,8 +29,10 @@ async def test_request_payload(method: Literal["get", "post"]) -> None:
     params = {"siteUrl": "https://example.com/?lang=ko"}
     payload = {"siteUrl": "https://example.com/"}
     handler = Mock(return_value=httpx.Response(200, json={"d": None}))
+
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         engine = BingEngine(TEST_KEY, client)
+
         assert TEST_KEY not in repr(engine)
         result = await engine._request(
             method, "GetUrlInfo" if method == "get" else "AddSite",
@@ -38,7 +40,9 @@ async def test_request_payload(method: Literal["get", "post"]) -> None:
             json=payload if method == "post" else None,
         )
         assert not client.is_closed
+
     sent = handler.call_args.args[0]
+
     assert sent.url.host == "ssl.bing.com"
     assert sent.url.path.startswith("/webmaster/api.svc/json/")
     assert sent.url.params["apikey"] == TEST_KEY
@@ -47,12 +51,14 @@ async def test_request_payload(method: Literal["get", "post"]) -> None:
     assert sent.extensions["timeout"] == {
         "connect": 10.0, "read": 30.0, "write": 30.0, "pool": 30.0,
     }
+
     if method == "get":
         assert sent.url.params["siteUrl"] == params["siteUrl"]
         assert sent.content == b""
     else:
         assert json.loads(sent.content) == payload
         assert "siteUrl" not in sent.url.params
+
     assert params == {"siteUrl": "https://example.com/?lang=ko"}
     assert payload == {"siteUrl": "https://example.com/"}
     assert result is None
@@ -74,9 +80,11 @@ async def test_result_envelope(value: object) -> None:
 ])
 async def test_http_errors(status: int, code: ErrorCode) -> None:
     handler = Mock(return_value=httpx.Response(status, text=TEST_KEY))
+
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         with pytest.raises(BingEngineError) as error:
             await BingEngine(TEST_KEY, client)._request("get", "GetUserSites")
+
     assert error.value.code == code
     assert error.value.status_code == status
     assert TEST_KEY not in str(error.value)
@@ -93,9 +101,11 @@ async def test_api_errors(status: int, api_error: int, code: ErrorCode) -> None:
     handler = Mock(return_value=httpx.Response(
         status, json={"ErrorCode": api_error, "Message": TEST_KEY, "d": None},
     ))
+
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         with pytest.raises(BingEngineError) as error:
             await BingEngine(TEST_KEY, client)._request("get", "GetUserSites")
+
     assert error.value.code == code
     assert error.value.status_code == status
     assert TEST_KEY not in repr(error.value)
@@ -108,9 +118,11 @@ async def test_api_errors(status: int, api_error: int, code: ErrorCode) -> None:
 ])
 async def test_invalid_response(body: str) -> None:
     handler = Mock(return_value=httpx.Response(200, text=body))
+
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         with pytest.raises(BingEngineError) as error:
             await BingEngine(TEST_KEY, client)._request("get", "GetUserSites")
+
     assert error.value.code == "response"
 
 
@@ -122,9 +134,11 @@ async def test_invalid_response(body: str) -> None:
 ])
 async def test_transport_errors(error_type: type[httpx.RequestError], code: ErrorCode) -> None:
     handler = Mock(side_effect=error_type(TEST_KEY))
+
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         with pytest.raises(BingEngineError) as error:
             await BingEngine(TEST_KEY, client)._request("post", "AddSite")
+
     assert error.value.code == code
     assert error.value.status_code is None
     assert TEST_KEY not in "".join(traceback.format_exception(error.value))
@@ -136,11 +150,13 @@ async def test_redirect_is_not_followed() -> None:
     handler = Mock(return_value=httpx.Response(
         307, headers={"Location": "https://other.test/collect"},
     ))
+
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(handler), follow_redirects=True,
     ) as client:
         with pytest.raises(BingEngineError) as error:
             await BingEngine(TEST_KEY, client)._request("post", "AddSite")
+
     assert error.value.status_code == 307
     handler.assert_called_once()
 
@@ -149,9 +165,11 @@ async def test_redirect_is_not_followed() -> None:
 @pytest.mark.parametrize("key", ["", " ", "key\n", "key\x00", "key\x7f"])
 async def test_invalid_key(key: str) -> None:
     handler = Mock()
+
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         with pytest.raises(BingEngineError) as error:
             BingEngine(key, client)
+
     assert error.value.code == "authentication"
     handler.assert_not_called()
 
@@ -160,27 +178,33 @@ async def test_invalid_key(key: str) -> None:
 @pytest.mark.parametrize("operation", ["", "../AddSite", "https://other.test/", "AddSite?apikey=x"])
 async def test_invalid_operation(operation: str) -> None:
     handler = Mock()
+
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         with pytest.raises(ValueError):
             await BingEngine(TEST_KEY, client)._request("get", operation)
+
     handler.assert_not_called()
 
 
 # 요청 쿼리로 API 키를 덮어쓰는 시도를 거부합니다.
 async def test_key_override_is_rejected() -> None:
     handler = Mock()
+
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         with pytest.raises(ValueError):
             await BingEngine(TEST_KEY, client)._request("get", "GetUserSites", params={"APIKEY": "other"})
+
     handler.assert_not_called()
 
 
 # 취소는 통신 오류로 바꾸지 않고 호출자에게 전달합니다.
 async def test_cancellation_propagates() -> None:
     handler = Mock(side_effect=asyncio.CancelledError)
+
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         with pytest.raises(asyncio.CancelledError):
             await BingEngine(TEST_KEY, client)._request("get", "GetUserSites")
+
     handler.assert_called_once()
 
 
@@ -191,11 +215,15 @@ async def test_get_site_found(verified: bool) -> None:
         {"Url": "https://other.test/", "IsVerified": True},
         {"Url": "https://example.com/", "IsVerified": verified, "AuthenticationCode": "sample-code"},
     ]}))
+
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         result = await BingEngine(TEST_KEY, client).get_site("https://example.com/")
+
     assert result == BingSite("https://example.com/", verified, "sample-code")
     assert "sample-code" not in repr(result)
+
     sent = handler.call_args.args[0]
+
     assert sent.method == "GET"
     assert sent.url.path == "/webmaster/api.svc/json/GetUserSites"
     assert dict(sent.url.params) == {"apikey": TEST_KEY}
@@ -207,8 +235,10 @@ async def test_get_site_found(verified: bool) -> None:
 async def test_get_site_optional_code(extra: dict[str, object]) -> None:
     site = {"Url": "https://example.com/", "IsVerified": True} | extra
     handler = Mock(return_value=httpx.Response(200, json={"d": [site]}))
+
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         result = await BingEngine(TEST_KEY, client).get_site("https://example.com/")
+
     assert result == BingSite("https://example.com/", True)
 
 
@@ -239,9 +269,11 @@ async def test_get_site_not_found(sites: list[dict[str, object]]) -> None:
 ])
 async def test_get_site_invalid_response(data: object) -> None:
     handler = Mock(return_value=httpx.Response(200, json={"d": data}))
+
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         with pytest.raises(BingEngineError) as error:
             await BingEngine(TEST_KEY, client).get_site("https://example.com/")
+
     assert error.value.code == "response"
     assert error.value.status_code == 200
 
@@ -254,18 +286,22 @@ async def test_get_site_invalid_response(data: object) -> None:
 ])
 async def test_get_site_invalid_input(site_url: str) -> None:
     handler = Mock()
+
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         with pytest.raises(ValueError):
             await BingEngine(TEST_KEY, client).get_site(site_url)
+
     handler.assert_not_called()
 
 
 # 조회 오류는 사이트가 없다는 결과로 바꾸지 않습니다.
 async def test_get_site_api_error_propagates() -> None:
     handler = Mock(return_value=httpx.Response(400, json={"ErrorCode": 3}))
+
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         with pytest.raises(BingEngineError) as error:
             await BingEngine(TEST_KEY, client).get_site("https://example.com/")
+
     assert error.value.code == "authentication"
 
 
@@ -279,10 +315,14 @@ async def test_register_site_confirmed(verified: bool) -> None:
             "AuthenticationCode": "sample-code",
         }]}),
     ])
+
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         site = await BingEngine(TEST_KEY, client).register_site("https://example.com/")
+
     assert site == BingSite("https://example.com/", verified, "sample-code")
+
     registered, checked = (call.args[0] for call in handler.call_args_list)
+
     assert registered.method == "POST"
     assert registered.url.path == "/webmaster/api.svc/json/AddSite"
     assert json.loads(registered.content) == {"siteUrl": "https://example.com/"}
@@ -299,9 +339,11 @@ async def test_register_site_confirmed(verified: bool) -> None:
 ])
 async def test_register_site_invalid_input(site_url: str) -> None:
     handler = Mock()
+
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         with pytest.raises(ValueError):
             await BingEngine(TEST_KEY, client).register_site(site_url)
+
     handler.assert_not_called()
 
 
@@ -309,9 +351,11 @@ async def test_register_site_invalid_input(site_url: str) -> None:
 @pytest.mark.parametrize("result", [True, False, {}, []])
 async def test_register_site_invalid_response(result: object) -> None:
     handler = Mock(return_value=httpx.Response(200, json={"d": result}))
+
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         with pytest.raises(BingEngineError) as error:
             await BingEngine(TEST_KEY, client).register_site("https://example.com/")
+
     assert error.value.code == "response"
     handler.assert_called_once()
 
@@ -321,9 +365,11 @@ async def test_register_site_not_confirmed() -> None:
     handler = Mock(side_effect=[
         httpx.Response(200, json={"d": None}), httpx.Response(200, json={"d": []}),
     ])
+
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         with pytest.raises(BingEngineError, match="다시 조회") as error:
             await BingEngine(TEST_KEY, client).register_site("https://example.com/")
+
     assert error.value.code == "response"
     assert handler.call_count == 2
 
@@ -334,9 +380,11 @@ async def test_register_site_not_confirmed() -> None:
 async def test_register_site_error_propagates(stage: str, status: int, code: ErrorCode) -> None:
     responses = ([httpx.Response(200, json={"d": None})] if stage == "lookup" else [])
     handler = Mock(side_effect=responses + [httpx.Response(status, text=TEST_KEY)])
+
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         with pytest.raises(BingEngineError) as error:
             await BingEngine(TEST_KEY, client).register_site("https://example.com/")
+
     assert error.value.code == code
     assert TEST_KEY not in str(error.value)
     assert handler.call_count == (2 if stage == "lookup" else 1)
@@ -345,9 +393,11 @@ async def test_register_site_error_propagates(stage: str, status: int, code: Err
 # 등록 요청 시간 초과는 결과 불명으로 전달하고 자동 재등록하지 않습니다.
 async def test_register_site_timeout() -> None:
     handler = Mock(side_effect=httpx.ReadTimeout(TEST_KEY))
+
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         with pytest.raises(BingEngineError) as error:
             await BingEngine(TEST_KEY, client).register_site("https://example.com/")
+
     assert error.value.code == "timeout"
     handler.assert_called_once()
 
@@ -366,16 +416,22 @@ async def test_get_verification_file(
     handler = Mock(return_value=httpx.Response(200, json={"d": [{
         "Url": site_url, "IsVerified": verified, "AuthenticationCode": code,
     }]}))
+
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         result = await BingEngine(TEST_KEY, client).get_verification_file(site_url)
+
     assert result.file_name == "BingSiteAuth.xml"
     assert result.verification_url == expected_url
+
     root = ElementTree.fromstring(result.file_content)
+
     assert root.tag == "users"
     assert len(root) == 1
     assert root.findtext("user") == code
     assert TEST_KEY not in result.file_content
+
     sent = handler.call_args.args[0]
+
     assert sent.method == "GET"
     assert sent.url.path == "/webmaster/api.svc/json/GetUserSites"
     handler.assert_called_once()
@@ -387,9 +443,12 @@ async def test_verification_code_is_xml_text() -> None:
     handler = Mock(return_value=httpx.Response(200, json={"d": [{
         "Url": "https://example.com/", "IsVerified": False, "AuthenticationCode": code,
     }]}))
+
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         result = await BingEngine(TEST_KEY, client).get_verification_file("https://example.com/")
+
     root = ElementTree.fromstring(result.file_content)
+
     assert root.findtext("user") == code
     assert root.find("user/tag") is None
 
@@ -397,9 +456,11 @@ async def test_verification_code_is_xml_text() -> None:
 # 미등록 사이트를 자동으로 추가하지 않고 먼저 등록하도록 안내합니다.
 async def test_verification_file_requires_registered_site() -> None:
     handler = Mock(return_value=httpx.Response(200, json={"d": []}))
+
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         with pytest.raises(BingEngineError, match="먼저 등록") as error:
             await BingEngine(TEST_KEY, client).get_verification_file("https://example.com/")
+
     assert error.value.code == "permission"
     handler.assert_called_once()
 
@@ -414,9 +475,11 @@ async def test_verification_file_invalid_code(extra: dict[str, object]) -> None:
     handler = Mock(return_value=httpx.Response(200, json={"d": [
         {"Url": "https://example.com/", "IsVerified": False} | extra,
     ]}))
+
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         with pytest.raises(BingEngineError) as error:
             await BingEngine(TEST_KEY, client).get_verification_file("https://example.com/")
+
     assert error.value.code == "response"
 
 
@@ -428,18 +491,22 @@ async def test_verification_file_invalid_code(extra: dict[str, object]) -> None:
 ])
 async def test_verification_file_invalid_url(site_url: str) -> None:
     handler = Mock()
+
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         with pytest.raises(ValueError):
             await BingEngine(TEST_KEY, client).get_verification_file(site_url)
+
     handler.assert_not_called()
 
 
 # 인증 정보 조회의 API 오류를 파일 설치 안내로 바꾸지 않고 전달합니다.
 async def test_verification_file_api_error_propagates() -> None:
     handler = Mock(return_value=httpx.Response(400, json={"ErrorCode": 3}))
+
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         with pytest.raises(BingEngineError) as error:
             await BingEngine(TEST_KEY, client).get_verification_file("https://example.com/")
+
     assert error.value.code == "authentication"
 
 
@@ -449,10 +516,14 @@ async def test_verify_ownership_confirmed() -> None:
         httpx.Response(200, json={"d": True}),
         httpx.Response(200, json={"d": [{"Url": "https://example.com/", "IsVerified": True}]}),
     ])
+
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         site = await BingEngine(TEST_KEY, client).verify_ownership("https://example.com/")
+
     assert site == BingSite("https://example.com/", True)
+
     verified, checked = (call.args[0] for call in handler.call_args_list)
+
     assert verified.method == "POST"
     assert verified.url.path == "/webmaster/api.svc/json/VerifySite"
     assert verified.url.params["apikey"] == TEST_KEY
@@ -465,9 +536,11 @@ async def test_verify_ownership_confirmed() -> None:
 # false 응답을 HTTP 200이라는 이유로 인증 완료로 처리하지 않습니다.
 async def test_verify_ownership_not_verified() -> None:
     handler = Mock(return_value=httpx.Response(200, json={"d": False}))
+
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         with pytest.raises(BingEngineError, match="배포") as error:
             await BingEngine(TEST_KEY, client).verify_ownership("https://example.com/")
+
     assert error.value.code == "permission"
     handler.assert_called_once()
 
@@ -476,9 +549,11 @@ async def test_verify_ownership_not_verified() -> None:
 @pytest.mark.parametrize("value", [None, 1, 0, "true", "false", {}, []])
 async def test_verify_ownership_invalid_response(value: object) -> None:
     handler = Mock(return_value=httpx.Response(200, json={"d": value}))
+
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         with pytest.raises(BingEngineError) as error:
             await BingEngine(TEST_KEY, client).verify_ownership("https://example.com/")
+
     assert error.value.code == "response"
     handler.assert_called_once()
 
@@ -489,9 +564,11 @@ async def test_verify_ownership_not_confirmed(sites: list[dict[str, object]]) ->
     handler = Mock(side_effect=[
         httpx.Response(200, json={"d": True}), httpx.Response(200, json={"d": sites}),
     ])
+
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         with pytest.raises(BingEngineError, match="다시 조회") as error:
             await BingEngine(TEST_KEY, client).verify_ownership("https://example.com/")
+
     assert error.value.code == "permission"
     assert handler.call_count == 2
 
@@ -500,9 +577,11 @@ async def test_verify_ownership_not_confirmed(sites: list[dict[str, object]]) ->
 @pytest.mark.parametrize("site_url", ["", "example.com", "https://example.com/#part"])
 async def test_verify_ownership_invalid_url(site_url: str) -> None:
     handler = Mock()
+
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         with pytest.raises(ValueError):
             await BingEngine(TEST_KEY, client).verify_ownership(site_url)
+
     handler.assert_not_called()
 
 
@@ -514,9 +593,11 @@ async def test_verify_ownership_invalid_url(site_url: str) -> None:
 async def test_verify_ownership_error_propagates(stage: str, status: int, code: ErrorCode) -> None:
     responses = [httpx.Response(200, json={"d": True})] if stage == "lookup" else []
     handler = Mock(side_effect=responses + [httpx.Response(status, text=TEST_KEY)])
+
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         with pytest.raises(BingEngineError) as error:
             await BingEngine(TEST_KEY, client).verify_ownership("https://example.com/")
+
     assert error.value.code == code
     assert TEST_KEY not in str(error.value)
     assert handler.call_count == (2 if stage == "lookup" else 1)
@@ -527,9 +608,11 @@ async def test_verify_ownership_error_propagates(stage: str, status: int, code: 
 async def test_verify_ownership_timeout(stage: str) -> None:
     responses = [httpx.Response(200, json={"d": True})] if stage == "lookup" else []
     handler = Mock(side_effect=responses + [httpx.ReadTimeout(TEST_KEY)])
+
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         with pytest.raises(BingEngineError) as error:
             await BingEngine(TEST_KEY, client).verify_ownership("https://example.com/")
+
     assert error.value.code == "timeout"
     assert handler.call_count == (2 if stage == "lookup" else 1)
 
@@ -542,10 +625,14 @@ async def test_verify_ownership_timeout(stage: str) -> None:
 ])
 async def test_submit_sitemap_accepted(sitemap_url: str) -> None:
     handler = Mock(return_value=httpx.Response(200, json={"d": None}))
+
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         accepted = await BingEngine(TEST_KEY, client).submit_sitemap("https://example.com/", sitemap_url)
+
     assert accepted is True
+
     sent = handler.call_args.args[0]
+
     assert sent.method == "POST"
     assert sent.url.path == "/webmaster/api.svc/json/SubmitFeed"
     assert dict(sent.url.params) == {"apikey": TEST_KEY}
@@ -565,9 +652,11 @@ async def test_submit_sitemap_accepted(sitemap_url: str) -> None:
 ])
 async def test_submit_sitemap_invalid_url(site_url: str, sitemap_url: str) -> None:
     handler = Mock()
+
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         with pytest.raises(ValueError):
             await BingEngine(TEST_KEY, client).submit_sitemap(site_url, sitemap_url)
+
     handler.assert_not_called()
 
 
@@ -575,11 +664,13 @@ async def test_submit_sitemap_invalid_url(site_url: str, sitemap_url: str) -> No
 @pytest.mark.parametrize("value", [True, False, {}, [], "accepted"])
 async def test_submit_sitemap_invalid_response(value: object) -> None:
     handler = Mock(return_value=httpx.Response(200, json={"d": value}))
+
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         with pytest.raises(BingEngineError) as error:
             await BingEngine(TEST_KEY, client).submit_sitemap(
                 "https://example.com/", "https://example.com/sitemap.xml",
             )
+
     assert error.value.code == "response"
     handler.assert_called_once()
 
@@ -590,11 +681,13 @@ async def test_submit_sitemap_invalid_response(value: object) -> None:
 ])
 async def test_submit_sitemap_api_error(status: int, code: ErrorCode) -> None:
     handler = Mock(return_value=httpx.Response(status, text=TEST_KEY))
+
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         with pytest.raises(BingEngineError) as error:
             await BingEngine(TEST_KEY, client).submit_sitemap(
                 "https://example.com/", "https://example.com/sitemap.xml",
             )
+
     assert error.value.code == code
     assert TEST_KEY not in str(error.value)
     handler.assert_called_once()
@@ -603,11 +696,13 @@ async def test_submit_sitemap_api_error(status: int, code: ErrorCode) -> None:
 # HTTP 200으로 반환된 Bing 오류도 제출 성공으로 처리하지 않습니다.
 async def test_submit_sitemap_bing_error() -> None:
     handler = Mock(return_value=httpx.Response(200, json={"ErrorCode": 14, "d": None}))
+
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         with pytest.raises(BingEngineError) as error:
             await BingEngine(TEST_KEY, client).submit_sitemap(
                 "https://example.com/", "https://example.com/sitemap.xml",
             )
+
     assert error.value.code == "permission"
     handler.assert_called_once()
 
@@ -620,11 +715,13 @@ async def test_submit_sitemap_transport_error(
     error_type: type[httpx.RequestError], code: ErrorCode,
 ) -> None:
     handler = Mock(side_effect=error_type(TEST_KEY))
+
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         with pytest.raises(BingEngineError) as error:
             await BingEngine(TEST_KEY, client).submit_sitemap(
                 "https://example.com/", "https://example.com/sitemap.xml",
             )
+
     assert error.value.code == code
     assert TEST_KEY not in str(error.value)
     handler.assert_called_once()
@@ -641,15 +738,19 @@ async def test_setup_requires_verification(registered: bool) -> None:
         httpx.Response(200, json={"d": None}), site_response,
     ]) + [site_response]
     handler = Mock(side_effect=responses)
+
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         result = await BingEngine(TEST_KEY, client).register_new_site(
             "https://example.com/", "https://example.com/sitemap.xml",
         )
+
     assert result.status == "verification_required"
     assert result.verification_file is not None
     assert result.verification_file.verification_url == "https://example.com/BingSiteAuth.xml"
     assert ElementTree.fromstring(result.verification_file.file_content).findtext("user") == "sample-code"
+
     operations = tuple(call.args[0].url.path.rsplit("/", 1)[-1] for call in handler.call_args_list)
+
     assert operations == (("GetUserSites", "GetUserSites") if registered else (
         "GetUserSites", "AddSite", "GetUserSites", "GetUserSites",
     ))
@@ -663,10 +764,12 @@ async def test_setup_resumes_after_installation() -> None:
         httpx.Response(200, json={"d": [{"Url": "https://example.com/", "IsVerified": True}]}),
         httpx.Response(200, json={"d": None}),
     ])
+
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         result = await BingEngine(TEST_KEY, client).register_new_site(
             "https://example.com/", "https://example.com/sitemap.xml", verification_ready=True,
         )
+
     assert result.status == "completed"
     assert result.verification_file is None
     assert tuple(call.args[0].url.path.rsplit("/", 1)[-1] for call in handler.call_args_list) == (
@@ -684,10 +787,12 @@ async def test_setup_already_verified(ready: bool) -> None:
         httpx.Response(200, json={"d": [{"Url": "https://example.com/", "IsVerified": True}]}),
         httpx.Response(200, json={"d": None}),
     ])
+
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         result = await BingEngine(TEST_KEY, client).register_new_site(
             "https://example.com/", "https://example.com/sitemap.xml", verification_ready=ready,
         )
+
     assert result.status == "completed"
     assert result.verification_file is None
     assert tuple(call.args[0].url.path.rsplit("/", 1)[-1] for call in handler.call_args_list) == (
@@ -704,9 +809,11 @@ async def test_setup_already_verified(ready: bool) -> None:
 ])
 async def test_setup_invalid_input(site_url: str, sitemap_url: str) -> None:
     handler = Mock()
+
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         with pytest.raises(ValueError):
             await BingEngine(TEST_KEY, client).register_new_site(site_url, sitemap_url)
+
     handler.assert_not_called()
 
 
@@ -725,12 +832,14 @@ async def test_setup_stops_on_error(stage: str) -> None:
         "sitemap": [verified],
     }[stage]
     handler = Mock(side_effect=before_error + [httpx.Response(429, text=TEST_KEY)])
+
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         with pytest.raises(BingEngineError) as error:
             await BingEngine(TEST_KEY, client).register_new_site(
                 "https://example.com/", "https://example.com/sitemap.xml",
                 verification_ready=stage == "verify",
             )
+
     assert error.value.code == "rate_limit"
     assert handler.call_count == len(before_error) + 1
 
@@ -741,11 +850,13 @@ async def test_setup_verification_ready_is_not_proof() -> None:
         httpx.Response(200, json={"d": [{"Url": "https://example.com/", "IsVerified": False}]}),
         httpx.Response(200, json={"d": False}),
     ])
+
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         with pytest.raises(BingEngineError) as error:
             await BingEngine(TEST_KEY, client).register_new_site(
                 "https://example.com/", "https://example.com/sitemap.xml", verification_ready=True,
             )
+
     assert error.value.code == "permission"
     assert handler.call_count == 2
 
@@ -760,15 +871,19 @@ async def test_inspect_url_crawled(page_url: str, offset: str) -> None:
         "IsPage": True, "DocumentSize": 0,
     }}))
     before = datetime.now(timezone.utc)
+
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         result = await BingEngine(TEST_KEY, client).inspect_url("https://example.com/", page_url)
+
     assert result.index_status == "crawled"
     assert result.last_crawl_time == datetime(2026, 10, 25, 6, 38, 27, tzinfo=timezone.utc)
     assert result.discovery_date == datetime(2026, 10, 25, 7, tzinfo=timezone.utc)
     assert before <= result.checked_at <= datetime.now(timezone.utc)
     assert result.http_status == 0 and result.is_page is True and result.document_size == 0
     assert result.page_url == page_url
+
     sent = handler.call_args.args[0]
+
     assert sent.method == "GET"
     assert sent.url.path == "/webmaster/api.svc/json/GetUrlInfo"
     assert dict(sent.url.params) == {"apikey": TEST_KEY, "siteUrl": "https://example.com/", "url": page_url}
@@ -787,8 +902,10 @@ async def test_inspect_url_unknown(extra: dict[str, object], is_page: bool) -> N
         "Url": "https://example.com/", "IsPage": is_page,
         "DiscoveryDate": "/Date(253402214400000)/",
     } | extra}))
+
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         result = await BingEngine(TEST_KEY, client).inspect_url("https://example.com/", "https://example.com/")
+
     assert result.index_status == "unknown"
     assert result.discovery_date == datetime(9999, 12, 31, tzinfo=timezone.utc)
     assert result.http_status is None and result.document_size is None
@@ -811,9 +928,11 @@ async def test_inspect_url_unknown(extra: dict[str, object], is_page: bool) -> N
 ])
 async def test_inspect_url_invalid_response(data: object) -> None:
     handler = Mock(return_value=httpx.Response(200, json={"d": data}))
+
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         with pytest.raises(BingEngineError) as error:
             await BingEngine(TEST_KEY, client).inspect_url("https://example.com/", "https://example.com/")
+
     assert error.value.code == "response"
 
 
@@ -830,9 +949,11 @@ async def test_inspect_url_invalid_response(data: object) -> None:
 ])
 async def test_inspect_url_invalid_scope(site_url: str, page_url: str) -> None:
     handler = Mock()
+
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         with pytest.raises(ValueError):
             await BingEngine(TEST_KEY, client).inspect_url(site_url, page_url)
+
     handler.assert_not_called()
 
 
@@ -842,9 +963,11 @@ async def test_inspect_url_invalid_scope(site_url: str, page_url: str) -> None:
 ])
 async def test_inspect_url_api_error(status: int, code: ErrorCode) -> None:
     handler = Mock(return_value=httpx.Response(status, text=TEST_KEY))
+
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         with pytest.raises(BingEngineError) as error:
             await BingEngine(TEST_KEY, client).inspect_url("https://example.com/", "https://example.com/")
+
     assert error.value.code == code
     assert TEST_KEY not in str(error.value)
     handler.assert_called_once()
@@ -856,8 +979,10 @@ async def test_inspect_url_api_error(status: int, code: ErrorCode) -> None:
 ])
 async def test_inspect_url_transport_error(error_type: type[httpx.RequestError], code: ErrorCode) -> None:
     handler = Mock(side_effect=error_type(TEST_KEY))
+
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         with pytest.raises(BingEngineError) as error:
             await BingEngine(TEST_KEY, client).inspect_url("https://example.com/", "https://example.com/")
+
     assert error.value.code == code
     handler.assert_called_once()

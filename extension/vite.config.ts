@@ -12,14 +12,15 @@ export default defineConfig({
       },
       output: {
         // manifest에서 참조하는 Worker의 파일명을 빌드마다 동일하게 유지합니다.
-        entryFileNames: (chunk): string => chunk.name === 'background' ? 'background.js' : 'assets/[name]-[hash].js',
+        entryFileNames: (chunk): string =>
+          chunk.name === 'background' ? 'background.js' : 'assets/[name]-[hash].js',
       },
     },
   },
   server: {
     proxy: {
       '/api': {
-        target: 'http://127.0.0.1:18000',
+        target: 'http://127.0.0.1:18001',
         changeOrigin: true,
         // 개발 요청의 접두사를 제거해 기존 FastAPI 경로를 그대로 사용합니다.
         rewrite: (path: string): string => path.replace(/^\/api/, ''),

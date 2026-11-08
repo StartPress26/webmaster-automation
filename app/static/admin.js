@@ -46,13 +46,16 @@ class ApiError extends Error {
  */
 async function request(path, options) {
   let response;
+
   try {
     response = await fetch(path, {...options, headers: {'Content-Type': 'application/json', ...options?.headers}});
   } catch {
     throw new Error('서버에 연결하지 못했어요. 연결 상태를 확인한 후 다시 시도해 주세요.');
   }
+
   const body = await response.json().catch(() => null);
   if (!response.ok) throw new ApiError(response.status, body?.detail ?? '요청을 처리하지 못했어요. 잠시 후 다시 시도해 주세요.');
+
   return body;
 }
 
@@ -72,6 +75,7 @@ function clearErrors() {
     element(input).removeAttribute('aria-invalid');
     notice(message, '');
   }
+
   notice('#submit-error', '');
 }
 
@@ -92,18 +96,23 @@ async function loadClients(preferred = state.selected) {
   clientSelect.disabled = true;
   element('#client-load-error').hidden = true;
   element('#submit-site').setAttribute('disabled', '');
+
   try {
     /** @type {readonly Client[]} */
     let clients = [];
     let offset = 0;
+
     while (true) {
       const page = /** @type {{items: Client[]}} */ (await request(`/clients?limit=100&offset=${offset}`));
       clients = [...clients, ...page.items];
       if (page.items.length < 100) break;
       offset += 100;
     }
+
     state = Object.freeze({...state, clients, selected: clients.some(client => client.id === preferred) ? preferred : '', page: 0});
+
     const placeholder = new Option(clients.length ? '고객사를 선택해 주세요' : '고객사를 먼저 추가해 주세요', '');
+
     clientSelect.replaceChildren(placeholder, ...clients.map(client => new Option(client.name, client.id)));
     clientSelect.value = state.selected;
     notice('#client-help', clients.length ? '사이트를 운영하는 고객사를 선택하세요.' : '오른쪽의 고객사 추가 버튼으로 첫 고객사를 등록하세요.');
@@ -143,23 +152,31 @@ async function loadSites() {
   const current = ++listRequest;
   const {selected, page} = state;
   const client = state.clients.find(item => item.id === selected);
+
   notice('#list-error', '');
   element('#list-description').textContent = client ? `${client.name}의 메인 사이트를 확인하세요.` : '고객사를 선택하면 등록된 사이트가 표시됩니다.';
   updateSubmit();
+
   if (!selected) {
     listStatus('어느 고객사의 사이트를 볼까요?', '위에서 고객사를 선택해 주세요.');
     return;
   }
+
   listStatus('사이트를 불러오고 있어요', '잠시만 기다려 주세요.');
+
   try {
     const result = /** @type {{items: Site[]}} */ (await request(`/sites?client_id=${encodeURIComponent(selected)}&limit=${PAGE_SIZE + 1}&offset=${page * PAGE_SIZE}`));
     if (current !== listRequest) return;
+
     state = Object.freeze({...state, hasNext: result.items.length > PAGE_SIZE});
+
     const items = result.items.slice(0, PAGE_SIZE);
+
     if (!items.length) {
       listStatus('아직 등록된 사이트가 없어요', '위의 폼에서 첫 번째 메인 사이트를 등록해 보세요.');
       return;
     }
+
     element('#sites-body').replaceChildren(...items.map(siteRow));
     element('#list-status').hidden = true;
     element('#site-table-wrap').hidden = false;
@@ -182,36 +199,54 @@ function siteRow(site) {
   const row = document.createElement('tr');
   const nameCell = document.createElement('td');
   const identity = document.createElement('div');
+
   identity.className = 'site-cell';
+
   const avatar = document.createElement('span');
+
   avatar.className = 'site-avatar';
   avatar.textContent = Array.from(site.name)[0] ?? 'S';
   avatar.setAttribute('aria-hidden', 'true');
+
   const content = document.createElement('div');
   const name = document.createElement('strong');
+
   name.textContent = site.name;
+
   const link = document.createElement('a');
+
   link.textContent = site.url;
+
   // DB 응답도 확인해 실행 가능한 스킴이 링크에 들어가지 않게 합니다.
   if (/^https?:\/\//i.test(site.url)) link.href = site.url;
+
   link.target = '_blank';
   link.rel = 'noopener noreferrer';
   content.append(name, link);
   identity.append(avatar, content);
   nameCell.append(identity);
+
   const owner = document.createElement('td');
   const badge = document.createElement('span');
+
   badge.className = `badge ${site.owner_type === 'internal' ? 'internal' : ''}`;
   badge.textContent = site.owner_type === 'internal' ? '내부 소유' : '고객사 소유';
   owner.append(badge);
+
   const platform = document.createElement('td');
+
   platform.textContent = site.cms_type || '미입력';
+
   const editable = document.createElement('td');
+
   editable.textContent = site.can_edit_site === null ? '아직 모름' : site.can_edit_site ? '가능' : '어려움';
   editable.className = site.can_edit_site ? 'edit-yes' : '';
+
   const date = document.createElement('td');
+
   date.textContent = new Intl.DateTimeFormat('ko-KR', {year: 'numeric', month: '2-digit', day: '2-digit', timeZone: 'Asia/Seoul'}).format(new Date(site.created_at));
   row.append(nameCell, owner, platform, editable, date);
+
   return row;
 }
 
@@ -220,30 +255,48 @@ function siteRow(site) {
  */
 async function submitSite(event) {
   event.preventDefault();
+
   if (state.submitting) return;
+
   clearErrors();
   notice('#success-message', '');
+
   const form = new FormData(siteForm);
   const name = String(form.get('name') ?? '').trim();
   const url = String(form.get('url') ?? '').trim();
   const indexnowKey = String(form.get('indexnow_key') ?? '').trim() || null;
   const indexnowLocation = String(form.get('indexnow_key_location') ?? '').trim() || null;
+
   if (!state.selected) fieldError('client_id', '사이트를 등록할 고객사를 선택해 주세요.');
+
   if (!name) fieldError('name', '사이트 이름을 입력해 주세요.');
+
   if (!/^https?:\/\//i.test(url)) fieldError('url', 'http:// 또는 https://로 시작하는 주소를 입력해 주세요.');
+
   if (indexnowLocation && !indexnowKey) fieldError('indexnow_key', '키 파일에 들어 있는 키를 함께 입력해 주세요.');
+
   if (indexnowKey && !indexnowLocation) fieldError('indexnow_key_location', '키 파일 주소를 함께 입력해 주세요.');
+
   if (indexnowKey && !/^[a-fA-F0-9-]{8,128}$/.test(indexnowKey)) fieldError('indexnow_key', '8~128자의 a~f, A~F, 숫자, 하이픈으로 입력해 주세요.');
+
   if (indexnowLocation && !/^https?:\/\//i.test(indexnowLocation)) fieldError('indexnow_key_location', 'http:// 또는 https://로 시작하는 키 파일 주소를 입력해 주세요.');
+
   const invalid = siteForm.querySelector('[aria-invalid="true"]');
+
   if (invalid instanceof HTMLElement) { invalid.focus(); return; }
+
   const edit = form.get('can_edit_site');
   const payload = Object.freeze({client_id: state.selected, name, url, owner_type: form.get('owner_type'), cms_type: String(form.get('cms_type') ?? '').trim() || null, can_edit_site: edit === 'unknown' ? null : edit === 'true', indexnow_key: indexnowKey, indexnow_key_location: indexnowLocation});
+
   state = Object.freeze({...state, submitting: true});
+
   for (const input of siteForm.querySelectorAll('input, select, button')) input.setAttribute('disabled', '');
+
   element('#submit-site span').textContent = '사이트를 등록하고 있어요…';
+
   try {
     const created = /** @type {Site} */ (await request('/sites', {method: 'POST', body: JSON.stringify(payload)}));
+
     siteForm.reset();
     clientSelect.value = state.selected;
     state = Object.freeze({...state, page: 0});
@@ -258,21 +311,27 @@ async function submitSite(event) {
     } else if (error instanceof ApiError && error.status === 422 && Array.isArray(error.detail)) {
       for (const issue of error.detail) {
         const field = issue.loc?.[1];
+
         if (field in fieldTargets) {
           const message = field === 'url' ? '주소 형식을 확인해 주세요. 공백·인증정보·#을 제외하고 2,048바이트 이하로 입력하세요.' : '입력 내용을 확인해 주세요.';
           fieldError(field, message);
         }
       }
+
       if (!siteForm.querySelector('[aria-invalid="true"]')) notice('#submit-error', '입력값을 확인해 주세요. IndexNow 설정은 키와 파일 주소를 함께 입력하고, 파일 주소의 호스트와 적용 경로가 등록할 사이트에 맞는지 확인해 주세요.');
     } else {
       notice('#submit-error', error instanceof Error ? error.message : '등록하지 못했어요. 다시 시도해 주세요.');
     }
   } finally {
     state = Object.freeze({...state, submitting: false});
+
     for (const input of siteForm.querySelectorAll('input, select, button')) input.removeAttribute('disabled');
+
     element('#submit-site span').textContent = '사이트 등록하기';
     updateSubmit();
+
     const invalid = siteForm.querySelector('[aria-invalid="true"]');
+
     if (invalid instanceof HTMLElement) invalid.focus();
     else if (!element('#submit-error').hidden) element('#submit-error').focus();
     else if (!element('#success-message').hidden) element('#site-name').focus();
@@ -284,21 +343,28 @@ async function submitSite(event) {
  */
 async function submitClient(event) {
   event.preventDefault();
+
   const button = /** @type {HTMLButtonElement} */ (element('#submit-client'));
   if (button.disabled) return;
+
   notice('#client-form-error', '');
+
   const form = new FormData(clientForm);
   const name = String(form.get('name') ?? '').trim();
+
   if (!name) {
     notice('#client-form-error', '고객사 이름을 입력해 주세요.');
     element('#client-name').focus();
     return;
   }
+
   button.disabled = true;
   element('#close-dialog').setAttribute('disabled', '');
   button.textContent = '고객사를 추가하고 있어요…';
+
   try {
     const client = /** @type {Client} */ (await request('/clients', {method: 'POST', body: JSON.stringify({name, manager_name: String(form.get('manager_name') ?? '').trim() || null})}));
+
     dialog.close();
     clientForm.reset();
     await loadClients(client.id);

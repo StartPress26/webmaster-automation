@@ -21,14 +21,19 @@ from app.engines.google.google_auth import (
 def token_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.delenv("GOOGLE_TOKEN_FILE", raising=False)
     (tmp_path / ".env").write_text("GOOGLE_TOKEN_FILE=.secrets/token.json\n")
+
     path = tmp_path / ".secrets" / "token.json"
+
     path.parent.mkdir()
+
     credentials = Credentials(
         token="test-access", refresh_token="test-refresh", token_uri=TOKEN_ENDPOINT,
         client_id="test-client", client_secret="test-secret", scopes=SCOPES,
         expiry=(datetime.now(timezone.utc) + timedelta(hours=1)).replace(tzinfo=None),
     )
+
     path.write_text(credentials.to_json())
+
     return path
 
 
@@ -45,6 +50,7 @@ def test_valid_token_is_reused(token_file: Path, monkeypatch: pytest.MonkeyPatch
 # 만료된 토큰은 갱신하고 비공개 파일로 저장합니다.
 def test_expired_token_is_refreshed(token_file: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     data = json.loads(token_file.read_text()) | {"expiry": "2000-01-01T00:00:00Z"}
+
     token_file.write_text(json.dumps(data))
 
     # Google 라이브러리가 인증 객체를 갱신하는 동작을 대신합니다.
@@ -76,6 +82,7 @@ def test_outside_path_is_rejected(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
 # 갱신 실패 시 비밀값과 원본 예외를 외부에 전달하거나 기존 파일을 바꾸지 않습니다.
 def test_refresh_failure_is_sanitized(token_file: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     original = json.dumps(json.loads(token_file.read_text()) | {"expiry": "2000-01-01T00:00:00Z"})
+
     token_file.write_text(original)
 
     # 비밀값이 포함된 외부 오류를 재현합니다.
@@ -83,8 +90,10 @@ def test_refresh_failure_is_sanitized(token_file: Path, monkeypatch: pytest.Monk
         raise RuntimeError("test-secret")
 
     monkeypatch.setattr(Credentials, "refresh", refresh)
+
     with pytest.raises(GoogleAuthError) as caught:
         load_credentials(token_file.parents[1])
+
     assert "test-secret" not in str(caught.value)
     assert caught.value.__suppress_context__
     assert token_file.read_text() == original
@@ -94,12 +103,17 @@ def test_refresh_failure_is_sanitized(token_file: Path, monkeypatch: pytest.Monk
 # 토큰 설정 누락과 권한 부족을 비밀값 없이 구분합니다.
 def test_auth_error_codes(token_file: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     data = json.loads(token_file.read_text()) | {"scopes": []}
+
     token_file.write_text(json.dumps(data))
+
     with pytest.raises(GoogleAuthError) as error:
         load_credentials(token_file.parents[1])
+
     assert error.value.code == "insufficient_scopes"
     assert "test-secret" not in error.value.public_message
     monkeypatch.setenv("GOOGLE_TOKEN_FILE", "")
+
     with pytest.raises(GoogleAuthError) as missing:
         load_credentials(token_file.parents[1])
+
     assert missing.value.code == "configuration_missing"

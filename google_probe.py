@@ -38,9 +38,11 @@ def load_settings(root: Path) -> Settings:
         value = values.get(name)
         if not value:
             raise ValueError(".env의 Google 인증파일 경로가 필요합니다.")
+
         path = (root / value).resolve()
         if not path.is_relative_to(secrets_dir):
             raise ValueError("인증파일은 .secrets 폴더 안에 저장해야 합니다.")
+
         return path
 
     return Settings(
@@ -65,10 +67,12 @@ def validate_client(data: dict[str, Any]) -> None:
 def save_token(path: Path, content: str) -> None:
     """토큰은 소유자만 읽도록 원자적으로 저장한다."""
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+
     with tempfile.NamedTemporaryFile(
         mode="w", encoding="utf-8", dir=path.parent, delete=False
     ) as temporary:
         temporary_path = Path(temporary.name)
+
         try:
             temporary.write(content)
             temporary.flush()
@@ -81,17 +85,22 @@ def save_token(path: Path, content: str) -> None:
 def existing_credentials(settings: Settings) -> Credentials:
     if not settings.token_file.is_file():
         raise ValueError("먼저 auth 명령으로 로그인·동의를 진행하세요.")
+
     data = json.loads(settings.token_file.read_text(encoding="utf-8"))
     if data.get("token_uri") != GOOGLE_TOKEN_ENDPOINT:
         raise ValueError("토큰 파일의 인증 엔드포인트를 확인해야 합니다.")
+
     credentials = Credentials.from_authorized_user_info(data)
     if not credentials.has_scopes(SCOPES):
         raise ValueError("요청 권한이 부족합니다. 기존 인증 범위를 확인하세요.")
+
     if credentials.expired and credentials.refresh_token:
         credentials.refresh(Request())
         save_token(settings.token_file, credentials.to_json())
+
     if not credentials.valid:
         raise ValueError("유효한 Google 인증이 필요합니다.")
+
     return credentials
 
 
@@ -100,8 +109,11 @@ def authenticate(settings: Settings) -> None:
         existing_credentials(settings)
         print("기존 Google 인증을 확인했습니다. 토큰 값은 출력하지 않습니다.")
         return
+
     data = json.loads(settings.client_file.read_text(encoding="utf-8"))
+
     validate_client(data)
+
     flow = InstalledAppFlow.from_client_config(
         data, scopes=SCOPES, autogenerate_code_verifier=True
     )
@@ -117,6 +129,7 @@ def authenticate(settings: Settings) -> None:
     )
     if not credentials.has_scopes(SCOPES):
         raise ValueError("필요한 권한이 승인되지 않아 토큰을 저장하지 않았습니다.")
+
     save_token(settings.token_file, credentials.to_json())
     print("Google 인증 완료. 토큰을 .secrets 폴더에 저장했습니다.")
 
@@ -128,6 +141,7 @@ def summarize_sites(data: dict[str, Any], status: int) -> dict[str, Any]:
         for entry in entries
         if isinstance(entry, dict) and entry.get("siteUrl") == TARGET_SITE
     )
+
     return {
         "operation": "google.sites.list",
         "http_status": status,
@@ -140,23 +154,32 @@ def summarize_sites(data: dict[str, Any], status: int) -> dict[str, Any]:
 
 def list_sites(settings: Settings) -> int:
     credentials = existing_credentials(settings)
+
     with AuthorizedSession(credentials) as session:
         response = session.get(SITES_ENDPOINT, timeout=30)
         data = response.json() if response.content else {}
+
     summary = summarize_sites(data, response.status_code)
+
     print(json.dumps(summary, ensure_ascii=False, indent=2))
+
     return 0 if response.status_code == 200 else 1
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+
     parser.add_argument("command", choices=("auth", "sites"))
+
     args = parser.parse_args()
+
     try:
         settings = load_settings(Path(__file__).resolve().parent)
+
         if args.command == "auth":
             authenticate(settings)
             return 0
+
         return list_sites(settings)
     except Exception as error:
         # 예외 본문에는 인증 URL·코드·토큰이 포함될 수 있어 종류만 출력한다.
