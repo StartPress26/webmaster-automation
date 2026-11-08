@@ -166,6 +166,7 @@ export interface DashboardSite {
   readonly is_active: boolean;
   readonly page_count: number;
   readonly google: EngineSummary;
+  readonly naver: EngineSummary;
   readonly bing: EngineSummary;
 }
 
@@ -174,6 +175,7 @@ export interface ClientDashboard {
   readonly site_count: number;
   readonly page_count: number;
   readonly google: EngineSummary;
+  readonly naver: EngineSummary;
   readonly bing: EngineSummary;
   readonly sites: readonly DashboardSite[];
 }

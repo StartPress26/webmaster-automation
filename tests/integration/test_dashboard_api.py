@@ -91,7 +91,11 @@ async def test_dashboard_counts_pages_without_cross_client_or_engine_duplicates(
     await add_status(db_session, fifth, "google", "crawled", later)
     await add_status(db_session, site, "google", "indexed", later)
     await add_status(db_session, foreign, "google", "indexed", later)
-    await add_status(db_session, first, "naver", "indexed", checked)
+    await add_status(db_session, first, "naver", "indexed", checked, "최근 조회 오류")
+    await add_status(db_session, second, "naver", "unknown", later)
+    await add_status(db_session, third, "naver", "indexed", None)
+    await add_status(db_session, site, "naver", "indexed", later)
+    await add_status(db_session, foreign, "naver", "indexed", later)
 
     response = await dashboard_api.get(f"/clients/{client}/dashboard")
     assert response.status_code == 200
@@ -109,12 +113,21 @@ async def test_dashboard_counts_pages_without_cross_client_or_engine_duplicates(
     assert result["bing"]["indexed"] == 0
     assert result["bing"]["crawled"] == 1
     assert result["bing"]["unknown"] == 4
+    assert result["naver"] == {
+        "indexed": 1, "not_indexed": 0, "crawled": 0, "submitted": 0,
+        "failed": 0, "unknown": 4, "error_count": 1,
+        "last_checked_at": "2026-11-04T02:00:00Z",
+    }
+    populated = next(row for row in result["sites"] if row["id"] == str(site))
+    assert populated["naver"] == result["naver"]
 
     empty = next(row for row in result["sites"] if row["id"] == str(empty_site))
 
     assert empty["page_count"] == 0
     assert empty["google"]["unknown"] == 0
     assert empty["google"]["last_checked_at"] is None
+    assert empty["naver"]["unknown"] == 0
+    assert empty["naver"]["last_checked_at"] is None
     assert not empty["is_active"]
     assert {row["id"] for row in result["sites"]} == {str(site), str(empty_site)}
 
@@ -133,6 +146,8 @@ async def test_uninspected_pages_and_read_only_repeated_requests(
     assert first.json()["google"]["unknown"] == 1
     assert first.json()["google"]["not_indexed"] == 0
     assert first.json()["bing"]["unknown"] == 1
+    assert first.json()["naver"]["unknown"] == 1
+    assert first.json()["naver"]["not_indexed"] == 0
     assert await db_session.scalar(select(func.count()).select_from(SiteEngineStatus)) == before
 
 
@@ -145,6 +160,8 @@ async def test_client_without_sites(dashboard_api: AsyncClient, db_session: Asyn
     assert response.json()["page_count"] == 0
     assert response.json()["sites"] == []
     assert response.json()["google"]["last_checked_at"] is None
+    assert response.json()["naver"]["last_checked_at"] is None
+    assert response.json()["naver"]["indexed"] == 0
 
 
 # 미존재 고객사와 잘못된 UUID 입력을 구분합니다.

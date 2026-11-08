@@ -183,7 +183,7 @@ src/
 - 실제 화면에서 확인한 `data-tag="urlInspectionInput"`, `inspectBtn`, `BingdexTab`, `urlInspectionIndexCard`를 사용합니다. 사이트 항목은 표시 이름 대신 링크의 `siteUrl` 값으로 비교합니다. 목록에 정확한 사이트가 없거나 여러 개면 중단합니다.
 - 검사 중 표시 또는 결과 카드 교체·변경 이후, 선택 사이트·입력 URL·결과 주소의 `urlToInspect`가 모두 맞고 **Bing 색인** 탭이 활성화된 경우에만 결과를 인정합니다. 같은 URL 재조회는 로딩 후 완료를 확인합니다. 라이브 URL과 색인화 요청은 실행하지 않습니다.
 - 명시적 색인 성공은 `indexed`, 명시적 미색인 문구는 `not_indexed`, 나머지는 `unknown`으로 보관합니다. 제외 사유·대표 URL·페이지 가져오기 성공·표시된 마지막 크롤링 시각도 읽습니다. 대표 URL은 자동으로 재검사하지 않습니다.
-- 작업 표에서는 **Bing API / Bing GUI** 두 작업으로 표시하지만, DB에는 같은 대상·Bing 조합의 최신 상태 한 행만 유지합니다. 더 최신의 API 또는 GUI 관측이 기존 판정을 갱신합니다. 저장된 GUI 결과도 기존 `GET /sites/{id}/inspections`에서 조회합니다. Naver 대시보드 집계는 후속 작업입니다.
+- 작업 표에서는 **Bing API / Bing GUI** 두 작업으로 표시하지만, DB에는 같은 대상·Bing 조합의 최신 상태 한 행만 유지합니다. 더 최신의 API 또는 GUI 관측이 기존 판정을 갱신합니다. 저장된 GUI 결과도 기존 `GET /sites/{id}/inspections`에서 조회합니다. 네이버도 Google·Bing과 함께 대시보드에서 저장된 상태를 집계합니다.
 - 빌드는 `dist/bing-content.js`를 import 없는 IIFE로 생성합니다. `npm run build` 후 **확장 새로고침 → Bing 탭 새로고침 → 관리 탭 다시 열기**를 진행합니다.
 - 실제 계정에서 사이트 메뉴와 메인·글 URL의 검사 결과 구조를 확인했습니다. 새 콘텐츠 스크립트의 실제 Chrome 전체 순회는 아직 미검증이며, 여러 사이트 순회·DOM 판독·취소·응답 불일치·전체 조회 연결은 모의 테스트로 검증합니다. 실행 기록은 Git 제외된 `.secrets/bot_runs/`에 보존합니다.
 
