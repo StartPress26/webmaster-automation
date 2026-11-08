@@ -3,7 +3,10 @@ import { initialClients, initialInspections, initialProperties } from './mocks/d
 import { validateIndexNowSettings } from './indexnow';
 import { createApi } from './api';
 import { submitPageBatch } from './batch';
-import { inspectionStatusNames, inspectionTime, inspectionUnavailable } from './inspection';
+import { inspectionStatusNames, inspectionTime } from './inspection/format';
+import { createClientInspectionController, clientInspectionBusy } from './inspection/client-controller';
+import type { GuiEngine } from './inspection/client-controller';
+import { renderClientInspection } from './inspection/client-view';
 import { ApiError, asAppError, presentError, uncertainWrite } from './errors';
 import { captureFormDrafts, restoreFormDrafts } from './forms';
 import { clientProperties, clientSelection, dashboardContent, demoDashboard } from './dashboard';
@@ -62,6 +65,10 @@ let inspectionTargetId = '';
 let storedInspections: readonly InspectionRead[] = [];
 let inspectionLoading = false;
 let inspectionError: ApiError | null = null;
+const clientInspections = createClientInspectionController(api, (): void => {
+  if (state.view === 'inspect' || state.view === 'dashboard') render();
+  else applyAvailability();
+});
 let targetsLoading = false;
 let targetsError: ApiError | null = null;
 let targetsVersion = 0;
@@ -70,7 +77,6 @@ let notificationDraft = '';
 let notificationTitles = '';
 let notifyEnabled = true;
 let requestText = '';
-let refreshTimer: ReturnType<typeof setTimeout> | undefined;
 let formDrafts: FormDrafts = new Map();
 let renderedScope = '';
 let sitemapOpen = false;
@@ -103,13 +109,18 @@ function selectedClient(): Client | undefined {
 function sitePicker(): string {
   if (state.view !== 'inspect' && state.view !== 'notify') return '';
   const sites = clientProperties(properties, state.clientId);
-  return `<section class="site-context"><label for="property-select">관리할 블로그</label><select id="property-select">${sites.length ? sites.map((site): string => `<option value="${escape(site.id)}" ${site.id === state.propertyId ? 'selected' : ''}>${escape(site.name)} · ${escape(site.siteUrl)}${site.active ? '' : ' (비활성)'}</option>`).join('') : '<option value="">등록된 블로그 없음</option>'}</select>${sites.length ? '' : '<button class="button secondary" data-view="register">사이트 등록</button>'}</section>`;
+  return `<section class="site-context"><label for="property-select">${state.view === 'inspect' ? '결과를 볼 블로그' : '관리할 블로그'}</label><select id="property-select">${sites.length ? sites.map((site): string => `<option value="${escape(site.id)}" ${site.id === state.propertyId ? 'selected' : ''}>${escape(site.name)} · ${escape(site.siteUrl)}${site.active ? '' : ' (비활성)'}</option>`).join('') : '<option value="">등록된 블로그 없음</option>'}</select>${sites.length ? '' : '<button class="button secondary" data-view="register">사이트 등록</button>'}</section>`;
+}
+
+// 현재 고객사 전체 실행 영역을 페이지 제목 아래에 일관되게 배치합니다.
+function clientInspectionPanel(): string {
+  return renderClientInspection(clientInspections.getState(), state.clientId, selectedClient()?.name ?? '', demo);
 }
 
 // 선택 고객사의 통계와 데이터 준비·빈 목록·오류 상태를 표시합니다.
 function dashboardView(): string {
   const client = selectedClient();
-  const heading = `<div class="page-heading"><div><h1>${escape(client?.name ?? '고객사')} · 대시보드</h1><p>담당자: ${escape(client?.manager || '미지정')} · 선택한 고객사의 블로그 전체 현황</p></div>${client ? '<button class="button secondary" id="reload-dashboard">통계 새로고침</button>' : ''}</div>`;
+  const heading = `<div class="page-heading"><div><h1>${escape(client?.name ?? '고객사')} · 대시보드</h1><p>담당자: ${escape(client?.manager || '미지정')} · 선택한 고객사의 블로그 전체 현황</p></div>${client ? '<button class="button secondary" id="reload-dashboard">통계 새로고침</button>' : ''}</div>${clientInspectionPanel()}`;
   if (!client) return `${heading}<section class="report empty-state">선택할 고객사가 없습니다.<p>고객사 관리에서 첫 고객사를 추가하세요.</p><button class="button primary" data-view="clients">고객사 관리</button></section>`;
   if (dashboardLoading) return `${heading}<section class="report empty-state" role="status">고객사 통계를 불러오는 중…</section>`;
   if (dashboardError) return `${heading}${errorPanel(dashboardError, '고객사 통계를 불러오지 못했습니다')}`;
@@ -216,6 +227,9 @@ function inspectionView(): string {
   const rows = currentRows();
   const visible = rows.filter((row: Inspection): boolean => state.filter === 'all' || row.status === state.filter);
   return `<div class="page-heading"><div><h1>색인 상태 확인</h1><p>검색엔진이 내 사이트의 페이지를 어떻게 보고 있는지 확인하세요.</p></div>${inspectionActions()}</div>
+    ${clientInspectionPanel()}
+    <div class="inspection-saved-heading"><h2>저장된 결과</h2><p>블로그와 검색엔진을 선택해 URL별 관측 결과를 확인하세요.</p></div>
+    ${sitePicker()}
     ${engines()}
     ${sitemapForm()}
     <section class="report" aria-labelledby="report-title">
@@ -229,9 +243,9 @@ function inspectionView(): string {
     <div class="explanation">${icon('info')}<p>색인 상태 조회는 관측 결과를 새로 확인하는 작업입니다. 사이트맵 제출은 수집이나 색인 완료를 의미하지 않습니다.</p></div>`;
 }
 
-// 사이트 전체의 제출 작업을 개별 URL 상태 조회 버튼 옆에 배치합니다.
+// 저장 결과 필터의 사이트·엔진에 맞는 별도 사이트맵 제출 버튼을 표시합니다.
 function inspectionActions(): string {
-  return `<div class="inspection-actions"><button class="button primary" id="refresh-index">${icon('refresh')}${state.engine === 'naver' ? '네이버 상태 조회 · 탭 연결 필요' : '색인 상태 조회'}</button><button class="button secondary" id="toggle-sitemap" aria-expanded="${sitemapOpen && state.engine !== 'naver'}" aria-controls="sitemap-panel" ${state.engine === 'naver' ? 'title="사이트맵 제출은 Google과 Bing만 지원합니다."' : ''}>${icon('send')}사이트맵 제출</button></div>`;
+  return `<div class="inspection-actions"><button class="button secondary" id="toggle-sitemap" aria-expanded="${sitemapOpen && state.engine !== 'naver'}" aria-controls="sitemap-panel" ${state.engine === 'naver' ? 'title="사이트맵 제출은 Google과 Bing만 지원합니다."' : ''}>${icon('send')}사이트맵 제출</button></div>`;
 }
 
 // 메인 사이트와 선택한 검색엔진을 명시하고 공개 사이트맵 주소를 입력받습니다.
@@ -247,25 +261,27 @@ function inspectionTarget(): InspectionTarget | undefined {
   return inspectionTargets.find((target: InspectionTarget): boolean => target.id === inspectionTargetId);
 }
 
-// 저장 상태 조회와 사용자가 누르는 새 조회 버튼을 구분해 표시합니다.
+// 전체 실행과 구분되는 개별 URL의 저장 관측 결과를 표시합니다.
 function apiInspectionView(): string {
   const target = inspectionTarget();
   const observation = storedInspections.find((item: InspectionRead): boolean => item.site_id === inspectionTargetId && item.engine === state.engine);
   const previousError = observation?.error_message ? new ApiError(0, observation.error_message, { code: observation.error_code ?? 'SAVED_INSPECTION_ERROR', operation: 'inspect' }) : null;
   const failure = inspectionError ?? previousError;
-  const unavailable = inspectionUnavailable(state.engine, property(), target);
-  const explanation = state.engine === 'naver' ? unavailable : state.engine === 'bing' ? 'Bing은 현재 API로 크롤링 상태를 조회합니다. 실제 색인 여부를 추정하지 않습니다.' : 'Google URL Inspection API로 저장된 색인 상태를 조회합니다. URL 제출이나 색인 요청은 실행하지 않습니다.';
-  return `<div class="page-heading"><div><h1>색인 상태 확인</h1><p>메인페이지 또는 글을 선택하고 검색엔진별 최신 상태를 확인하세요.</p></div>${inspectionActions()}</div>
+  const explanation = state.engine === 'naver' ? '고객사 전체 조회에서 네이버 사이트·URL별 GUI 검사를 수행합니다. 이번 GUI 관측은 전체 작업 결과에 표시하며 서버 저장 상태와 구분합니다.' : state.engine === 'bing' ? 'Bing은 현재 API로 크롤링 상태를 조회합니다. 실제 색인 여부를 추정하지 않습니다.' : 'Google URL Inspection API로 저장된 색인 상태를 조회합니다. URL 제출이나 색인 요청은 실행하지 않습니다.';
+  return `<div class="page-heading"><div><h1>색인 상태 확인</h1><p>블로그·메인페이지·글·엔진을 선택해 저장된 상태를 확인하세요.</p></div>${inspectionActions()}</div>
+    ${clientInspectionPanel()}
+    <div class="inspection-saved-heading"><h2>저장된 결과</h2><p>블로그와 검색엔진을 선택해 URL별 관측 결과를 확인하세요.</p></div>
+    ${sitePicker()}
     ${engines()}
     ${sitemapForm()}
-    <section class="report"><div class="report-header"><div><h2>검사 대상</h2><p>대상 선택은 저장 상태만 읽습니다. 새 조회는 위 버튼으로 실행합니다.</p></div><button class="button secondary" id="reload-inspection-targets">${icon('refresh')}대상 목록 새로고침</button></div>
+    <section class="report"><div class="report-header"><div><h2>검사 대상</h2><p>대상 선택은 저장 상태만 읽습니다. 전체 조회는 고객사 전체 색인 조회 버튼으로 실행합니다.</p></div><button class="button secondary" id="reload-inspection-targets">${icon('refresh')}대상 목록 새로고침</button></div>
     <div class="inspection-controls"><label for="inspection-target-select">메인페이지 / 글</label><select id="inspection-target-select">${inspectionTargets.length ? inspectionTargets.map((item: InspectionTarget): string => `<option value="${escape(item.id)}" ${item.id === inspectionTargetId ? 'selected' : ''}>${item.type === 'site' ? '메인페이지' : '글'} · ${escape(item.name)}${item.active ? '' : ' (비활성)'} — ${escape(item.url)}</option>`).join('') : '<option value="">사이트를 먼저 등록하거나 선택하세요</option>'}</select><p class="small muted">${escape(target?.url ?? '')}</p></div>
     ${targetsError ? errorPanel(targetsError, '글 목록을 불러오지 못했습니다', 'targets') : ''}
     <div class="inspection-body"><div class="report-header"><h2>${failure ? '최근 조회 오류' : `저장된 ${engineNames[state.engine]} 상태`}</h2>${failure ? '' : '<button class="button secondary" id="read-inspection">저장 결과 다시 읽기</button>'}</div>
     ${inspectionLoading || targetsLoading ? '<p role="status">저장된 결과를 불러오는 중…</p>' : ''}
     ${failure ? errorPanel(failure, `${engineNames[state.engine]} ${failure.operation === 'read' ? '저장 결과를 읽지 못했습니다' : '상태를 조회하지 못했습니다'}`, 'saved') : ''}
     ${observation && (!failure || observation.last_checked_at) ? `<div class="detail-result ${!failure && observation.index_status === 'indexed' ? 'indexed' : ''}">${icon(!failure && observation.index_status === 'indexed' ? 'check' : 'info')}<div><h3>${inspectionStatusNames[observation.index_status]}</h3><p>${failure ? '이전 성공 관측 결과입니다. 이번 조회의 성공을 의미하지 않습니다.' : '검색엔진에서 확인해 DB에 저장한 요약 상태입니다.'}</p></div></div><dl class="property-facts"><div><dt>마지막 성공 관측</dt><dd>${escape(inspectionTime(observation.last_checked_at))}</dd></div></dl>` : failure ? '<p class="previous-result-note">마지막 성공 결과: 없음 · 이번 오류로 미색인 여부를 판단하지 않습니다.</p>' : inspectionLoading || targetsLoading ? '' : '<div class="empty-state">아직 저장된 조회 결과가 없습니다.<p>조회 기록이 없다는 것은 미색인을 의미하지 않습니다.</p></div>'}
-    <div class="inline-note">${escape(explanation)}</div>${unavailable && state.engine !== 'naver' ? `<p class="inspection-error">${escape(unavailable)}</p>` : ''}
+    <div class="inline-note">${escape(explanation)}</div>
     <p class="field-help">이 API는 크롤링 시각·제출 이력의 상세 필드를 제공하지 않습니다. 확인되지 않은 단계를 완료로 표시하지 않습니다.</p></div></section>`;
 }
 
@@ -345,7 +361,7 @@ function render(): void {
   document.title = `StartPress · ${viewTitles[state.view]}`;
   app.innerHTML = `<header class="app-header"><button class="icon-button menu-toggle" id="menu-toggle" aria-label="왼쪽 메뉴 열기 또는 닫기" aria-expanded="${window.matchMedia('(max-width:760px)').matches ? state.mobileNav : !state.mobileNav}">${icon('menu')}</button><a class="brand" href="#inspect" aria-label="StartPress 홈"><span class="brand-symbol"><span></span><span></span><span></span></span><span>StartPress <span class="brand-subtitle">Console</span></span></a><form class="global-search" id="url-search"><label class="visually-hidden" for="url-inspect">선택한 사이트의 URL 검사</label>${icon('search')}<input id="url-inspect" type="url" placeholder="${escape(property().origin)} 내 URL 검사" required autocomplete="off"><kbd>URL 검사</kbd></form><div class="header-end"><a class="mode-switch" href="${demo ? '/' : '/?mode=demo'}">${demo ? 'API 모드로' : '예시 모드'}</a><span class="user-avatar" aria-label="StartPress 팀">S</span></div></header>
     <aside class="sidebar ${state.mobileNav ? 'open' : ''}"><label class="property-picker"><span class="property-symbol">${icon('users')}</span><span class="visually-hidden">관리할 고객사 선택</span><select id="client-select">${clients.length ? clients.map((client: Client): string => `<option value="${escape(client.id)}" ${client.id === state.clientId ? 'selected' : ''}>${escape(client.name)}</option>`).join('') : '<option value="">등록된 고객사 없음</option>'}</select></label><div class="sidebar-client">담당자: ${escape(selectedClient()?.manager || '미지정')}<span>${clientProperties(properties, state.clientId).length}개 블로그</span></div>${navigation('dashboard', 'dashboard')}<div class="nav-divider"></div><div class="nav-section-label">검색엔진 관리</div><nav aria-label="검색엔진 관리">${navigation('register', 'globe')}${navigation('notify', 'send')}${navigation('inspect', 'inspect')}</nav><div class="nav-divider"></div><div class="nav-section-label">워크스페이스</div><nav aria-label="워크스페이스">${navigation('clients', 'users')}</nav><div class="sidebar-bottom"><span class="team-symbol">SP</span><div>StartPress 팀<span>사이트 운영 워크스페이스</span></div></div></aside>
-    <main class="main-content"><div class="breadcrumb"><span>${state.view === 'clients' ? '워크스페이스' : escape(selectedClient()?.name ?? '고객사를 선택하세요')}</span>${icon('chevron')}<span>${viewTitles[state.view]}</span></div><div class="preview-notice">${icon('info')}<span>${demo ? '예시 모드입니다. 실제 검색엔진 요청이나 DB 저장은 하지 않습니다.' : 'API 연결 모드입니다. 고객사·사이트·글 저장은 DB에 반영되며, 발행 알림 선택 시 실제 IndexNow 요청을 실행합니다.'}</span></div>${loading ? '<div class="connection-notice" role="status">서버에서 고객사와 사이트를 불러오는 중…</div>' : loadError ? errorPanel(loadError, '고객사·사이트 목록을 불러오지 못했습니다', 'workspace') : ''}${state.notice ? `<div class="success-notice ${state.noticeTone ?? 'success'}" role="status">${icon(state.noticeTone && state.noticeTone !== 'success' ? 'info' : 'check')}<span>${escape(state.notice)}</span><button class="icon-button" id="dismiss-notice" aria-label="안내 닫기">${icon('close')}</button></div>` : ''}${sitePicker()}${state.view === 'dashboard' ? dashboardView() : state.view === 'inspect' ? inspectionView() : state.view === 'register' ? registrationView() : state.view === 'notify' ? notificationView() : clientsView()}<footer class="page-footer"><span>StartPress Console</span><span>${demo ? '예시 데이터 · 새로고침하면 초기화' : 'API 연결 · 알림 결과와 이번 작업 이력은 이 화면에서만 유지'}</span></footer></main>${detailView()}<div class="visually-hidden" role="status" aria-live="polite" id="live-status"></div>`;
+    <main class="main-content"><div class="breadcrumb"><span>${state.view === 'clients' ? '워크스페이스' : escape(selectedClient()?.name ?? '고객사를 선택하세요')}</span>${icon('chevron')}<span>${viewTitles[state.view]}</span></div><div class="preview-notice">${icon('info')}<span>${demo ? '예시 모드입니다. 실제 검색엔진 요청이나 DB 저장은 하지 않습니다.' : 'API 연결 모드입니다. 고객사·사이트·글 저장은 DB에 반영되며, 발행 알림 선택 시 실제 IndexNow 요청을 실행합니다.'}</span></div>${loading ? '<div class="connection-notice" role="status">서버에서 고객사와 사이트를 불러오는 중…</div>' : loadError ? errorPanel(loadError, '고객사·사이트 목록을 불러오지 못했습니다', 'workspace') : ''}${state.notice ? `<div class="success-notice ${state.noticeTone ?? 'success'}" role="status">${icon(state.noticeTone && state.noticeTone !== 'success' ? 'info' : 'check')}<span>${escape(state.notice)}</span><button class="icon-button" id="dismiss-notice" aria-label="안내 닫기">${icon('close')}</button></div>` : ''}${state.view === 'notify' ? sitePicker() : ''}${state.view === 'dashboard' ? dashboardView() : state.view === 'inspect' ? inspectionView() : state.view === 'register' ? registrationView() : state.view === 'notify' ? notificationView() : clientsView()}<footer class="page-footer"><span>StartPress Console</span><span>${demo ? '예시 데이터 · 새로고침하면 초기화' : 'API 연결 · 알림 결과와 이번 작업 이력은 이 화면에서만 유지'}</span></footer></main>${detailView()}<div class="visually-hidden" role="status" aria-live="polite" id="live-status"></div>`;
   for (const input of privateInputs) {
     const replacement = input.formId ? app.querySelector<HTMLInputElement>(`#${CSS.escape(input.formId)} input[name="${CSS.escape(input.element.name)}"]`) : null;
     input.element.removeAttribute('aria-invalid');
@@ -552,6 +568,13 @@ function setPending(value: boolean): void {
 function applyAvailability(): void {
   app.querySelectorAll<HTMLButtonElement | HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>('button, input, select, textarea').forEach((element): void => { element.disabled = pending || loading; });
   if (pending || loading) return;
+  const run = clientInspections.getState();
+  const refresh = app.querySelector<HTMLButtonElement>('#refresh-index');
+  if (refresh) refresh.disabled = demo || !state.clientId || clientInspectionBusy(run);
+  const cancel = app.querySelector<HTMLButtonElement>('#cancel-client-inspection');
+  if (cancel) cancel.disabled = !clientInspectionBusy(run) || run.cancelRequested;
+  const naverRead = app.querySelector<HTMLButtonElement>('#read-naver-preview');
+  if (naverRead) naverRead.disabled = !!run.naverPreview?.loading || !['awaiting_tabs', 'finished', 'cancelled', 'failed'].includes(run.phase);
   const noSite = !property().id || !property().active;
   const noSitemap = noSite || state.engine === 'naver';
   app.querySelectorAll<HTMLButtonElement | HTMLInputElement>('#toggle-sitemap, #sitemap-form input, #sitemap-form button').forEach((element): void => { element.disabled = noSitemap; });
@@ -562,9 +585,6 @@ function applyAvailability(): void {
   const search = app.querySelector<HTMLInputElement>('#url-inspect');
   if (search) search.disabled = noSite || (!demo && targetsLoading);
   if (!demo) {
-    const unavailable = !!inspectionUnavailable(state.engine, property(), inspectionTarget());
-    const refresh = app.querySelector<HTMLButtonElement>('#refresh-index');
-    if (refresh) refresh.disabled = unavailable || targetsLoading || inspectionLoading;
     const targetSelect = app.querySelector<HTMLSelectElement>('#inspection-target-select');
     if (targetSelect) targetSelect.disabled = targetsLoading || inspectionTargets.length === 0;
     const read = app.querySelector<HTMLButtonElement>('#read-inspection');
@@ -797,50 +817,33 @@ async function addClient(event: SubmitEvent): Promise<void> {
   }
 }
 
-// 예시 조회 시각만 갱신하고 기존 색인 판정은 유지합니다.
-function refreshInspection(): void {
-  if (!demo) { void runApiInspection(); return; }
-  if (refreshTimer !== undefined) return;
-  const button = app.querySelector<HTMLButtonElement>('#refresh-index');
-  if (!button) return;
-  const propertyId = state.propertyId;
-  const engine = state.engine;
-  button.disabled = true;
-  button.innerHTML = `${icon('refresh', 'rotating')}확인 중…`;
-  refreshTimer = setTimeout((): void => {
-    const time = now();
-    inspections = inspections.map((item: Inspection): Inspection => item.propertyId === propertyId && item.engine === engine ? { ...item, checkedAt: time } : item);
-    refreshTimer = undefined;
-    addActivity(`${engineNames[engine]} 색인 상태 업데이트 미리보기`);
-    if (state.propertyId === propertyId && state.engine === engine) update({ notice: '예시 데이터의 확인 시각을 갱신했습니다. 실제 검색엔진 조회나 색인 변경은 발생하지 않았습니다.' });
-  }, 600);
+// 화면 필터와 독립적으로 시작 고객사의 전체 작업을 실행하고 저장 상태를 다시 읽습니다.
+async function refreshClientInspections(): Promise<void> {
+  if (demo || pending || loading || !state.clientId || clientInspectionBusy(clientInspections.getState())) return;
+  const clientId = state.clientId;
+  const clientName = selectedClient()?.name ?? '';
+  await clientInspections.start(clientId, clientName);
+  await refreshFinishedClientInspection();
 }
 
-// 명시적으로 누른 대상·엔진 한 건만 새로 조회하고 오류 시 이전 관측을 보존합니다.
-async function runApiInspection(): Promise<void> {
-  if (pending || loading || targetsLoading || inspectionLoading) return;
-  const target = inspectionTarget();
-  const engine = state.engine;
-  const unavailable = inspectionUnavailable(engine, property(), target);
-  if (unavailable || !target || engine === 'naver') return;
-  setPending(true);
-  inspectionError = null;
-  const button = app.querySelector<HTMLButtonElement>('#refresh-index');
-  if (button) button.innerHTML = `${icon('refresh', 'rotating')}조회 중…`;
-  try {
-    const result = await api.inspect(target.id, engine);
-    storedInspections = [...storedInspections.filter((row: InspectionRead): boolean => row.engine !== engine), result];
-    state = { ...state, notice: `${engineNames[engine]} 상태를 조회해 저장했습니다. 제출·수집 요청은 실행하지 않았습니다.` };
-    addActivity(`${engineNames[engine]} ${target.name} 상태 조회`);
-  } catch (error: unknown) {
-    inspectionError = asAppError(error, 'inspect');
-    state = { ...state, notice: '' };
-    try { storedInspections = await api.getInspections(target.id); } catch { /* 저장 상태를 읽지 못해도 기존 관측과 성공 시각을 유지합니다. */ }
-  } finally {
-    pending = false;
-    render();
-    setPending(false);
+// 탭 선택 대기 중에는 저장 결과를 갱신하지 않고 실행 종료 후 현재 고객사만 다시 읽습니다.
+async function refreshFinishedClientInspection(): Promise<void> {
+  const run = clientInspections.getState();
+  if (!clientInspectionBusy(run) && state.clientId === run.clientId) {
+    await Promise.all([loadDashboard(), loadStoredInspections()]);
   }
+}
+
+// 현재 실행의 엔진별 탭 선택·목록 갱신을 전달하고 자동 재개된 실행 결과를 반영합니다.
+async function prepareClientWorkTab(scope: string, engine: GuiEngine, candidateId?: string): Promise<void> {
+  await clientInspections.chooseTab(scope, engine, candidateId);
+  await refreshFinishedClientInspection();
+}
+
+// 탭이 없는 환경에서도 사용자가 명시적으로 선택하면 기존 API 경로만 계속합니다.
+async function continueClientApiOnly(scope: string): Promise<void> {
+  await clientInspections.continueApiOnly(scope);
+  await refreshFinishedClientInspection();
 }
 
 // 사용자가 명시적으로 제출하며 예시 모드에서는 네트워크 요청을 보내지 않습니다.
@@ -987,7 +990,28 @@ function bindEvents(): void {
   });
   app.querySelector<HTMLFormElement>('#url-search')?.addEventListener('submit', inspectUrl);
   app.querySelector<HTMLInputElement>('#url-inspect')?.addEventListener('input', (event: Event): void => (event.target as HTMLInputElement).setCustomValidity(''));
-  app.querySelector<HTMLButtonElement>('#refresh-index')?.addEventListener('click', refreshInspection);
+  app.querySelector<HTMLButtonElement>('#refresh-index')?.addEventListener('click', (): void => { void refreshClientInspections(); });
+  app.querySelector<HTMLButtonElement>('#cancel-client-inspection')?.addEventListener('click', (): void => clientInspections.cancel());
+  app.querySelectorAll<HTMLFormElement>('[data-work-tab-engine]').forEach((form): void => {
+    form.addEventListener('submit', (event: SubmitEvent): void => {
+      event.preventDefault();
+      const engine = form.dataset.workTabEngine;
+      const candidateId = form.querySelector<HTMLSelectElement>('select[name="tabId"]')?.value;
+      if ((engine === 'naver' || engine === 'bing') && candidateId) void prepareClientWorkTab(form.dataset.scope ?? '', engine, candidateId);
+    });
+  });
+  app.querySelectorAll<HTMLButtonElement>('[data-refresh-work-tab]').forEach((button): void => {
+    button.addEventListener('click', (): void => {
+      const engine = button.dataset.refreshWorkTab;
+      if (engine === 'naver' || engine === 'bing') void prepareClientWorkTab(button.dataset.scope ?? '', engine);
+    });
+  });
+  app.querySelector<HTMLButtonElement>('#continue-api-only')?.addEventListener('click', (event: MouseEvent): void => {
+    void continueClientApiOnly((event.currentTarget as HTMLButtonElement).dataset.scope ?? '');
+  });
+  app.querySelector<HTMLButtonElement>('#read-naver-preview')?.addEventListener('click', (event: MouseEvent): void => {
+    void clientInspections.readNaver((event.currentTarget as HTMLButtonElement).dataset.scope ?? '');
+  });
   app.querySelector<HTMLButtonElement>('#toggle-sitemap')?.addEventListener('click', (): void => { sitemapOpen = !sitemapOpen; render(); if (sitemapOpen) app.querySelector<HTMLInputElement>('#sitemap-url')?.focus(); });
   app.querySelector<HTMLButtonElement>('#close-sitemap')?.addEventListener('click', (): void => { sitemapOpen = false; render(); app.querySelector<HTMLButtonElement>('#toggle-sitemap')?.focus(); });
   app.querySelector<HTMLFormElement>('#sitemap-form')?.addEventListener('submit', (event: SubmitEvent): void => { void submitSitemap(event); });

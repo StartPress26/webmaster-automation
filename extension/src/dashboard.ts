@@ -1,4 +1,4 @@
-import { inspectionTime } from './inspection.ts';
+import { inspectionTime } from './inspection/format.ts';
 import type { Client, ClientDashboard, EngineSummary, Inspection, Property } from './types';
 
 // 선택 고객사 소속 사이트만 반환합니다.
