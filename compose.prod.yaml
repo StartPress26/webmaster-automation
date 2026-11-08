@@ -38,11 +38,21 @@ services:
   # 위에서 &app이라는 이름을 붙인 설정을 현재 위치에 합쳐 넣는것
     <<: *app
     restart: unless-stopped
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL을 .env.prod에 설정하세요}
+      BING_API_KEY: ${BING_API_KEY:?BING_API_KEY를 .env.prod에 설정하세요}
+      GOOGLE_TOKEN_FILE: ${GOOGLE_TOKEN_FILE:?GOOGLE_TOKEN_FILE을 .env.prod에 설정하세요}
     depends_on:
       db:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
+    volumes:
+      - type: bind
+        source: /home/ubuntu/webmaster-secrets
+        target: /srv/startpress/.secrets
+        bind:
+          create_host_path: false
     ports:
       # 팀 접근 경로를 구성하기 전에는 호스트에서만 접속할 수 있습니다.
       - "127.0.0.1:${STARTPRESS_API_PORT:-18000}:8000"
