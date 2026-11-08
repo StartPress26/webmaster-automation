@@ -107,6 +107,7 @@ class BingEngine:
         # 등록 이후에 입력 오류로 중단되지 않도록 외부 요청 전에 모두 검증합니다.
         self._validate_site_url(site_url)
         self._validate_site_url(sitemap_url)
+
         parsed = urlsplit(site_url)
         if parsed.path not in ("", "/") or parsed.query:
             raise ValueError("XML 인증에는 경로·쿼리 없는 루트 사이트 URL이 필요합니다.")
@@ -114,7 +115,9 @@ class BingEngine:
             raise ValueError("verification_ready에는 bool 값을 전달하세요.")
 
         existing_site = await self.get_site(site_url)
+
         site = existing_site if existing_site is not None else await self.register_site(site_url)
+
         if not site.is_verified:
             if not verification_ready:
                 return BingSiteSetup(
@@ -122,10 +125,12 @@ class BingEngine:
                     status="verification_required",
                     verification_file=await self.get_verification_file(site_url),
                 )
+
             # 설치 완료 입력만 믿지 않고 Bing의 확인·재조회가 성공해야 다음 단계로 갑니다.
             await self.verify_ownership(site_url)
 
         await self.submit_sitemap(site_url, sitemap_url)
+
         return BingSiteSetup(site_url=site_url, status="completed")
 
     # 현재 계정의 목록에서 정확히 일치하는 사이트를 찾고 없으면 None을 반환합니다.
@@ -138,6 +143,7 @@ class BingEngine:
         data = await self._request("get", "GetUserSites")
         if not isinstance(data, list):
             raise BingEngineError("response", "Bing 사이트 목록 응답이 올바르지 않습니다.", 200)
+
         # 응답 누락이나 잘못된 자료형을 미등록 또는 미인증으로 해석하지 않습니다.
         for item in data:
             if (
@@ -151,12 +157,15 @@ class BingEngine:
                 )
             ):
                 raise BingEngineError("response", "Bing 사이트 응답 필드를 확인하세요.", 200)
+
         matches = tuple(item for item in data if item["Url"] == site_url)
         if len(matches) > 1:
             raise BingEngineError("response", "Bing 사이트 조회 결과가 중복되었습니다.", 200)
         if not matches:
             return None
+
         site = matches[0]
+
         return BingSite(
             site_url=site["Url"],
             is_verified=site["IsVerified"],
@@ -170,18 +179,21 @@ class BingEngine:
         result = await self._request("post", "AddSite", json={"siteUrl": site_url})
         if result is not None:
             raise BingEngineError("response", "Bing 사이트 등록 응답이 올바르지 않습니다.", 200)
+
         site = await self.get_site(site_url)
         if site is None:
             # 반영 지연일 수 있으므로 등록 실패로 단정하거나 AddSite를 자동 재전송하지 않습니다.
             raise BingEngineError(
                 "response", "Bing 등록 요청 후 사이트를 확인하지 못했습니다. 다시 조회하세요.", 200,
             )
+
         return site
 
     # 등록된 사이트의 인증 코드로 배포할 XML 내용과 설치 주소를 구성합니다.
     async def get_verification_file(self, site_url: str) -> BingVerificationFile:
         """현재는 루트 사이트의 XML 인증만 지원하며 파일 생성·배포·소유 확인은 하지 않습니다."""
         self._validate_site_url(site_url)
+
         parsed = urlsplit(site_url)
         if parsed.path not in ("", "/") or parsed.query:
             raise ValueError("XML 인증에는 경로·쿼리 없는 루트 사이트 URL이 필요합니다.")
@@ -189,6 +201,7 @@ class BingEngine:
         site = await self.get_site(site_url)
         if site is None:
             raise BingEngineError("permission", "Bing에 사이트를 먼저 등록한 뒤 인증 정보를 조회하세요.")
+
         code = site.authentication_code
         if not code or any(
             character.isspace() or ord(character) < 32 or ord(character) == 127
@@ -204,6 +217,7 @@ class BingEngine:
             f"    <user>{escape(code)}</user>\n"
             "</users>\n"
         )
+
         return BingVerificationFile(
             file_name=file_name,
             file_content=file_content,
@@ -221,12 +235,14 @@ class BingEngine:
             raise BingEngineError(
                 "permission", "Bing 소유 확인이 완료되지 않았습니다. 인증 파일 배포를 확인하세요.", 200,
             )
+
         site = await self.get_site(site_url)
         if site is None or not site.is_verified:
             # API의 성공 응답과 조회 결과가 일치하지 않으면 완료로 단정하지 않습니다.
             raise BingEngineError(
                 "permission", "Bing 소유 확인 후 인증 완료 상태를 확인하지 못했습니다. 다시 조회하세요.", 200,
             )
+
         return site
 
     # 이미 배포된 사이트맵의 주소를 Bing에 제출하고 정상 접수 여부를 반환합니다.
@@ -239,6 +255,7 @@ class BingEngine:
         )
         if result is not None:
             raise BingEngineError("response", "Bing 사이트맵 제출 응답이 올바르지 않습니다.", 200)
+
         return True
 
     # 루트 사이트의 메인페이지·글에 대해 Bing이 기록한 수집 정보를 조회합니다.
@@ -246,6 +263,7 @@ class BingEngine:
         """조회만 실행하며 색인 판정·URL 제출·DB 저장은 수행하지 않습니다."""
         self._validate_site_url(site_url)
         self._validate_site_url(page_url)
+
         site = urlsplit(site_url)
         page = urlsplit(page_url)
 
@@ -260,6 +278,7 @@ class BingEngine:
             raise ValueError("검사할 URL은 지정한 Bing 사이트와 같은 출처에 있어야 합니다.")
 
         data = await self._request("get", "GetUrlInfo", params={"siteUrl": site_url, "url": page_url})
+
         checked_at = datetime.now(timezone.utc)
 
         if not isinstance(data, dict) or data.get("Url") != page_url:
@@ -294,15 +313,18 @@ class BingEngine:
     def _parse_api_date(value: object) -> datetime | None:
         if value is None:
             return None
+
         match = re.fullmatch(r"/Date\((-?\d{1,18})([+-]\d{4})?\)/", value) if isinstance(value, str) else None
         if match is None:
             raise BingEngineError("response", "Bing 날짜 응답 형식을 확인하세요.", 200)
+
         milliseconds = int(match[1])
         offset = match[2]
         if offset is not None and (int(offset[1:3]) > 23 or int(offset[3:]) > 59):
             raise BingEngineError("response", "Bing 날짜 시간대 표기를 확인하세요.", 200)
         if milliseconds in (0, -62135596800000):
             return None
+
         try:
             # 밀리초 자체가 UTC 기준이므로 뒤의 시간대 오프셋을 다시 더하지 않습니다.
             return datetime(1970, 1, 1, tzinfo=timezone.utc) + timedelta(milliseconds=milliseconds)
@@ -325,6 +347,7 @@ class BingEngine:
             port = parsed.port
         except ValueError:
             raise ValueError("유효한 HTTP 또는 HTTPS 사이트 URL이 필요합니다.") from None
+
         if (
             parsed.scheme not in ("http", "https")
             or not parsed.hostname
@@ -355,6 +378,7 @@ class BingEngine:
             raise ValueError("Bing API 메서드와 작업 이름을 확인하세요.")
         if params is not None and any(key.lower() == "apikey" for key in params):
             raise ValueError("API 키는 BingEngine 생성 시에만 전달하세요.")
+
         try:
             response = await self.http_client.request(
                 method,
@@ -394,5 +418,6 @@ class BingEngine:
             raise BingEngineError("response", "Bing API 응답 형식이 올바르지 않습니다.", status)
         if "ErrorCode" in data and (type(api_error) is not int or api_error != 0):
             raise BingEngineError("response", "Bing API 오류 응답을 받았습니다.", status)
+
         # 목록·객체·bool·null의 의미와 필드는 각 기능 메서드에서 검증합니다.
         return data["d"]

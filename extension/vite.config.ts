@@ -12,7 +12,8 @@ export default defineConfig({
       },
       output: {
         // manifest에서 참조하는 Worker의 파일명을 빌드마다 동일하게 유지합니다.
-        entryFileNames: (chunk): string => chunk.name === 'background' ? 'background.js' : 'assets/[name]-[hash].js',
+        entryFileNames: (chunk): string =>
+          chunk.name === 'background' ? 'background.js' : 'assets/[name]-[hash].js',
       },
     },
   },

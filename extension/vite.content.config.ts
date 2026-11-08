@@ -9,7 +9,9 @@ export default defineConfig({
     copyPublicDir: false,
     lib: {
       entry: fileURLToPath(new URL(`./src/engines/${engine}/content.ts`, import.meta.url)),
-      name: engine === 'bing' ? 'StartPressBingReader' : 'StartPressNaverReader', formats: ['iife'], fileName: (): string => `${engine}-content.js`,
+      name: engine === 'bing' ? 'StartPressBingReader' : 'StartPressNaverReader',
+      formats: ['iife'],
+      fileName: (): string => `${engine}-content.js`,
     },
   },
 });

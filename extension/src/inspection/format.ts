@@ -14,5 +14,10 @@ export function inspectionTime(value: string | null): string {
   if (!value) return '성공 관측 없음';
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return '시각 확인 필요';
-  return new Intl.DateTimeFormat('ko-KR', { timeZone: 'Asia/Seoul', dateStyle: 'medium', timeStyle: 'short', hour12: false }).format(date);
+  return new Intl.DateTimeFormat('ko-KR', {
+    timeZone: 'Asia/Seoul',
+    dateStyle: 'medium',
+    timeStyle: 'short',
+    hour12: false,
+  }).format(date);
 }

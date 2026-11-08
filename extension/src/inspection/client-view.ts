@@ -6,17 +6,35 @@ import { renderNaverPreview } from '../engines/naver/view.ts';
 
 const engineNames = { google: 'Google', naver: '네이버', bing: 'Bing' } as const;
 const statusNames: Readonly<Record<ClientInspectionTask['status'], string>> = {
-  queued: '조회 대기', running: '조회 중', succeeded: '관측 저장', partial: '크롤링 관측 저장', observed: 'GUI 관측 · DB 미저장',
-  gui_required: 'GUI 조회 미실행', skipped: '지원 범위 제외', failed: '조회 실패', blocked: '실행 중단', cancelled: '취소',
+  queued: '조회 대기',
+  running: '조회 중',
+  succeeded: '관측 저장',
+  partial: '크롤링 관측 저장',
+  observed: 'GUI 관측 · DB 미저장',
+  gui_required: 'GUI 조회 미실행',
+  skipped: '지원 범위 제외',
+  failed: '조회 실패',
+  blocked: '실행 중단',
+  cancelled: '취소',
 };
 const phaseNames: Readonly<Record<ClientInspectionRun['phase'], string>> = {
-  idle: '실행 전', collecting: '대상 수집 중', preparing_tabs: '탭 확인 중', awaiting_tabs: '탭 선택 필요',
-  running: '조회 진행 중', finished: '처리 종료', cancelled: '취소됨', failed: '실행 실패',
+  idle: '실행 전',
+  collecting: '대상 수집 중',
+  preparing_tabs: '탭 확인 중',
+  awaiting_tabs: '탭 선택 필요',
+  running: '조회 진행 중',
+  finished: '처리 종료',
+  cancelled: '취소됨',
+  failed: '실행 실패',
 };
 
 // 고객사 이름·URL·오류 메시지를 HTML에 안전하게 표시합니다.
 function escape(value: string): string {
-  return value.replace(/[&<>"']/g, (char: string): string => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char] ?? char);
+  return value.replace(
+    /[&<>"']/g,
+    (char: string): string =>
+      ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char] ?? char,
+  );
 }
 
 // 엔진별로 검증된 관측만 표시하고 Bing의 크롤링과 색인 상태를 구분합니다.
@@ -24,14 +42,19 @@ function observationDetails(task: ClientInspectionTask): string {
   const result = task.guiObservation;
   if (!result) return '';
 
-  const extra = result.kind === 'verified_bing_gui' ? [
-    result.reason,
-    result.canonicalUrl ? `대표 URL: ${result.canonicalUrl}` : null,
-    result.crawlStatus === 'succeeded' ? '페이지 가져오기: 성공' : null,
-    result.lastCrawledText ? `마지막 크롤링 시도: ${result.lastCrawledText}` : null,
-  ].filter((value): value is string => !!value) : [];
+  const extra =
+    result.kind === 'verified_bing_gui'
+      ? [
+          result.reason,
+          result.canonicalUrl ? `대표 URL: ${result.canonicalUrl}` : null,
+          result.crawlStatus === 'succeeded' ? '페이지 가져오기: 성공' : null,
+          result.lastCrawledText ? `마지막 크롤링 시도: ${result.lastCrawledText}` : null,
+        ].filter((value): value is string => !!value)
+      : [];
 
-  return [result.message, ...extra].map((value): string => `<br><span class="small">${escape(value)}</span>`).join('');
+  return [result.message, ...extra]
+    .map((value): string => `<br><span class="small">${escape(value)}</span>`)
+    .join('');
 }
 
 // 작업 결과는 저장 성공과 실제 색인 확인 여부가 구분되도록 표시합니다.
@@ -51,23 +74,42 @@ function inspectionHelp(): string {
 }
 
 // 고객사 전체 실행을 헤더·진행 지표·탭 준비·결과 표의 동일한 여백 체계로 표시합니다.
-export function renderClientInspection(run: ClientInspectionRun, clientId: string, clientName: string, demo: boolean): string {
+export function renderClientInspection(
+  run: ClientInspectionRun,
+  clientId: string,
+  clientName: string,
+  demo: boolean,
+): string {
   const busy = clientInspectionBusy(run);
   const visible = run.clientId === clientId && run.phase !== 'idle';
-  const apiTasks = visible ? run.tasks.filter((task): boolean => task.route === 'api' && task.status !== 'skipped') : [];
-  const done = apiTasks.filter((task): boolean => !['queued', 'running'].includes(task.status)).length;
-  const saved = apiTasks.filter((task): boolean => task.status === 'succeeded' || task.status === 'partial').length;
+  const apiTasks = visible
+    ? run.tasks.filter((task): boolean => task.route === 'api' && task.status !== 'skipped')
+    : [];
+  const done = apiTasks.filter(
+    (task): boolean => !['queued', 'running'].includes(task.status),
+  ).length;
+  const saved = apiTasks.filter(
+    (task): boolean => task.status === 'succeeded' || task.status === 'partial',
+  ).length;
   const failed = apiTasks.filter((task): boolean => task.status === 'failed').length;
   const blocked = apiTasks.filter((task): boolean => task.status === 'blocked').length;
-  const gui = visible ? run.tasks.filter((task): boolean => task.route === 'gui' && task.status === 'observed').length : 0;
-  const bingTasks = visible ? run.tasks.filter((task): boolean => task.engine === 'bing' && task.route === 'gui') : [];
+  const gui = visible
+    ? run.tasks.filter((task): boolean => task.route === 'gui' && task.status === 'observed').length
+    : 0;
+  const bingTasks = visible
+    ? run.tasks.filter((task): boolean => task.engine === 'bing' && task.route === 'gui')
+    : [];
   const bingDone = bingTasks.filter((task): boolean => task.status === 'observed').length;
   const naverTasks = visible ? run.tasks.filter((task): boolean => task.engine === 'naver') : [];
   const naverDone = naverTasks.filter((task): boolean => task.status === 'observed').length;
-  const tabPanels = visible ? (['naver', 'bing'] as const).map((engine): string => {
-    const tab = run.tabs[engine];
-    return tab ? renderWorkTabPanel(tab, run.scope, engineNames[engine]) : '';
-  }).join('') : '';
+  const tabPanels = visible
+    ? (['naver', 'bing'] as const)
+        .map((engine): string => {
+          const tab = run.tabs[engine];
+          return tab ? renderWorkTabPanel(tab, run.scope, engineNames[engine]) : '';
+        })
+        .join('')
+    : '';
   const selecting = run.phase === 'awaiting_tabs' || run.phase === 'preparing_tabs';
   const expandTabs = selecting || !!run.naverPreview;
   const activePhase = visible ? run.phase : 'idle';
@@ -81,7 +123,9 @@ export function renderClientInspection(run: ClientInspectionRun, clientId: strin
       <button class="button primary" id="refresh-index" ${busy || !clientId || demo ? 'disabled' : ''}>${busy ? '전체 조회 진행 중' : '고객사 전체 색인 조회'}</button>
     </div></header>
     ${busy && !visible ? `<div class="inspection-run-notice" role="status"><span class="inspection-state-dot"></span><p>${escape(run.clientName)} 작업이 진행 중입니다.${run.phase === 'awaiting_tabs' ? ' 해당 고객사에서 작업 탭을 선택하세요.' : ' 현재 고객사의 데이터와 분리해 처리합니다.'}</p></div>` : ''}
-    ${visible ? `<div class="inspection-progress" id="client-inspection-progress" role="status">
+    ${
+      visible
+        ? `<div class="inspection-progress" id="client-inspection-progress" role="status">
       <div class="inspection-progress-heading"><span class="inspection-phase ${activePhase}"><span class="inspection-state-dot"></span>${phaseNames[activePhase]}</span><p>${escape(run.message)}</p></div>
       <dl class="inspection-metrics">
         <div aria-label="대상 URL ${run.targetCount}개"><dt>조회 대상</dt><dd>${run.targetCount}<span>개 URL</span></dd></div>
@@ -91,12 +135,18 @@ export function renderClientInspection(run: ClientInspectionRun, clientId: strin
       </dl>
       <div class="inspection-progress-footer"><span>처리 현황이며, 색인 완료율이 아닙니다.</span><span>실패 ${failed}건 <span aria-hidden="true">·</span> 중단 ${blocked}건 <span aria-hidden="true">·</span> 엔진 작업 ${run.tasks.length}건</span><span>네이버 GUI 관측 ${naverDone}/${naverTasks.length}건 · Bing GUI 관측 ${bingDone}/${bingTasks.length}건 · DB 미저장</span></div>
       ${apiTasks.length ? `<progress class="inspection-progress-bar" value="${done}" max="${apiTasks.length}" aria-label="API 요청 처리 진행률">${done}/${apiTasks.length}</progress>` : ''}
-    </div>` : `<div class="inspection-coverage" aria-label="검색엔진별 조회 범위"><span class="inspection-engine-name"><span class="engine-symbol google" aria-hidden="true">G</span>Google <span>색인 상태</span></span><span class="inspection-engine-name"><span class="engine-symbol naver" aria-hidden="true">N</span>네이버 <span>GUI 색인 조회</span></span><span class="inspection-engine-name"><span class="engine-symbol bing" aria-hidden="true">b</span>Bing <span>GUI 색인 조회 · API 크롤링</span></span>${demo ? '<span class="inspection-demo-note">예시 모드 · 실행하지 않음</span>' : ''}</div>`}
-    ${tabPanels ? `<details class="inspection-tab-section" ${expandTabs ? 'open' : ''}><summary><span>작업 탭</span><span class="inspection-tab-caption">${selecting ? '엔진별로 사용할 탭을 확인하세요' : '선택한 탭 확인'}</span></summary>
+    </div>`
+        : `<div class="inspection-coverage" aria-label="검색엔진별 조회 범위"><span class="inspection-engine-name"><span class="engine-symbol google" aria-hidden="true">G</span>Google <span>색인 상태</span></span><span class="inspection-engine-name"><span class="engine-symbol naver" aria-hidden="true">N</span>네이버 <span>GUI 색인 조회</span></span><span class="inspection-engine-name"><span class="engine-symbol bing" aria-hidden="true">b</span>Bing <span>GUI 색인 조회 · API 크롤링</span></span>${demo ? '<span class="inspection-demo-note">예시 모드 · 실행하지 않음</span>' : ''}</div>`
+    }
+    ${
+      tabPanels
+        ? `<details class="inspection-tab-section" ${expandTabs ? 'open' : ''}><summary><span>작업 탭</span><span class="inspection-tab-caption">${selecting ? '엔진별로 사용할 탭을 확인하세요' : '선택한 탭 확인'}</span></summary>
       <fieldset class="work-tab-preparation" ${run.phase === 'awaiting_tabs' ? '' : 'disabled'}><legend class="visually-hidden">엔진별 작업 탭 준비</legend>${tabPanels}</fieldset>
       ${run.tabs.naver?.selected ? renderNaverPreview(run.scope, run.naverPreview, ['awaiting_tabs', 'finished', 'cancelled', 'failed'].includes(run.phase)) : ''}
       ${run.phase === 'awaiting_tabs' ? `<div class="inspection-tab-footer"><p>탭이 하나면 자동 선택합니다. 네이버·Bing은 선택한 탭에서 사이트와 URL을 순차 조회합니다.</p><button class="inspection-text-button" id="continue-api-only" data-scope="${escape(run.scope)}">탭 없이 API 조회만 계속</button></div>` : ''}
-    </details>` : ''}
+    </details>`
+        : ''
+    }
     ${visible && run.tasks.length ? `<details class="inspection-results" ${[...naverTasks, ...bingTasks].some((task): boolean => ['observed', 'failed', 'blocked'].includes(task.status)) ? 'open' : ''}><summary><span>사이트·URL·엔진별 작업 결과</span><span>${run.tasks.length}건</span></summary><div class="table-scroll"><table class="inspection-results-table"><thead><tr><th scope="col">사이트 / URL</th><th scope="col">검색엔진</th><th scope="col">처리 상태</th><th scope="col">안내</th></tr></thead><tbody>${run.tasks.map(taskRow).join('')}</tbody></table></div></details>` : ''}
     ${inspectionHelp()}
   </section>`;

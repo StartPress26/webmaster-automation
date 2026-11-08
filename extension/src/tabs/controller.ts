@@ -25,7 +25,13 @@ export interface WorkTabController {
 }
 
 const emptyState: WorkTabState = {
-  scope: '', engine: null, candidates: [], selected: null, message: '', choosing: false, busy: false,
+  scope: '',
+  engine: null,
+  candidates: [],
+  selected: null,
+  message: '',
+  choosing: false,
+  busy: false,
 };
 
 // 탭 확인 실패를 색인 조회 결과와 구분되는 안내로 변환합니다.
@@ -42,11 +48,13 @@ function failureMessage(result: Extract<TabCheck, { readonly connected: false }>
 }
 
 // DOM과 분리된 엔진 공통 탭 선택·재검증 상태를 관리합니다.
-export function createWorkTabController(dependencies: WorkTabDependencies = {
-  list: listWorkTabs,
-  check: checkWorkTab,
-  available: (): boolean => !!globalThis.chrome?.tabs,
-}): WorkTabController {
+export function createWorkTabController(
+  dependencies: WorkTabDependencies = {
+    list: listWorkTabs,
+    check: checkWorkTab,
+    available: (): boolean => !!globalThis.chrome?.tabs,
+  },
+): WorkTabController {
   let state = emptyState;
   let version = 0;
 
@@ -67,10 +75,14 @@ export function createWorkTabController(dependencies: WorkTabDependencies = {
     const sameScope = state.scope === scope && state.engine === engine;
     if (sameScope && state.busy) return;
 
-
-    const selected = candidateId === undefined
-      ? (sameScope ? state.selected : null)
-      : (sameScope ? state.candidates.find((tab: WorkTab): boolean => String(tab.tabId) === candidateId) : null);
+    const selected =
+      candidateId === undefined
+        ? sameScope
+          ? state.selected
+          : null
+        : sameScope
+          ? state.candidates.find((tab: WorkTab): boolean => String(tab.tabId) === candidateId)
+          : null;
 
     if (candidateId !== undefined && !selected) return;
 
@@ -88,8 +100,10 @@ export function createWorkTabController(dependencies: WorkTabDependencies = {
 
         if (result.connected) {
           state = {
-            ...state, selected: result.tab,
-            message: '탭 준비됨 · 주소와 문서 준비 상태만 확인했습니다. 로그인·선택 사이트·색인 결과 확인과 GUI 조회·저장은 아직 실행하지 않았습니다.',
+            ...state,
+            selected: result.tab,
+            message:
+              '탭 준비됨 · 주소와 문서 준비 상태만 확인했습니다. 로그인·선택 사이트·색인 결과 확인과 GUI 조회·저장은 아직 실행하지 않았습니다.',
           };
 
           return;
@@ -110,7 +124,12 @@ export function createWorkTabController(dependencies: WorkTabDependencies = {
         if (requestVersion !== version) return;
 
         if (result.connected) {
-          state = { ...state, selected: result.tab, message: '탭 준비됨 · 주소와 문서 준비 상태만 확인했습니다. 로그인·선택 사이트·색인 결과 확인과 GUI 조회·저장은 아직 실행하지 않았습니다.' };
+          state = {
+            ...state,
+            selected: result.tab,
+            message:
+              '탭 준비됨 · 주소와 문서 준비 상태만 확인했습니다. 로그인·선택 사이트·색인 결과 확인과 GUI 조회·저장은 아직 실행하지 않았습니다.',
+          };
           return;
         }
 
@@ -118,10 +137,14 @@ export function createWorkTabController(dependencies: WorkTabDependencies = {
       }
 
       state = {
-        ...state, candidates, choosing: true,
-        message: failure + (candidates.length
-          ? '조회에 사용할 탭을 선택하거나 목록을 다시 확인하세요.'
-          : '열린 작업 탭이 없습니다. 선택한 검색엔진의 콘솔 탭을 준비하세요.'),
+        ...state,
+        candidates,
+        choosing: true,
+        message:
+          failure +
+          (candidates.length
+            ? '조회에 사용할 탭을 선택하거나 목록을 다시 확인하세요.'
+            : '열린 작업 탭이 없습니다. 선택한 검색엔진의 콘솔 탭을 준비하세요.'),
       };
     } catch {
       if (requestVersion !== version) return;
