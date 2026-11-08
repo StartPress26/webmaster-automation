@@ -18,11 +18,14 @@ test('탭 컨트롤러와 선택 화면은 세 엔진을 공통으로 지원한�
       check: async (selected) => { checks += 1; return { connected: true, tab: selected }; },
       available: () => true,
     });
+
     await controller.prepare('scope', tab.engine);
     assert.deepEqual(controller.getState().candidates, [tab, { ...tab, tabId: 99 }]);
     assert.equal(controller.getState().selected, null);
     assert.equal(checks, 0);
+
     const html = renderWorkTabPanel(controller.getState(), 'scope', tab.title);
+
     assert.ok(html.includes(`${tab.title} 작업 탭`));
     assert.equal(renderWorkTabPanel(controller.getState(), 'other', tab.title), '');
     await controller.prepare('scope', tab.engine, '999');
@@ -45,8 +48,11 @@ test('범위 초기화 후 늦은 응답과 이전 finally는 새 요청에 영�
     available: () => true,
   });
   const oldRequest = controller.prepare('a', 'naver');
+
   controller.reset();
+
   const newRequest = controller.prepare('b', 'bing');
+
   finishOld(tabs);
   await oldRequest;
   assert.equal(controller.getState().scope, 'b');
@@ -64,6 +70,7 @@ test('유효하지 않은 기존 선택은 실패 사유와 재선택으로 전�
     check: async () => ({ connected: false, reason: 'url_changed' }),
     available: () => true,
   });
+
   await controller.prepare('scope', 'bing');
   await controller.prepare('scope', 'bing', '3');
   assert.equal(controller.getState().selected, null);
@@ -79,6 +86,7 @@ test('탭 조회 오류는 환경별 안내로 처리하고 진행 상태를 해
       check: async () => assert.fail('선택 없음'),
       available: () => available,
     });
+
     await controller.prepare('scope', 'google');
     assert.equal(controller.getState().busy, false);
     assert.match(controller.getState().message, available ? /접근 권한/ : /설치된 Chrome/);
@@ -93,8 +101,11 @@ test('탭 선택 화면은 외부 문자열을 이스케이프한다', async () 
     check: async () => assert.fail('선택 없음'),
     available: () => true,
   });
+
   await controller.prepare('scope', 'naver');
+
   const html = renderWorkTabPanel(controller.getState(), 'scope', '<엔진>');
+
   assert.ok(!html.includes('<script>'));
   assert.ok(html.includes('&lt;script&gt;'));
   assert.ok(html.includes('&lt;엔진&gt;'));
@@ -110,6 +121,7 @@ test('단일 후보 자동 선택도 닫힘·주소 변경·문서 준비 여부
       check: async () => { checks += 1; return { connected: false, reason }; },
       available: () => true,
     });
+
     await controller.prepare('scope', 'naver');
     assert.equal(checks, 1);
     assert.equal(controller.getState().selected, null);

@@ -9,12 +9,14 @@ export async function submitPageBatch(
 ): Promise<readonly PageOutcome[]> {
   let outcomes: readonly PageOutcome[] = [];
   let stopped = false;
+
   for (const article of articles) {
     if (stopped) {
       outcomes = [...outcomes, { article, saveStatus: 'not_sent', message: '앞선 요청을 확인하거나 대기해야 하므로 실행하지 않았습니다.' }];
       report(outcomes);
       continue;
     }
+
     try {
       const result = await submit(article);
       outcomes = [...outcomes, { article, saveStatus: 'saved', result, message: '' }];
@@ -23,7 +25,9 @@ export async function submitPageBatch(
       outcomes = [...outcomes, { article, saveStatus: ambiguous ? 'unknown' : 'rejected', message: error instanceof Error ? error.message : '결과를 확인하지 못했습니다.', ...(error instanceof ApiError ? { error } : {}) }];
       stopped = ambiguous || (error instanceof ApiError && error.status === 429);
     }
+
     report(outcomes);
   }
+
   return outcomes;
 }

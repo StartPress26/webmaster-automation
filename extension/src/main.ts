@@ -124,7 +124,9 @@ function dashboardView(): string {
   if (!client) return `${heading}<section class="report empty-state">선택할 고객사가 없습니다.<p>고객사 관리에서 첫 고객사를 추가하세요.</p><button class="button primary" data-view="clients">고객사 관리</button></section>`;
   if (dashboardLoading) return `${heading}<section class="report empty-state" role="status">고객사 통계를 불러오는 중…</section>`;
   if (dashboardError) return `${heading}${errorPanel(dashboardError, '고객사 통계를 불러오지 못했습니다')}`;
+
   const data = demo ? demoDashboard(client, properties, inspections) : dashboardData;
+
   return `${heading}${data && data.client.id === client.id ? dashboardContent(data) : '<section class="report empty-state">통계 새로고침으로 저장된 현황을 확인하세요.</section>'}`;
 }
 
@@ -132,13 +134,18 @@ function dashboardView(): string {
 async function loadDashboard(): Promise<void> {
   const version = ++dashboardVersion;
   const id = state.clientId;
+
   dashboardData = null;
   dashboardError = null;
   dashboardLoading = !demo && !!id;
+
   if (state.view === 'dashboard') render();
+
   if (demo || !id) return;
+
   try {
     const result = await api.getDashboard(id);
+
     if (version === dashboardVersion && id === state.clientId) {
       if (result.client.id !== id) throw new ApiError(0, '요청한 고객사와 통계 응답이 다릅니다.');
       dashboardData = result;
@@ -156,6 +163,7 @@ async function loadDashboard(): Promise<void> {
 // 선택 블로그의 초안·결과를 분리하고 이전 설정 요청을 무효화합니다.
 function selectProperty(id: string): void {
   if (id && !clientProperties(properties, state.clientId).some((site): boolean => site.id === id)) return;
+
   notificationDraft = ''; notificationTitles = ''; requestText = '';
   outcomes = outcomeHistory.get(id) ?? [];
   outcomesError = null;
@@ -170,7 +178,9 @@ function selectProperty(id: string): void {
 // 고객사를 바꾸면 소속 블로그로 선택을 제한하고 통계를 다시 읽습니다.
 function selectClient(id: string): void {
   if (!clients.some((client): boolean => client.id === id)) return;
+
   if (id !== state.clientId) activities = [];
+
   state = { ...state, ...clientSelection(properties, id), notice: '' };
   dashboardData = null;
   dashboardError = null;
@@ -220,12 +230,15 @@ function engines(): string {
 // 색인 상태 요약과 필터 가능한 URL 목록을 표시합니다.
 function inspectionView(): string {
   if (!demo) return apiInspectionView();
+
   if (new URLSearchParams(window.location.search).get('error') === 'auth') {
     const example = new ApiError(503, 'Google API 인증 갱신에 실패했습니다. 서버 연결 상태 또는 OAuth 재인증을 확인하세요.', { code: 'GOOGLE_AUTH_REFRESH_FAILED', operation: 'inspect' });
     return `<div class="page-heading"><div><h1>색인 상태 확인</h1><p>Google 인증 오류 화면 예시 · 실제 요청은 실행하지 않습니다.</p></div></div><section class="report error-preview"><div class="report-header"><h2>최근 조회 오류</h2></div>${errorPanel(example, 'Google 상태를 조회하지 못했습니다')}<p class="previous-result-note">마지막 성공 결과: 없음 · 이번 오류로 미색인 여부를 판단하지 않습니다.</p></section>`;
   }
+
   const rows = currentRows();
   const visible = rows.filter((row: Inspection): boolean => state.filter === 'all' || row.status === state.filter);
+
   return `<div class="page-heading"><div><h1>색인 상태 확인</h1><p>검색엔진이 내 사이트의 페이지를 어떻게 보고 있는지 확인하세요.</p></div>${inspectionActions()}</div>
     ${clientInspectionPanel()}
     <div class="inspection-saved-heading"><h2>저장된 결과</h2><p>블로그와 검색엔진을 선택해 URL별 관측 결과를 확인하세요.</p></div>
@@ -268,6 +281,7 @@ function apiInspectionView(): string {
   const previousError = observation?.error_message ? new ApiError(0, observation.error_message, { code: observation.error_code ?? 'SAVED_INSPECTION_ERROR', operation: 'inspect' }) : null;
   const failure = inspectionError ?? previousError;
   const explanation = state.engine === 'naver' ? '고객사 전체 조회에서 네이버 사이트·URL별 GUI 검사를 수행합니다. 이번 GUI 관측은 전체 작업 결과에 표시하며 서버 저장 상태와 구분합니다.' : state.engine === 'bing' ? 'Bing은 현재 API로 크롤링 상태를 조회합니다. 실제 색인 여부를 추정하지 않습니다.' : 'Google URL Inspection API로 저장된 색인 상태를 조회합니다. URL 제출이나 색인 요청은 실행하지 않습니다.';
+
   return `<div class="page-heading"><div><h1>색인 상태 확인</h1><p>블로그·메인페이지·글·엔진을 선택해 저장된 상태를 확인하세요.</p></div>${inspectionActions()}</div>
     ${clientInspectionPanel()}
     <div class="inspection-saved-heading"><h2>저장된 결과</h2><p>블로그와 검색엔진을 선택해 URL별 관측 결과를 확인하세요.</p></div>
@@ -318,6 +332,7 @@ function notificationView(): string {
     { id: 'link', title: '우리 블로그에 링크 추가', subtitle: '고객사 글을 소개하는 경로', icon: 'link' },
     { id: 'request', title: '고객사에 요청', subtitle: '담당자에게 제출 요청', icon: 'mail' },
   ];
+
   return `<div class="page-heading"><div><h1>새 글 발행 알림</h1><p>등록된 사이트의 새 글을 검색엔진에 알리거나 후속 작업을 준비하세요.</p></div></div>
     ${property().id ? '' : '<div class="inline-note">먼저 사이트를 등록하거나 왼쪽에서 사이트를 선택하세요.</div>'}
     <div class="route-options" role="group" aria-label="발행 알림 처리 방법">${routes.map((route): string => `<button class="route-option ${state.route === route.id ? 'selected' : ''}" data-route="${route.id}" aria-pressed="${state.route === route.id}">${icon(route.icon)}<strong>${route.title}</strong><span>${route.subtitle}</span>${state.route === route.id ? icon('check', 'route-check') : ''}</button>`).join('')}</div>
@@ -348,30 +363,39 @@ function activityView(): string {
 function detailView(): string {
   const row = inspections.find((item: Inspection): boolean => item.id === state.selectedId);
   if (!row) return '';
+
   const indexed = row.status === 'indexed';
   const crawled = row.crawledAt !== null;
+
   return `<div class="modal-backdrop" id="detail-backdrop"><section class="detail-dialog" role="dialog" aria-modal="true" aria-labelledby="detail-heading" tabindex="-1"><header class="detail-header"><h2 id="detail-heading">URL 검사 결과</h2><button class="icon-button" id="close-detail" aria-label="상세 결과 닫기">${icon('close')}</button></header><div class="detail-body"><div class="detail-result ${indexed ? 'indexed' : row.status}">${icon(indexed ? 'check' : 'info')}<div><h3>${statusNames[row.status]}</h3><p>${indexed ? '이 URL의 색인 등록이 확인되었습니다.' : row.status === 'not_indexed' ? '이 관측에서는 색인이 확인되지 않았습니다.' : '최종 색인 결과가 아직 확인되지 않았습니다.'}</p></div></div><p class="detail-url">${escape(property().origin + row.path)}</p><ol class="inspection-steps"><li><span class="step-mark">?</span><strong>URL 제출</strong><span>접수 기록 미확인</span></li><li><span class="step-mark">${row.status === 'waiting' ? '•' : '?'}</span><strong>수집 대기</strong><span>${row.status === 'waiting' ? '현재 예시 상태' : '대기 이력 미확인'}</span></li><li class="${crawled ? 'observed' : ''}"><span class="step-mark">${crawled ? '✓' : '?'}</span><strong>크롤링</strong><span>${crawled ? escape(row.crawledAt ?? '') : '아직 확인되지 않음'}</span></li><li class="${indexed ? 'observed' : ''}"><span class="step-mark">${indexed ? '✓' : '?'}</span><strong>색인 여부</strong><span>${indexed ? '색인됨' : row.status === 'not_indexed' ? '색인되지 않음' : '아직 확인되지 않음'}</span></li></ol><dl class="property-facts"><div><dt>검색엔진</dt><dd>${engineNames[row.engine]}</dd></div><div><dt>마지막 확인</dt><dd>${escape(row.checkedAt)}</dd></div><div><dt>데이터</dt><dd>미리보기 예시</dd></div></dl><div class="inline-note">단계는 항상 순서대로 관측되는 것이 아닙니다. 제출 이력이 없어도 크롤링·색인이 확인될 수 있습니다.</div></div></section></div>`;
 }
 
 // 전체 관리 화면과 현재 선택한 작업 페이지를 표시합니다.
 function render(): void {
   if (renderedScope) formDrafts = captureFormDrafts(app, renderedScope, formDrafts);
+
   const scope = `${state.clientId}:${state.view}:${state.propertyId}:${state.route}`;
   const privateInputs = renderedScope === scope ? Array.from(app.querySelectorAll<HTMLInputElement>('input[name="indexnowKey"], input[name="indexnowLocation"]')).map((element) => ({ formId: element.form?.id, element })) : [];
+
   document.title = `StartPress · ${viewTitles[state.view]}`;
   app.innerHTML = `<header class="app-header"><button class="icon-button menu-toggle" id="menu-toggle" aria-label="왼쪽 메뉴 열기 또는 닫기" aria-expanded="${window.matchMedia('(max-width:760px)').matches ? state.mobileNav : !state.mobileNav}">${icon('menu')}</button><a class="brand" href="#inspect" aria-label="StartPress 홈"><span class="brand-symbol"><span></span><span></span><span></span></span><span>StartPress <span class="brand-subtitle">Console</span></span></a><form class="global-search" id="url-search"><label class="visually-hidden" for="url-inspect">선택한 사이트의 URL 검사</label>${icon('search')}<input id="url-inspect" type="url" placeholder="${escape(property().origin)} 내 URL 검사" required autocomplete="off"><kbd>URL 검사</kbd></form><div class="header-end"><a class="mode-switch" href="${demo ? '/' : '/?mode=demo'}">${demo ? 'API 모드로' : '예시 모드'}</a><span class="user-avatar" aria-label="StartPress 팀">S</span></div></header>
     <aside class="sidebar ${state.mobileNav ? 'open' : ''}"><label class="property-picker"><span class="property-symbol">${icon('users')}</span><span class="visually-hidden">관리할 고객사 선택</span><select id="client-select">${clients.length ? clients.map((client: Client): string => `<option value="${escape(client.id)}" ${client.id === state.clientId ? 'selected' : ''}>${escape(client.name)}</option>`).join('') : '<option value="">등록된 고객사 없음</option>'}</select></label><div class="sidebar-client">담당자: ${escape(selectedClient()?.manager || '미지정')}<span>${clientProperties(properties, state.clientId).length}개 블로그</span></div>${navigation('dashboard', 'dashboard')}<div class="nav-divider"></div><div class="nav-section-label">검색엔진 관리</div><nav aria-label="검색엔진 관리">${navigation('register', 'globe')}${navigation('notify', 'send')}${navigation('inspect', 'inspect')}</nav><div class="nav-divider"></div><div class="nav-section-label">워크스페이스</div><nav aria-label="워크스페이스">${navigation('clients', 'users')}</nav><div class="sidebar-bottom"><span class="team-symbol">SP</span><div>StartPress 팀<span>사이트 운영 워크스페이스</span></div></div></aside>
     <main class="main-content"><div class="breadcrumb"><span>${state.view === 'clients' ? '워크스페이스' : escape(selectedClient()?.name ?? '고객사를 선택하세요')}</span>${icon('chevron')}<span>${viewTitles[state.view]}</span></div><div class="preview-notice">${icon('info')}<span>${demo ? '예시 모드입니다. 실제 검색엔진 요청이나 DB 저장은 하지 않습니다.' : 'API 연결 모드입니다. 고객사·사이트·글 저장은 DB에 반영되며, 발행 알림 선택 시 실제 IndexNow 요청을 실행합니다.'}</span></div>${loading ? '<div class="connection-notice" role="status">서버에서 고객사와 사이트를 불러오는 중…</div>' : loadError ? errorPanel(loadError, '고객사·사이트 목록을 불러오지 못했습니다', 'workspace') : ''}${state.notice ? `<div class="success-notice ${state.noticeTone ?? 'success'}" role="status">${icon(state.noticeTone && state.noticeTone !== 'success' ? 'info' : 'check')}<span>${escape(state.notice)}</span><button class="icon-button" id="dismiss-notice" aria-label="안내 닫기">${icon('close')}</button></div>` : ''}${state.view === 'notify' ? sitePicker() : ''}${state.view === 'dashboard' ? dashboardView() : state.view === 'inspect' ? inspectionView() : state.view === 'register' ? registrationView() : state.view === 'notify' ? notificationView() : clientsView()}<footer class="page-footer"><span>StartPress Console</span><span>${demo ? '예시 데이터 · 새로고침하면 초기화' : 'API 연결 · 알림 결과와 이번 작업 이력은 이 화면에서만 유지'}</span></footer></main>${detailView()}<div class="visually-hidden" role="status" aria-live="polite" id="live-status"></div>`;
+
   for (const input of privateInputs) {
     const replacement = input.formId ? app.querySelector<HTMLInputElement>(`#${CSS.escape(input.formId)} input[name="${CSS.escape(input.element.name)}"]`) : null;
     input.element.removeAttribute('aria-invalid');
     if (input.element.getAttribute('aria-describedby')?.startsWith('field-error-')) input.element.removeAttribute('aria-describedby');
     replacement?.replaceWith(input.element);
   }
+
   bindEvents();
   restoreFormDrafts(app, scope, formDrafts);
+
   const notify = app.querySelector<HTMLInputElement>('#notify-enabled');
+
   if (notify) notifyEnabled = notify.checked;
+
   renderedScope = scope;
   applyAvailability();
 }
@@ -382,6 +406,7 @@ function parseUrl(value: string): URL {
   if (!['https:', 'http:'].includes(parsed.protocol) || parsed.username || parsed.password || parsed.hash) {
     throw new Error('인증정보나 #이 없는 HTTP(S) URL을 입력하세요.');
   }
+
   return parsed;
 }
 
@@ -389,9 +414,11 @@ function parseUrl(value: string): URL {
 function targetUrl(value: string, allowHomepage = false): URL {
   const parsed = parseUrl(value);
   if (!property().id) throw new Error('먼저 사이트를 등록하거나 선택하세요.');
+
   const parent = new URL(property().siteUrl);
   const prefix = decodeURIComponent(parent.pathname).replace(/\/$/, '') + '/';
   if (parsed.origin !== parent.origin || !decodeURIComponent(parsed.pathname).startsWith(prefix) || (!allowHomepage && parsed.href === parent.href)) throw new Error('선택한 사이트의 출처·경로에 속한 개별 글 URL을 입력하세요.');
+
   return parsed;
 }
 
@@ -399,19 +426,28 @@ function targetUrl(value: string, allowHomepage = false): URL {
 function showError(selector: string, error: unknown): void {
   const element = app.querySelector<HTMLElement>(selector);
   if (!element) return;
+
   setPending(false);
+
   const issue = asAppError(error, 'save');
   const form = element.closest('form');
+
   if (form) clearFormErrors(form);
+
   const titles: Record<string, string> = { '#registration-error': '사이트 정보를 저장하지 못했습니다', '#client-error': '고객사를 저장하지 못했습니다', '#indexnow-error': 'IndexNow 설정을 저장하지 못했습니다', '#notification-error': '글 처리 요청을 완료하지 못했습니다' };
   const recovery = selector === '#indexnow-error' && (uncertainWrite(issue) || issue.kind === 'conflict') ? 'settings' : ['#registration-error', '#client-error'].includes(selector) && (uncertainWrite(issue) || issue.kind === 'conflict' || issue.kind === 'not_found') ? 'workspace' : issue.kind === 'conflict' && selector === '#notification-error' ? 'targets' : undefined;
+
   element.innerHTML = errorPanel(issue, titles[selector] ?? '입력을 확인하세요', recovery);
+
   const aliases: Record<string, string> = { client_id: 'clientId', name: form?.id === 'client-form' ? 'clientName' : form?.id === 'notification-form' ? 'titles' : 'siteName', url: form?.id === 'registration-form' ? 'origin' : 'urls', key: 'indexnowKey', key_location: 'indexnowLocation', indexnow_key: 'indexnowKey', indexnow_key_location: 'indexnowLocation' };
   let first: HTMLElement | null = null;
+
   for (const field of issue.fields) {
     const input = form?.querySelector<HTMLElement>(`[name="${CSS.escape(aliases[field.field] ?? field.field)}"]`);
     if (!input) continue;
+
     const message = document.createElement('span');
+
     message.className = 'field-error';
     message.dataset.fieldError = '';
     message.id = `field-error-${form?.id}-${aliases[field.field] ?? field.field}`;
@@ -421,8 +457,10 @@ function showError(selector: string, error: unknown): void {
     input.insertAdjacentElement('afterend', message);
     first ??= input;
   }
+
   if (first) first.focus();
   else { element.setAttribute('tabindex', '-1'); element.focus(); }
+
   bindErrorActions(element);
 }
 
@@ -443,10 +481,15 @@ function bindErrorActions(container: HTMLElement): void {
   container.querySelectorAll<HTMLButtonElement>('[data-error-action]').forEach((button): void => {
     button.addEventListener('click', (): void => {
       if (pending || loading) return;
+
       if (button.dataset.errorAction === 'workspace') void loadWorkspace();
+
       if (button.dataset.errorAction === 'settings') void loadSettings();
+
       if (button.dataset.errorAction === 'saved') void loadStoredInspections();
+
       if (button.dataset.errorAction === 'saves') void verifySavedPages();
+
       if (button.dataset.errorAction === 'targets') { update({ view: 'inspect', notice: '', mobileNav: false }); void loadInspectionTargets(); }
     });
   });
@@ -460,11 +503,15 @@ function mapSite(item: SiteRead): Property {
 // 선택 대상의 저장 결과를 읽고 이전 대상에 대한 늦은 응답은 무시합니다.
 async function loadStoredInspections(): Promise<void> {
   if (demo || !inspectionTargetId) return;
+
   const version = ++observationVersion;
   const id = inspectionTargetId;
+
   inspectionLoading = true;
   inspectionError = null;
+
   if (state.view === 'inspect') render();
+
   try {
     const rows = await api.getInspections(id);
     if (version === observationVersion && id === inspectionTargetId) storedInspections = rows;
@@ -481,10 +528,14 @@ async function loadStoredInspections(): Promise<void> {
 // 메인페이지와 저장된 글 목록을 읽고 검색엔진 호출 없이 조회 대상을 준비합니다.
 async function loadInspectionTargets(): Promise<void> {
   if (demo) return;
+
   const version = ++targetsVersion;
+
   ++observationVersion;
+
   const site = property();
   const oldTargetId = inspectionTargetId;
+
   inspectionTargetId = site.id;
   storedInspections = [];
   inspectionLoading = false;
@@ -492,8 +543,11 @@ async function loadInspectionTargets(): Promise<void> {
   targetsError = null;
   inspectionError = null;
   inspectionTargets = site.id ? [{ id: site.id, name: site.name, url: site.siteUrl, active: site.active, type: 'site' }] : [];
+
   if (state.view === 'inspect') render();
+
   if (!site.id) { targetsLoading = false; if (state.view === 'inspect') render(); return; }
+
   try {
     const pages = await api.listPages(site.id);
     if (version !== targetsVersion || site.id !== state.propertyId) return;
@@ -507,17 +561,22 @@ async function loadInspectionTargets(): Promise<void> {
       if (state.view === 'inspect') render();
     }
   }
+
   if (version === targetsVersion && site.id === state.propertyId) await loadStoredInspections();
 }
 
 // 현재 사이트의 설정을 조회하고 이전 사이트의 늦은 응답은 무시합니다.
 async function loadSettings(): Promise<void> {
   if (demo || !property().id) return;
+
   const version = ++settingsRequest;
   const id = property().id;
+
   settingsLoading = true;
   settingsError = null;
+
   if (state.view === 'notify') { capturePublicationDraft(); render(); }
+
   try {
     const settings = await api.getSettings(id);
     if (version !== settingsRequest || id !== state.propertyId) return;
@@ -538,15 +597,19 @@ async function loadSettings(): Promise<void> {
 // 고객사와 메인 사이트 목록을 서버에서 읽고 실패 시 예시 데이터로 대체하지 않습니다.
 async function loadWorkspace(): Promise<void> {
   if (loading && clients.length > 0) return;
+
   loading = true;
   loadError = null;
   render();
+
   try {
     const result = await api.listClients();
     const siteLists = await Promise.all(result.map((item): Promise<readonly SiteRead[]> => api.listSites(item.id)));
     clients = result.map((item): Client => ({ id: item.id, name: item.name, manager: item.manager_name ?? '' }));
     properties = siteLists.flat().map(mapSite);
+
     const clientId = clients.some((item): boolean => item.id === state.clientId) ? state.clientId : clients[0]?.id ?? '';
+
     state = { ...state, ...clientSelection(properties, clientId, state.propertyId) };
   } catch (error: unknown) {
     loadError = asAppError(error);
@@ -554,6 +617,7 @@ async function loadWorkspace(): Promise<void> {
     loading = false;
     render();
   }
+
   if (!loadError) await Promise.all([loadSettings(), loadInspectionTargets(), loadDashboard()]);
 }
 
@@ -567,30 +631,46 @@ function setPending(value: boolean): void {
 // 데이터 준비·활성 사이트·설정 유무에 맞춰 버튼의 실행 가능 여부를 갱신합니다.
 function applyAvailability(): void {
   app.querySelectorAll<HTMLButtonElement | HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>('button, input, select, textarea').forEach((element): void => { element.disabled = pending || loading; });
+
   if (pending || loading) return;
+
   const run = clientInspections.getState();
   const refresh = app.querySelector<HTMLButtonElement>('#refresh-index');
+
   if (refresh) refresh.disabled = demo || !state.clientId || clientInspectionBusy(run);
+
   const cancel = app.querySelector<HTMLButtonElement>('#cancel-client-inspection');
+
   if (cancel) cancel.disabled = !clientInspectionBusy(run) || run.cancelRequested;
+
   const naverRead = app.querySelector<HTMLButtonElement>('#read-naver-preview');
+
   if (naverRead) naverRead.disabled = !!run.naverPreview?.loading || !['awaiting_tabs', 'finished', 'cancelled', 'failed'].includes(run.phase);
+
   const noSite = !property().id || !property().active;
   const noSitemap = noSite || state.engine === 'naver';
+
   app.querySelectorAll<HTMLButtonElement | HTMLInputElement>('#toggle-sitemap, #sitemap-form input, #sitemap-form button').forEach((element): void => { element.disabled = noSitemap; });
   app.querySelectorAll<HTMLButtonElement | HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>('#notification-form button, #notification-form input, #notification-form select, #notification-form textarea, #indexnow-form input, #indexnow-form button').forEach((element): void => { element.disabled = noSite; });
   app.querySelectorAll<HTMLInputElement | HTMLButtonElement>('#indexnow-form input, #indexnow-form button').forEach((element): void => { element.disabled = noSite || settingsLoading; });
+
   const registration = app.querySelector<HTMLButtonElement>('#registration-form button[type="submit"]');
+
   if (registration) registration.disabled = !state.clientId;
+
   const search = app.querySelector<HTMLInputElement>('#url-inspect');
+
   if (search) search.disabled = noSite || (!demo && targetsLoading);
+
   if (!demo) {
     const targetSelect = app.querySelector<HTMLSelectElement>('#inspection-target-select');
     if (targetSelect) targetSelect.disabled = targetsLoading || inspectionTargets.length === 0;
     const read = app.querySelector<HTMLButtonElement>('#read-inspection');
     if (read) read.disabled = !inspectionTargetId || inspectionLoading || targetsLoading;
   }
+
   const button = app.querySelector<HTMLButtonElement>('#submit-pages');
+
   if (button && state.route === 'direct') {
     button.disabled = noSite || (notifyEnabled && (settingsLoading || !!settingsError || !property().indexNow?.configured));
     button.textContent = notifyEnabled ? '글 저장 및 발행 알림' : '글만 저장';
@@ -600,6 +680,7 @@ function applyAvailability(): void {
 // 글 저장과 알림 접수 결과를 별도 열로 표시합니다.
 function outcomeView(): string {
   if (!outcomes.length) return '';
+
   const labels: Record<PageCreateResult['submission']['status'], string> = { accepted: '알림 접수됨', key_pending: '키 확인 중', failed: '글 저장됨 · 알림 실패', unknown: '글 저장됨 · 접수 여부 불명', skipped: '알림 생략' };
   const explanations: Readonly<Record<string, string>> = {
     INDEXNOW_NOT_CONFIGURED: '키 설정이 없어 알림을 생략했습니다. 글은 저장됐습니다.',
@@ -611,6 +692,7 @@ function outcomeView(): string {
     NOTIFICATION_DISABLED: '알림을 선택하지 않아 글만 저장했습니다.',
     DEMO_MODE: '예시 결과이며 실제 저장·전송은 하지 않았습니다.',
   };
+
   return `<section class="report" aria-label="이번 글 처리 결과"><div class="report-header"><div><h2>글별 처리 결과</h2><p>저장과 알림 결과는 별개입니다. 새로고침하면 이번 실행 결과는 사라집니다.</p></div>${outcomes.some((item: PageOutcome): boolean => item.saveStatus === 'unknown') ? '<button class="button secondary" type="button" data-error-action="saves">글 저장 여부 확인</button>' : ''}</div>${outcomesError ? errorPanel(outcomesError, '글 저장 여부를 확인하지 못했습니다', 'saves') : ''}<div class="table-scroll"><table><thead><tr><th>글</th><th>DB 저장</th><th>알림 결과·다음 행동</th></tr></thead><tbody>${outcomes.map((item: PageOutcome): string => {
     const issue = item.error ? presentError(item.error, '처리 오류') : null;
     const reason = item.result?.submission.error_code ? explanations[item.result.submission.error_code] ?? '알림 처리 결과를 확인하세요.' : '';
@@ -621,10 +703,13 @@ function outcomeView(): string {
 // 결과 불명인 글의 저장만 GET으로 확인하며 알림은 다시 전송하지 않습니다.
 async function verifySavedPages(): Promise<void> {
   if (pending || !property().id) return;
+
   setPending(true);
   outcomesError = null;
+
   try {
     const pages = demo ? [] : await api.listPages(property().id);
+
     outcomes = outcomes.map((item: PageOutcome): PageOutcome => {
       if (item.saveStatus !== 'unknown') return item;
       const found = pages.some((page): boolean => page.url === item.article.url);
@@ -643,25 +728,34 @@ async function verifySavedPages(): Promise<void> {
 // 검색창의 URL을 현재 예시 관측 기록에서 찾아 상세 결과를 엽니다.
 function inspectUrl(event: SubmitEvent): void {
   event.preventDefault();
+
   const input = app.querySelector<HTMLInputElement>('#url-inspect');
   if (!input) return;
+
   input.setCustomValidity('');
+
   try {
     const url = targetUrl(input.value.trim(), true);
+
     if (!demo) {
       const target = inspectionTargets.find((item: InspectionTarget): boolean => new URL(item.url).href === url.href);
       if (!target) throw new Error('먼저 글을 DB에 등록하세요. 저장된 메인페이지·글 URL만 선택할 수 있습니다.');
+
       inspectionTargetId = target.id;
       storedInspections = [];
       update({ view: 'inspect', notice: '', mobileNav: false });
       void loadStoredInspections();
+
       return;
     }
+
     const row = currentRows().find((item: Inspection): boolean => new URL(item.path, property().origin).href === url.href);
+
     if (!row) {
       update({ view: 'inspect', notice: '이 URL의 예시 관측 기록이 없습니다. 실제 API를 연결한 뒤 조회할 수 있습니다.' });
       return;
     }
+
     openDetail(row.id);
   } catch (error: unknown) {
     input.setCustomValidity(error instanceof Error ? error.message : 'URL을 확인하세요.');
@@ -672,20 +766,30 @@ function inspectUrl(event: SubmitEvent): void {
 // 새 도메인을 예시 목록에 추가하되 검색엔진 등록 완료로 처리하지 않습니다.
 async function registerSite(event: SubmitEvent): Promise<void> {
   event.preventDefault();
+
   if (pending || !state.clientId) return;
+
   const form = event.currentTarget as HTMLFormElement;
+
   clearFormErrors(form);
+
   const data = new FormData(form);
+
   try {
     const name = String(data.get('siteName') ?? '').trim();
     if (!name) throw new Error('사이트 이름을 입력하세요.');
+
     const url = parseUrl(String(data.get('origin') ?? '').trim());
     if (url.pathname !== '/' || url.search) throw new Error('경로나 쿼리가 없는 도메인 루트 주소를 입력하세요.');
+
     const indexNow = validateIndexNowSettings(url.origin, String(data.get('indexnowKey') ?? ''), String(data.get('indexnowLocation') ?? ''));
     const editable = String(data.get('editable') ?? '');
     const payload = { client_id: state.clientId, name, url: url.href, owner_type: data.get('ownership') === 'internal' ? 'internal' as const : 'client' as const, cms_type: String(data.get('cmsType') ?? '') || null, can_edit_site: editable === '' ? null : editable === 'true', indexnow_key: indexNow?.key ?? null, indexnow_key_location: indexNow?.keyLocation ?? null };
+
     setPending(true);
+
     const site: Property = demo ? { id: crypto.randomUUID(), clientId: payload.client_id, name, origin: url.origin, siteUrl: url.href, active: true, owned: payload.owner_type === 'internal', indexNow: indexNow ? { configured: true, key_location: indexNow.keyLocation } : { configured: false, key_location: null } } : mapSite(await api.addSite(payload));
+
     properties = [...properties, site];
     pending = false;
     form.reset();
@@ -695,6 +799,7 @@ async function registerSite(event: SubmitEvent): Promise<void> {
     outcomesError = null;
     notificationDraft = ''; notificationTitles = ''; requestText = '';
     update({ propertyId: site.id, notice: `${name}: ${demo ? '예시 목록' : 'DB'}에 사이트 정보를 저장했습니다. 검색엔진 등록·소유 확인을 완료한 것은 아닙니다.` });
+
     if (!demo) await Promise.all([loadSettings(), loadInspectionTargets()]);
   } catch (error: unknown) {
     showError('#registration-error', error);
@@ -712,16 +817,24 @@ function capturePublicationDraft(): void {
 // 기존 사이트의 예시 설정을 저장하되 설치 검증은 수행하지 않습니다.
 async function saveIndexNowSettings(event: SubmitEvent): Promise<void> {
   event.preventDefault();
+
   if (pending || !property().id) return;
+
   const form = event.currentTarget as HTMLFormElement;
+
   clearFormErrors(form);
+
   const data = new FormData(form);
+
   try {
     const indexNow = validateIndexNowSettings(property().siteUrl, String(data.get('indexnowKey') ?? ''), String(data.get('indexnowLocation') ?? ''));
     if (!indexNow) throw new Error('저장할 키와 키 파일 URL을 함께 입력하세요.');
+
     capturePublicationDraft();
     setPending(true);
+
     const settings = demo ? { configured: true, key_location: indexNow.keyLocation } : await api.putSettings(property().id, indexNow);
+
     properties = properties.map((item: Property): Property => item.id === state.propertyId ? { ...item, indexNow: settings } : item);
     settingsError = null;
     pending = false;
@@ -737,53 +850,76 @@ async function saveIndexNowSettings(event: SubmitEvent): Promise<void> {
 // 선택한 처리 경로에 따라 예시 접수 또는 전달 문구를 준비합니다.
 async function notifyPublication(event: SubmitEvent): Promise<void> {
   event.preventDefault();
+
   if (pending || !property().id) return;
+
   const form = event.currentTarget as HTMLFormElement;
+
   clearFormErrors(form);
+
   const data = new FormData(form);
+
   notificationDraft = String(data.get('urls') ?? '');
   notificationTitles = String(data.get('titles') ?? '');
+
   try {
     const titles = notificationTitles.split(/\r?\n/).map((line: string): string => line.trim()).filter(Boolean);
     const urls = notificationDraft.split(/\r?\n/).map((line: string): string => line.trim()).filter(Boolean).map((line: string): string => targetUrl(line).href);
     if (!urls.length || titles.length !== urls.length) throw new Error('제목과 URL을 같은 순서로 한 줄씩 입력하세요. 제목과 URL 개수가 같아야 합니다.');
     if (new Set(urls).size !== urls.length) throw new Error('중복 URL을 제거하고 제목과 순서를 맞춰 주세요.');
     if (urls.length > 50) throw new Error('한 번에 최대 50개 글을 처리할 수 있습니다.');
+
     const articles = urls.map((url: string, index: number) => ({ name: titles[index], url }));
     const description = articles.map((article): string => `${article.name}\n${article.url}`).join('\n\n');
+
     if (state.route !== 'direct') {
       requestText = state.route === 'request' ? `${property().name} 담당자님께\n\n아래 신규 글의 검색엔진 제출과 접수 결과 확인을 부탁드립니다.\n\n${description}\n\n${String(data.get('note') ?? '').trim()}`.trim() : `우리 블로그에 소개할 고객사 글\n\n${description}\n\n후속 작업: 소개 글 작성 → 링크 추가 → 검토 → 발행`;
       update({ notice: '문구를 준비했습니다. 글 DB 저장·고객사 전달·블로그 발행은 실행하지 않았습니다.' });
       return;
     }
+
     notifyEnabled = data.get('notify') === 'on';
+
     if (notifyEnabled && (!property().indexNow?.configured || settingsLoading || settingsError)) throw new Error('IndexNow 설정을 확인하거나 알림 체크를 해제해 글만 저장하세요.');
+
     const id = property().id;
     if (articles.some((article): boolean => attempted.has(`${id}:${article.url}`))) throw new Error('이미 저장했거나 저장 여부가 불명확한 URL이 포함되어 있습니다. 아래 결과를 확인하고 해당 URL을 입력에서 제외하세요. 자동 재시도하지 않습니다.');
+
     setPending(true);
     requestText = '';
     outcomesError = null;
+
     const previous = outcomeHistory.get(id) ?? [];
     const currentUrls = new Set(articles.map((article): string => article.url));
+
     outcomes = previous.filter((item: PageOutcome): boolean => !currentUrls.has(item.article.url));
+
     const notify = notifyEnabled;
+
     const processed = await submitPageBatch(articles, async (article): Promise<PageCreateResult> => {
       return demo ? { page: { id: crypto.randomUUID(), name: article.name, url: article.url }, submission: { status: 'skipped', error_code: 'DEMO_MODE', upstream_http_status: null } } : api.addPage(id, article, notify);
     }, (results): void => {
       outcomes = [...results, ...previous.filter((item: PageOutcome): boolean => !currentUrls.has(item.article.url))];
       outcomeHistory = new Map([...outcomeHistory, [id, outcomes]]);
       attempted = new Set([...attempted, ...results.filter((item: PageOutcome): boolean => item.saveStatus === 'saved' || item.saveStatus === 'unknown').map((item: PageOutcome): string => `${id}:${item.article.url}`)]);
+
       const live = app.querySelector<HTMLElement>('#live-status');
+
       if (live) live.textContent = `${results.length}/${articles.length}개 글 처리 결과 확인`;
+
       const resultView = app.querySelector<HTMLElement>('#batch-results');
+
       if (resultView) { resultView.innerHTML = outcomeView(); bindErrorActions(resultView); applyAvailability(); }
     });
     pending = false;
     addActivity(`글 ${processed.filter((item: PageOutcome): boolean => item.saveStatus === 'saved').length}개 저장 결과 확인`);
+
     const incomplete = processed.some((item: PageOutcome): boolean => item.saveStatus !== 'saved' || (!!item.result && !['accepted', 'skipped'].includes(item.result.submission.status)) || item.result?.submission.error_code === 'INDEXNOW_NOT_CONFIGURED');
     const savedCount = processed.filter((item: PageOutcome): boolean => item.saveStatus === 'saved').length;
+
     update({ notice: demo ? '예시 처리 결과입니다. 실제 DB 저장·전송은 없습니다.' : incomplete ? `${processed.length}개 중 ${savedCount}개 글의 저장이 확인됐습니다. 알림 실패·대기·결과 불명 항목을 아래에서 확인하세요.` : '글 처리를 완료했습니다. 저장 결과와 알림 접수 결과는 아래 표에서 각각 확인하세요.', noticeTone: incomplete ? 'warning' : demo ? 'info' : 'success' });
     dashboardData = null;
+
     if (!demo) void loadInspectionTargets();
   } catch (error: unknown) {
     showError('#notification-error', error);
@@ -795,15 +931,22 @@ async function notifyPublication(event: SubmitEvent): Promise<void> {
 // 새 고객사를 예시 데이터에 추가합니다.
 async function addClient(event: SubmitEvent): Promise<void> {
   event.preventDefault();
+
   if (pending) return;
+
   const form = event.currentTarget as HTMLFormElement;
+
   clearFormErrors(form);
+
   const data = new FormData(form);
   const name = String(data.get('clientName') ?? '').trim();
   if (!name) return showError('#client-error', new Error('고객사 이름을 입력하세요.'));
+
   try {
     setPending(true);
+
     const result = demo ? { id: crypto.randomUUID(), name, manager_name: String(data.get('manager') ?? '').trim() } : await api.addClient(name, String(data.get('manager') ?? '').trim());
+
     clients = [...clients, { id: result.id, name: result.name, manager: result.manager_name ?? '' }];
     pending = false;
     form.reset();
@@ -820,8 +963,10 @@ async function addClient(event: SubmitEvent): Promise<void> {
 // 화면 필터와 독립적으로 시작 고객사의 전체 작업을 실행하고 저장 상태를 다시 읽습니다.
 async function refreshClientInspections(): Promise<void> {
   if (demo || pending || loading || !state.clientId || clientInspectionBusy(clientInspections.getState())) return;
+
   const clientId = state.clientId;
   const clientName = selectedClient()?.name ?? '';
+
   await clientInspections.start(clientId, clientName);
   await refreshFinishedClientInspection();
 }
@@ -849,23 +994,31 @@ async function continueClientApiOnly(scope: string): Promise<void> {
 // 사용자가 명시적으로 제출하며 예시 모드에서는 네트워크 요청을 보내지 않습니다.
 async function submitSitemap(event: SubmitEvent): Promise<void> {
   event.preventDefault();
+
   const site = property();
   const engine = state.engine;
   if (pending || loading || !site.id || !site.active || engine === 'naver') return;
+
   const form = event.currentTarget as HTMLFormElement;
   const input = form.querySelector<HTMLInputElement>('#sitemap-url');
   if (!input || !form.reportValidity()) return;
+
   try {
     const sitemapUrl = parseUrl(input.value.trim());
     if (sitemapUrl.origin !== new URL(site.siteUrl).origin) throw new Error('선택한 사이트와 같은 도메인·프로토콜·포트의 사이트맵 URL을 입력하세요.');
+
     if (demo) {
       sitemapFeedback = { siteId: site.id, engine, message: '예시 모드입니다. 실제 사이트맵 제출은 실행하지 않았습니다.', failed: false };
       return;
     }
+
     setPending(true);
     form.querySelector('.sitemap-feedback')?.remove();
+
     const button = form.querySelector<HTMLButtonElement>('button[type="submit"]');
+
     if (button) button.textContent = '제출 중…';
+
     await api.submitSitemap(site.id, engine, sitemapUrl.href);
     sitemapFeedback = { siteId: site.id, engine, message: `${engineNames[engine]} 사이트맵 제출 접수 완료. 수집·색인 반영에는 시간이 걸릴 수 있습니다.`, failed: false };
   } catch (error: unknown) {
@@ -896,14 +1049,19 @@ function closeDetail(): void {
 // 상세 창에서 탭 키가 배경 화면으로 이동하지 않도록 합니다.
 function handleDialogKeyboard(event: KeyboardEvent): void {
   if (!state.selectedId) return;
+
   if (event.key === 'Escape') closeDetail();
+
   if (event.key !== 'Tab') return;
+
   const dialog = app.querySelector<HTMLElement>('.detail-dialog');
   const targets = dialog?.querySelectorAll<HTMLElement>('button, a[href], input, select, textarea');
   const first = targets?.[0];
   const last = targets?.[targets.length - 1];
   if (!first || !last) return;
+
   if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+
   if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
 }
 
@@ -917,11 +1075,16 @@ async function copyRequest(): Promise<void> {
     const result = app.querySelector<HTMLElement>('.request-result pre');
     const range = document.createRange();
     if (!result) return;
+
     range.selectNodeContents(result);
+
     const selection = window.getSelection();
+
     selection?.removeAllRanges();
     selection?.addRange(range);
+
     const button = app.querySelector<HTMLButtonElement>('#copy-request');
+
     if (button) button.textContent = '선택된 문구를 복사하세요';
   }
 }

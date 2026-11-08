@@ -21,6 +21,7 @@ function kindOf(status: number, code: string): ErrorKind {
   if (status === 409) return 'conflict';
   if (status === 429) return 'rate_limit';
   if (status >= 500) return 'server';
+
   return 'unknown';
 }
 
@@ -48,11 +49,13 @@ export class ApiError extends Error {
 export function errorDetail(detail: unknown): string {
   if (typeof detail === 'string') return detail.slice(0, 600);
   if (Array.isArray(detail)) return detail.slice(0, 20).map(errorDetail).join(' / ');
+
   if (detail && typeof detail === 'object') {
     const item = detail as Record<string, unknown>;
     if (typeof item.message === 'string') return item.message.slice(0, 600);
     if (typeof item.msg === 'string') return item.msg.slice(0, 600);
   }
+
   return '요청을 처리하지 못했습니다.';
 }
 
@@ -62,12 +65,15 @@ export function httpError(status: number, detail: unknown, operation: Operation,
   const code = typeof item.code === 'string' && /^[A-Z][A-Z0-9_]{0,79}$/.test(item.code) ? item.code : `HTTP_${status}`;
   const fields: readonly FieldIssue[] = Array.isArray(detail) ? detail.slice(0, 20).flatMap((value: unknown): readonly FieldIssue[] => {
     if (!value || typeof value !== 'object') return [];
+
     const issue = value as Record<string, unknown>;
     const location = Array.isArray(issue.loc) ? issue.loc.filter((part: unknown): boolean => typeof part === 'string') : [];
     const field = location.at(-1);
+
     return typeof field === 'string' && /^[a-z_]{1,60}$/.test(field) && typeof issue.msg === 'string' ? [{ field, message: issue.msg.slice(0, 400) }] : [];
   }) : [];
   const seconds = retryAfter && /^\d{1,7}$/.test(retryAfter) ? Number(retryAfter) : null;
+
   return new ApiError(status, errorDetail(detail), { code, operation, fields, retryAfterSeconds: seconds });
 }
 
@@ -105,5 +111,6 @@ export function presentError(error: ApiError, title: string): ErrorPresentation 
     response: '응답 형식을 확인하지 못했습니다. 저장된 결과를 먼저 다시 읽어 주세요.',
     unknown: error.code === 'SAVED_INSPECTION_ERROR' ? '이전 오류 기록에는 세부 코드가 없습니다. 위 오류 문구와 서버 설정을 확인하세요. 새 조회는 색인 상태 조회 버튼으로 수동 실행할 수 있습니다.' : '기존 목록과 마지막 처리 결과를 확인해 주세요.',
   };
+
   return { title, message: error.message, advice: uncertainWrite(error) ? '이미 저장·전송됐을 수 있습니다. 먼저 저장 결과를 확인하세요. 자동 재전송하지 않습니다.' : advice[error.kind], authHelp: error.kind === 'authentication', tone: uncertainWrite(error) || error.kind === 'rate_limit' ? 'warning' : 'error' };
 }

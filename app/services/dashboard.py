@@ -31,6 +31,7 @@ def engine_columns(
         (observation.last_checked_at.is_(None), "unknown"),
         else_=observation.index_status,
     )
+
     return (
         *(
             func.count(page.id).filter(observed_status == status).label(f"{prefix}_{status}")
@@ -52,6 +53,7 @@ def engine_summary(row: Mapping[str, Any], prefix: str) -> EngineSummary:
 def total_summary(sites: tuple[DashboardSite, ...], engine: str) -> EngineSummary:
     summaries = tuple(getattr(site, engine) for site in sites)
     checked = tuple(item.last_checked_at for item in summaries if item.last_checked_at)
+
     return EngineSummary(
         **{field: sum(getattr(item, field) for item in summaries) for field in (*STATUSES, "error_count")},
         last_checked_at=max(checked, default=None),
@@ -89,6 +91,7 @@ async def get_dashboard(session: AsyncSession, client_id: UUID) -> ClientDashboa
             bing=engine_summary(row, "bing"),
         ) for row in rows
     )
+
     return ClientDashboard(
         client=ClientRead.model_validate(client), site_count=len(sites),
         page_count=sum(site.page_count for site in sites),

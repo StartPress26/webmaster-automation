@@ -11,6 +11,7 @@ import { ApiError } from '../src/errors.ts';
 function createClientInspectionController(api, changed) {
   const tabs = ['naver', 'bing'].map((engine, index) => ({ tabId: index + 1, engine, title: engine, url: `https://${engine}.example/` }));
   const factory = () => createWorkTabController({ list: async () => tabs, check: async (tab) => ({ connected: true, tab }), available: () => true });
+
   return createController(api, changed, { naver: factory(), bing: factory() }, async (selected, targets, hooks) => {
     for (const item of targets) {
       hooks.onStart(item);
@@ -39,14 +40,19 @@ function fakeApi(overrides = {}) {
 test('활성 사이트와 글을 스냅샷으로 수집하고 각 URL에 API와 GUI 작업을 나눠 만든다', async () => {
   const parents = [];
   const api = fakeApi({ listPages: async (id) => { parents.push(id); return id === 's1' ? [page, page, { ...page, id: 'inactive', is_active: false }] : []; } });
+
   const targets = await collectClientInspectionTargets(api, 'a');
   assert.deepEqual(parents, ['s1', 's2']);
   assert.deepEqual(targets.map((target) => target.id), ['s1', 'p1', 's2']);
+
   const tasks = buildClientInspectionTasks(targets);
+
   assert.equal(tasks.length, 9);
   assert.equal(tasks.filter((task) => task.status === 'queued').length, 9);
   assert.equal(tasks.filter((task) => task.status === 'gui_required').length, 0);
+
   const scoped = buildClientInspectionTasks([{ ...targets[0], siteUrl: 'https://one.example/blog' }]);
+
   assert.deepEqual(scoped.map((task) => task.status), ['skipped', 'queued', 'skipped']);
 });
 
@@ -58,6 +64,7 @@ test('전체 목록 수집 실패나 고객사·부모 불일치이면 외부 �
   ]) {
     let posts = 0;
     const controller = createClientInspectionController(fakeApi({ ...overrides, inspect: async () => { posts += 1; } }));
+
     await controller.start('a', 'A');
     assert.equal(posts, 0);
     assert.equal(controller.getState().phase, 'failed');
@@ -73,17 +80,23 @@ test('API 저장과 네이버 GUI 관측을 구분하고 Bing 크롤링을 색�
     calls.push([id, engine]);
     await Promise.resolve();
     inflight -= 1;
+
     return { site_id: id, engine, index_status: 'unknown' };
   } }));
+
   await controller.start('a', '<고객사>');
   assert.equal(calls.length, 6);
   assert.ok(calls.every(([, engine]) => engine !== 'naver'));
+
   const run = controller.getState();
+
   assert.equal(run.targetCount, 3);
   assert.equal(run.tasks.filter((task) => task.status === 'succeeded').length, 3);
   assert.equal(run.tasks.filter((task) => task.status === 'partial').length, 3);
   assert.equal(run.tasks.filter((task) => task.status === 'observed').length, 3);
+
   const html = renderClientInspection(run, 'a', '<고객사>', false);
+
   assert.match(html, /GUI 관측 3건/);
   assert.match(html, /API 처리 6\/6건/);
   assert.ok(html.includes('&lt;고객사&gt;'));
@@ -99,6 +112,7 @@ test('엔진 인증 오류는 해당 엔진만 중단하고 다른 엔진은 계
     if (engine === 'google') throw new ApiError(503, '인증 필요', { code: 'GOOGLE_AUTH_REFRESH_FAILED' });
     return { site_id: id, engine };
   } }));
+
   await controller.start('a', 'A');
   assert.equal(calls.filter((engine) => engine === 'google').length, 1);
   assert.equal(calls.filter((engine) => engine === 'bing').length, 3);
@@ -113,6 +127,7 @@ test('단일 URL 권한 오류는 다음 URL을 막지 않고 서버 응답 불�
       if (posts === 1) throw new ApiError(uncertain ? 0 : 403, '실패', { code: uncertain ? 'NETWORK_ERROR' : 'ENGINE_PERMISSION' });
       return { site_id: id, engine };
     } }));
+
     await controller.start('a', 'A');
     assert.equal(posts, uncertain ? 1 : 6);
     assert.equal(controller.getState().tasks.filter((task) => task.status === 'failed').length, 1);
@@ -127,7 +142,9 @@ test('중복 시작을 무시하고 취소해도 진행 중 요청의 결과는 
     return new Promise((resolve) => { finish = () => resolve({ site_id: id, engine }); });
   } }));
   const running = controller.start('a', 'A');
+
   for (let attempt = 0; !finish && attempt < 20; attempt += 1) await Promise.resolve();
+
   await controller.start('b', 'B');
   assert.equal(controller.getState().clientId, 'a');
   controller.cancel();
@@ -147,6 +164,7 @@ test('수집 중 취소하면 API 검사를 시작하지 않는다', async () =>
     inspect: async () => { posts += 1; },
   }));
   const running = controller.start('a', 'A');
+
   controller.cancel();
   finish();
   await running;
@@ -159,10 +177,13 @@ test('탭이 없으면 API 전송 없이 선택 대기하고 명시적으로 API
   let posts = 0;
   const factory = () => createWorkTabController({ list: async () => [], check: async () => assert.fail('후보 없음'), available: () => true });
   const controller = createController(fakeApi({ inspect: async (id, engine) => { posts += 1; return { site_id: id, engine }; } }), undefined, { naver: factory(), bing: factory() });
+
   await controller.start('a', 'A');
   assert.equal(controller.getState().phase, 'awaiting_tabs');
   assert.equal(posts, 0);
+
   const scope = controller.getState().scope;
+
   await controller.continueApiOnly('old-scope');
   assert.equal(posts, 0);
   await controller.continueApiOnly(scope);
@@ -180,6 +201,7 @@ test('엔진별 단일 탭은 자동 검증하고 여러 URL을 처리해도 선
     available: () => true,
   });
   const controller = createController(fakeApi(), undefined, { naver: factory(), bing: factory() });
+
   await controller.start('a', 'A');
   assert.equal(controller.getState().phase, 'finished');
   assert.deepEqual(checks, [1, 2]);
@@ -193,8 +215,11 @@ test('여러 네이버 후보는 선택을 기다리고 잘못된 실행·탭 ID
   let posts = 0;
   const factory = () => createWorkTabController({ list: async () => tabs, check: async (tab) => ({ connected: true, tab }), available: () => true });
   const controller = createController(fakeApi({ inspect: async (id, engine) => { posts += 1; return { site_id: id, engine }; } }), undefined, { naver: factory(), bing: factory() });
+
   await controller.start('a', 'A');
+
   const scope = controller.getState().scope;
+
   assert.equal(controller.getState().phase, 'awaiting_tabs');
   assert.equal(controller.getState().tabs.bing.selected.tabId, 3);
   await controller.chooseTab('old-scope', 'naver', '1');
@@ -209,8 +234,11 @@ test('여러 네이버 후보는 선택을 기다리고 잘못된 실행·탭 ID
 test('탭 선택 대기 중 취소와 이전 실행 선택을 안전하게 처리한다', async () => {
   const factory = () => createWorkTabController({ list: async () => [], check: async () => assert.fail('후보 없음'), available: () => true });
   const controller = createController(fakeApi({ inspect: async () => assert.fail('취소 후 전송 금지') }), undefined, { naver: factory(), bing: factory() });
+
   await controller.start('a', 'A');
+
   const scope = controller.getState().scope;
+
   controller.cancel();
   assert.equal(controller.getState().phase, 'cancelled');
   await controller.start('a', 'A');
@@ -223,9 +251,12 @@ test('탭 선택 대기 중 취소와 이전 실행 선택을 안전하게 처�
 // 종료된 실행에서도 읽기 시작·실패 상태가 새 렌더에 의해 접히지 않게 합니다.
 test('네이버 미리보기 로딩과 실패 안내는 종료된 실행에서도 펼쳐서 표시한다', async () => {
   const controller = createClientInspectionController(fakeApi());
+
   await controller.start('a', 'A');
+
   for (const naverPreview of [{ loading: true }, { loading: false, error: '읽기 스크립트 연결 없음' }]) {
     const dom = new JSDOM(renderClientInspection({ ...controller.getState(), naverPreview }, 'a', 'A', false));
+
     try {
       assert.equal(dom.window.document.querySelector('.inspection-tab-section').open, true);
       if (naverPreview.error) assert.match(dom.window.document.querySelector('.naver-preview [role="alert"]').textContent, /연결 없음/);

@@ -63,9 +63,12 @@ export function createClientInspectionController(
   // 진행 중인 서버 요청은 끝까지 확인하고 다음 요청부터 취소합니다.
   function cancel(): void {
     if (!clientInspectionBusy(state)) return;
+
     const waiting = state.phase === 'awaiting_tabs';
+
     update({ cancelRequested: true, message: '현재 요청이 끝나면 중단합니다. 이미 저장된 결과는 유지됩니다.' });
     naverAbort.abort();
+
     if (waiting) finishCancelled();
   }
 
@@ -73,7 +76,9 @@ export function createClientInspectionController(
   async function readNaver(scope: string): Promise<void> {
     const selected = state.tabs.naver?.selected;
     if (scope !== state.scope || !selected || state.naverPreview?.loading || !['awaiting_tabs', 'finished', 'cancelled', 'failed'].includes(state.phase)) return;
+
     update({ naverPreview: { loading: true } });
+
     try {
       const observation = await readNaverPreview(selected, state.tasks.filter((task): boolean => task.engine === 'naver').map((task) => task.target));
       if (scope === state.scope) update({ naverPreview: { loading: false, observation } });
@@ -94,6 +99,7 @@ export function createClientInspectionController(
   async function prepareEngineTab(engine: GuiEngine, candidateId?: string): Promise<void> {
     const controller = tabControllers[engine];
     const preparation = controller.prepare(state.scope, engine, candidateId);
+
     update({ tabs: { ...state.tabs, [engine]: controller.getState() } });
     await preparation;
     update({ tabs: { ...state.tabs, [engine]: controller.getState() } });
@@ -102,10 +108,12 @@ export function createClientInspectionController(
   // 탭이 모두 준비되면 자동 진행하고 부족하면 명시적인 선택·건너뛰기를 기다립니다.
   async function finishTabPreparation(): Promise<void> {
     if (state.cancelRequested) { finishCancelled(); return; }
+
     if (Object.values(state.tabs).some((tab): boolean => !tab.selected)) {
       update({ phase: 'awaiting_tabs', message: '네이버·Bing 작업 탭을 준비하세요. 탭 준비를 건너뛰면 API 조회만 실행합니다.' });
       return;
     }
+
     await runTasks(true);
   }
 
@@ -126,14 +134,19 @@ export function createClientInspectionController(
   // API 관측 이후 선택한 네이버 탭에서 사이트별 GUI 검사를 순차 실행합니다.
   async function runTasks(includeGui: boolean): Promise<void> {
     update({ phase: 'running', message: '확정된 대상의 API 조회를 순차 실행합니다.' });
+
     for (const task of state.tasks) {
       if (state.cancelRequested) break;
+
       const current = state.tasks.find((item): boolean => item.id === task.id);
       if (current?.status !== 'queued' || task.route !== 'api' || task.engine === 'naver') continue;
+
       updateTask(task.id, { status: 'running', message: 'API 조회 중' });
+
       try {
         const result = await api.inspect(task.target.id, task.engine);
         if (result.site_id !== task.target.id || result.engine !== task.engine) throw new ApiError(0, '검사 응답의 대상·엔진을 확인하지 못했습니다.', { code: 'INVALID_RESPONSE' });
+
         updateTask(task.id, {
           status: task.engine === 'bing' ? 'partial' : 'succeeded',
           message: task.engine === 'bing'
@@ -143,16 +156,21 @@ export function createClientInspectionController(
       } catch (error: unknown) {
         const known = error instanceof ApiError;
         const uncertain = !known || error.status === 0 || (error.status >= 500 && !error.code.startsWith('ENGINE_') && !error.code.startsWith('GOOGLE_AUTH_'));
+
         updateTask(task.id, { status: 'failed', message: uncertain
           ? '응답을 확인하지 못했습니다. 저장 결과를 다시 읽어 확인하세요. 자동 재시도하지 않습니다.'
           : error.message });
+
         const stopEngine = known && ['authentication', 'rate_limit', 'timeout', 'network'].includes(error.kind);
+
         if (uncertain || stopEngine) update({ tasks: state.tasks.map((item): ClientInspectionTask => item.route === 'api' && item.status === 'queued' && (uncertain || item.engine === task.engine)
           ? { ...item, status: 'blocked', message: uncertain ? '서버 연결·응답 확인이 필요해 실행을 중단했습니다.' : '해당 엔진의 인증·조회 한도·연결 확인이 필요해 중단했습니다.' } : item) });
       }
     }
+
     const naverTasks = state.tasks.filter((task): boolean => task.engine === 'naver' && task.status === 'queued');
     const naverTab = state.tabs.naver?.selected;
+
     if (!state.cancelRequested && includeGui && naverTab && naverTasks.length) {
       try {
         await naverAutomation(naverTab, naverTasks.map((task) => task.target), {
@@ -174,25 +192,32 @@ export function createClientInspectionController(
       update({ tasks: state.tasks.map((task): ClientInspectionTask => task.engine === 'naver' && task.status === 'queued'
         ? { ...task, status: 'gui_required', message: 'GUI 탭 준비를 건너뛰어 네이버 조회는 실행하지 않았습니다.' } : task) });
     }
+
     if (state.cancelRequested) { finishCancelled(); return; }
+
     update({ phase: 'finished', message: state.targetCount ? '전체 조회 처리가 끝났습니다. 네이버 GUI 관측은 이 화면에서만 보관하며 실패·미지원 항목을 확인하세요.' : '조회할 활성 사이트·글이 없습니다.' });
   }
 
   // 시작 고객사·실행 ID를 고정하고 전체 대상 확정 후 엔진별 탭을 먼저 준비합니다.
   async function start(clientId: string, clientName: string): Promise<void> {
     if (!clientId || clientInspectionBusy(state)) return;
+
     tabControllers.naver.reset();
     tabControllers.bing.reset();
     naverAbort = new AbortController();
     update({ clientId, clientName, scope: `${++sequence}:${clientId}`, tabs: {}, naverPreview: undefined, phase: 'collecting', cancelRequested: false, targetCount: 0, tasks: [], message: '고객사의 활성 사이트·등록 글 목록을 수집하고 있습니다.' });
+
     try {
       const targets = await collectClientInspectionTargets(api, clientId, (): boolean => state.cancelRequested);
       if (state.cancelRequested) throw new InspectionCollectionCancelled();
+
       update({ phase: 'preparing_tabs', targetCount: targets.length, tasks: buildClientInspectionTasks(targets), message: '네이버·Bing 작업 탭을 준비합니다.' });
+
       for (const engine of ['naver', 'bing'] as const) {
         if (state.cancelRequested) break;
         if (state.tasks.some((task): boolean => task.engine === engine)) await prepareEngineTab(engine);
       }
+
       await finishTabPreparation();
     } catch (error: unknown) {
       update({ phase: state.cancelRequested || error instanceof InspectionCollectionCancelled ? 'cancelled' : 'failed', message: state.cancelRequested ? '대상 수집을 취소했습니다. 새 검사를 실행하지 않았습니다.' : '전체 대상 목록을 확정하지 못해 검사를 시작하지 않았습니다. 목록 연결과 고객사 소속을 확인하세요.' });

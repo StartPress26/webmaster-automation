@@ -33,6 +33,7 @@ async def site_sessions(
     engine = create_async_engine(
         migrated_database_url, poolclass=NullPool, hide_parameters=True
     )
+
     try:
         yield async_sessionmaker(engine, expire_on_commit=False)
     finally:
@@ -67,6 +68,7 @@ async def test_site_is_committed(
         created = await create_site(
             session, site_request(site_client_id, can_edit_site=can_edit_site)
         )
+
     async with site_sessions() as session:
         stored = await session.get(Site, created.id)
         assert stored is not None
@@ -94,8 +96,10 @@ async def test_duplicate_rolls_back(
 ) -> None:
     async with site_sessions() as session:
         await create_site(session, site_request(site_client_id))
+
         with pytest.raises(DuplicateSiteError):
             await create_site(session, site_request(site_client_id, url="HTTPS://EXAMPLE.COM/blog/"))
+
         assert not session.in_transaction()
         await create_site(session, site_request(site_client_id, url="https://example.com/other/"))
 
@@ -109,11 +113,13 @@ async def test_list_filters_and_paginates(
         first = await create_site(session, site_request(site_client_id))
         second = await create_site(session, site_request(site_client_id, url="https://example.com/second/"))
         other_site = await create_site(session, site_request(other.id))
+
         async with session.begin():
             await session.execute(insert(Site).values(
                 client_id=site_client_id, parent_site_id=first.id, target_type="page",
                 name="개별 글", url="https://example.com/blog/post", owner_type="client",
             ))
+
     async with site_sessions() as session:
         items = await list_sites(session, client_id=site_client_id, limit=100, offset=0)
         assert items == (first, second)
@@ -134,6 +140,7 @@ async def test_concurrent_duplicate_has_one_winner(
     results = await asyncio.gather(register(), register(), return_exceptions=True)
     assert sum(isinstance(result, SiteRead) for result in results) == 1
     assert sum(isinstance(result, DuplicateSiteError) for result in results) == 1
+
     async with site_sessions() as session:
         ids = (await session.scalars(select(Site.id).where(Site.client_id == site_client_id))).all()
         assert len(ids) == 1
@@ -148,10 +155,12 @@ async def test_indexnow_settings_are_committed_with_site(
             site_client_id, indexnow_key="a1b2c3d4",
             indexnow_key_location="https://example.com/key.txt",
         ))
+
     async with site_sessions() as session:
         rows = (await session.scalars(select(EngineRegistration).where(
             EngineRegistration.main_site_id == created.id
         ).order_by(EngineRegistration.engine))).all()
+
         assert tuple(row.engine for row in rows) == ("bing", "naver")
         assert all(row.indexnow_key == "a1b2c3d4" for row in rows)
         assert all(row.indexnow_key_location == "https://example.com/key.txt" for row in rows)
@@ -165,6 +174,7 @@ async def test_site_without_indexnow_has_no_registration(
 ) -> None:
     async with site_sessions() as session:
         created = await create_site(session, site_request(site_client_id))
+
     async with site_sessions() as session:
         assert (await session.scalars(select(EngineRegistration.id).where(
             EngineRegistration.main_site_id == created.id
@@ -177,6 +187,7 @@ async def test_registration_failure_rolls_back_site(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     original = site_service._save_indexnow_settings
+
     async with site_sessions() as session:
         before_ids = frozenset(await session.scalars(select(EngineRegistration.id)))
 
@@ -188,13 +199,16 @@ async def test_registration_failure_rolls_back_site(
         raise RuntimeError("등록 저장 중 테스트 오류")
 
     monkeypatch.setattr(site_service, "_save_indexnow_settings", fail_after_insert)
+
     async with site_sessions() as session:
         with pytest.raises(RuntimeError, match="테스트 오류"):
             await create_site(session, site_request(
                 site_client_id, indexnow_key="a1b2c3d4",
                 indexnow_key_location="https://example.com/key.txt",
             ))
+
         assert not session.in_transaction()
+
     async with site_sessions() as session:
         assert (await session.scalars(select(Site.id).where(Site.client_id == site_client_id))).all() == []
         assert frozenset(await session.scalars(select(EngineRegistration.id))) == before_ids
@@ -209,6 +223,7 @@ async def test_concurrent_indexnow_updates_stay_consistent(
 
     async with site_sessions() as session:
         site = await create_site(session, site_request(site_client_id))
+
     settings = (
         IndexNowSettingsWrite(key="a1b2c3d4", key_location="https://example.com/first.txt"),
         IndexNowSettingsWrite(key="deadbeef", key_location="https://example.com/second.txt"),
@@ -220,12 +235,16 @@ async def test_concurrent_indexnow_updates_stay_consistent(
             await put_settings(session, site.id, data)
 
     await asyncio.gather(*(replace(data) for data in settings))
+
     async with site_sessions() as session:
         rows = tuple(await session.scalars(select(EngineRegistration).where(
             EngineRegistration.main_site_id == site.id
         )))
+
         assert len(rows) == 2
+
         pairs = {(row.indexnow_key, row.indexnow_key_location) for row in rows}
+
         assert len(pairs) == 1
         assert pairs <= {(data.key, data.key_location) for data in settings}
 
@@ -243,6 +262,7 @@ async def test_indexnow_update_failure_rolls_back(
             site_client_id, indexnow_key="a1b2c3d4",
             indexnow_key_location="https://example.com/key.txt",
         ))
+
     async with site_sessions() as session:
         original = session.execute
 
@@ -252,15 +272,19 @@ async def test_indexnow_update_failure_rolls_back(
             raise RuntimeError("설정 갱신 테스트 오류")
 
         monkeypatch.setattr(session, "execute", fail_after_write)
+
         with pytest.raises(RuntimeError, match="설정 갱신 테스트 오류"):
             await put_settings(session, site.id, IndexNowSettingsWrite(
                 key="deadbeef", key_location="https://example.com/new.txt",
             ))
+
         assert not session.in_transaction()
+
     async with site_sessions() as session:
         rows = tuple(await session.scalars(select(EngineRegistration).where(
             EngineRegistration.main_site_id == site.id
         )))
+
         assert len(rows) == 2
         assert all(row.indexnow_key == "a1b2c3d4" for row in rows)
         assert all(row.indexnow_key_location == "https://example.com/key.txt" for row in rows)

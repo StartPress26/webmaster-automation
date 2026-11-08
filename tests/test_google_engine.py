@@ -25,6 +25,7 @@ def session(monkeypatch: pytest.MonkeyPatch) -> Iterator[MagicMock]:
         "siteUrl": SITE_URL, "permissionLevel": "siteOwner"
     }
     factory = MagicMock(return_value=mocked)
+
     monkeypatch.setattr("app.engines.google.google.AuthorizedSession", factory)
     yield mocked
 
@@ -33,6 +34,7 @@ def session(monkeypatch: pytest.MonkeyPatch) -> Iterator[MagicMock]:
 def test_get_site(session: MagicMock) -> None:
     with GoogleEngine(Credentials(token="test")) as engine:
         assert engine.get_site(SITE_URL) == GoogleSite(SITE_URL, "siteOwner")
+
     session.get.assert_called_once_with(
         "https://www.googleapis.com/webmasters/v3/sites/https%3A%2F%2Fexample.com%2Fblog%2F",
         timeout=30, allow_redirects=False,
@@ -45,6 +47,7 @@ def test_domain_property(session: MagicMock) -> None:
     session.get.return_value.json.return_value = {
         "siteUrl": "sc-domain:example.com", "permissionLevel": "siteFullUser"
     }
+
     with GoogleEngine(Credentials(token="test")) as engine:
         assert engine.get_site("sc-domain:example.com") == GoogleSite(
             "sc-domain:example.com", "siteFullUser"
@@ -67,9 +70,11 @@ def test_missing_site(session: MagicMock) -> None:
 def test_http_errors(session: MagicMock, status: int, code: str) -> None:
     session.get.return_value.status_code = status
     session.get.return_value.json.return_value = {"error": {"message": "test-secret"}}
+
     with GoogleEngine(Credentials(token="test")) as engine:
         with pytest.raises(GoogleEngineError) as caught:
             engine.get_site(SITE_URL)
+
     assert caught.value.code == code
     assert caught.value.status_code == status
     assert "test-secret" not in str(caught.value)
@@ -82,9 +87,11 @@ def test_403_quota_error(session: MagicMock) -> None:
     session.get.return_value.json.return_value = {
         "error": {"errors": [{"reason": "userRateLimitExceeded"}]}
     }
+
     with GoogleEngine(Credentials(token="test")) as engine:
         with pytest.raises(GoogleEngineError) as caught:
             engine.get_site(SITE_URL)
+
     assert caught.value.code == "rate_limit"
 
 
@@ -96,9 +103,11 @@ def test_403_quota_error(session: MagicMock) -> None:
 ])
 def test_request_errors(session: MagicMock, error: Exception, code: str) -> None:
     session.get.side_effect = error
+
     with GoogleEngine(Credentials(token="test")) as engine:
         with pytest.raises(GoogleEngineError) as caught:
             engine.get_site(SITE_URL)
+
     assert caught.value.code == code
     assert "test-secret" not in str(caught.value)
     assert caught.value.__suppress_context__
@@ -114,18 +123,22 @@ def test_request_errors(session: MagicMock, error: Exception, code: str) -> None
 ])
 def test_invalid_response(session: MagicMock, data: object) -> None:
     session.get.return_value.json.return_value = data
+
     with GoogleEngine(Credentials(token="test")) as engine:
         with pytest.raises(GoogleEngineError) as caught:
             engine.get_site(SITE_URL)
+
     assert caught.value.code == "response"
 
 
 # JSON 파싱 오류도 응답 원문을 노출하지 않습니다.
 def test_invalid_json(session: MagicMock) -> None:
     session.get.return_value.json.side_effect = ValueError("test-secret")
+
     with GoogleEngine(Credentials(token="test")) as engine:
         with pytest.raises(GoogleEngineError) as caught:
             engine.get_site(SITE_URL)
+
     assert caught.value.code == "response"
     assert "test-secret" not in str(caught.value)
 
@@ -144,9 +157,11 @@ def test_invalid_input(session: MagicMock, site_url: str) -> None:
 def test_malformed_permission_error(session: MagicMock, data: object) -> None:
     session.get.return_value.status_code = 403
     session.get.return_value.json.return_value = data
+
     with GoogleEngine(Credentials(token="test")) as engine:
         with pytest.raises(GoogleEngineError) as caught:
             engine.get_site(SITE_URL)
+
     assert caught.value.code == "permission"
 
 
@@ -154,8 +169,10 @@ def test_malformed_permission_error(session: MagicMock, data: object) -> None:
 @pytest.mark.parametrize("status", [200, 204])
 def test_register_site(session: MagicMock, status: int) -> None:
     session.put.return_value.status_code = status
+
     with GoogleEngine(Credentials(token="test")) as engine:
         assert engine.register_site(SITE_URL) is True
+
     session.put.assert_called_once_with(
         "https://www.googleapis.com/webmasters/v3/sites/https%3A%2F%2Fexample.com%2Fblog%2F",
         timeout=30, allow_redirects=False,
@@ -168,12 +185,14 @@ def test_register_site(session: MagicMock, status: int) -> None:
 def test_get_verification_token(session: MagicMock) -> None:
     session.post.return_value.status_code = 200
     session.post.return_value.json.return_value = {"method": "FILE", "token": "google123.html"}
+
     with GoogleEngine(Credentials(token="test")) as engine:
         assert engine.get_verification_token(SITE_URL) == GoogleVerificationFile(
             file_name="google123.html",
             file_content="google-site-verification: google123.html",
             verification_url="https://example.com/blog/google123.html",
         )
+
     session.post.assert_called_once_with(
         "https://www.googleapis.com/siteVerification/v1/token",
         json={"site": {"type": "SITE", "identifier": SITE_URL}, "verificationMethod": "FILE"},
@@ -188,8 +207,10 @@ def test_verify_ownership(session: MagicMock) -> None:
         "id": "test-resource", "site": {"type": "SITE", "identifier": SITE_URL},
         "owners": ["private@example.com"],
     }
+
     with GoogleEngine(Credentials(token="test")) as engine:
         result = engine.verify_ownership(SITE_URL)
+
     assert result == GoogleOwnership(SITE_URL, "test-resource")
     assert "private@example.com" not in repr(result)
     session.post.assert_called_once_with(
@@ -203,8 +224,10 @@ def test_verify_ownership(session: MagicMock) -> None:
 # 사이트맵 주소의 쿼리까지 경로 인코딩하고 빈 접수 응답을 처리합니다.
 def test_submit_sitemap(session: MagicMock) -> None:
     session.put.return_value.status_code = 204
+
     with GoogleEngine(Credentials(token="test")) as engine:
         assert engine.submit_sitemap(SITE_URL, "https://example.com/sitemap.xml?v=1&lang=ko")
+
     session.put.assert_called_once_with(
         "https://www.googleapis.com/webmasters/v3/sites/https%3A%2F%2Fexample.com%2Fblog%2F"
         "/sitemaps/https%3A%2F%2Fexample.com%2Fsitemap.xml%3Fv%3D1%26lang%3Dko",
@@ -217,9 +240,11 @@ def test_submit_sitemap(session: MagicMock) -> None:
 def test_verification_failure(session: MagicMock) -> None:
     session.post.return_value.status_code = 400
     session.post.return_value.json.return_value = {"error": {"message": "test-secret"}}
+
     with GoogleEngine(Credentials(token="test")) as engine:
         with pytest.raises(GoogleEngineError) as caught:
             engine.verify_ownership(SITE_URL)
+
     assert caught.value.status_code == 400
     assert "test-secret" not in str(caught.value)
     session.put.assert_not_called()
@@ -235,6 +260,7 @@ def test_verification_failure(session: MagicMock) -> None:
 def test_invalid_verification_file(session: MagicMock, data: object) -> None:
     session.post.return_value.status_code = 200
     session.post.return_value.json.return_value = data
+
     with GoogleEngine(Credentials(token="test")) as engine:
         with pytest.raises(GoogleEngineError):
             engine.get_verification_token(SITE_URL)
@@ -249,6 +275,7 @@ def test_invalid_verification_file(session: MagicMock, data: object) -> None:
 def test_invalid_ownership_response(session: MagicMock, data: object) -> None:
     session.post.return_value.status_code = 200
     session.post.return_value.json.return_value = data
+
     with GoogleEngine(Credentials(token="test")) as engine:
         with pytest.raises(GoogleEngineError):
             engine.verify_ownership(SITE_URL)
@@ -281,9 +308,11 @@ def test_write_errors(
     response = getattr(session, verb).return_value
     response.status_code = status
     response.json.return_value = {"error": {"message": "test-secret"}}
+
     with GoogleEngine(Credentials(token="test")) as engine:
         with pytest.raises(GoogleEngineError) as caught:
             getattr(engine, method)(*args)
+
     assert caught.value.code == code
     assert "test-secret" not in str(caught.value)
 
@@ -303,8 +332,10 @@ def test_setup_new_site_waits_for_installation(session: MagicMock) -> None:
     session.put.return_value.status_code = 204
     session.post.return_value.status_code = 200
     session.post.return_value.json.return_value = {"method": "FILE", "token": "google123.html"}
+
     with GoogleEngine(Credentials(token="test")) as engine:
         result = engine.register_new_site(SITE_URL, "https://example.com/sitemap.xml")
+
     assert result.status == "verification_required"
     assert result.verification_file is not None
     assert result.verification_file.file_name == "google123.html"
@@ -321,8 +352,10 @@ def test_setup_unverified_site(session: MagicMock) -> None:
     }
     session.post.return_value.status_code = 200
     session.post.return_value.json.return_value = {"method": "FILE", "token": "google123.html"}
+
     with GoogleEngine(Credentials(token="test")) as engine:
         result = engine.register_new_site(SITE_URL, "https://example.com/sitemap.xml")
+
     assert result.status == "verification_required"
     session.put.assert_not_called()
 
@@ -330,8 +363,10 @@ def test_setup_unverified_site(session: MagicMock) -> None:
 # 기존 소유자는 인증 단계를 건너뛰고 사이트맵만 제출합니다.
 def test_setup_existing_owner(session: MagicMock) -> None:
     session.put.return_value.status_code = 204
+
     with GoogleEngine(Credentials(token="test")) as engine:
         result = engine.register_new_site(SITE_URL, "https://example.com/sitemap.xml")
+
     assert result.status == "completed"
     assert result.verification_file is None
     session.post.assert_not_called()
@@ -350,8 +385,10 @@ def test_setup_resumes_after_installation(session: MagicMock) -> None:
         "id": "test-resource", "site": {"type": "SITE", "identifier": SITE_URL}
     }
     session.put.return_value.status_code = 204
+
     with GoogleEngine(Credentials(token="test")) as engine:
         result = engine.register_new_site(SITE_URL, "https://example.com/sitemap.xml", verification_ready=True)
+
     assert result.status == "completed"
     assert session.post.call_args.args[0].endswith("/webResource")
     assert [item[0] for item in session.method_calls] == ["get", "post", "get", "put", "close"]
@@ -363,9 +400,11 @@ def test_setup_stops_on_verification_failure(session: MagicMock) -> None:
         "siteUrl": SITE_URL, "permissionLevel": "siteUnverifiedUser"
     }
     session.post.return_value.status_code = 400
+
     with GoogleEngine(Credentials(token="test")) as engine:
         with pytest.raises(GoogleEngineError):
             engine.register_new_site(SITE_URL, "https://example.com/sitemap.xml", verification_ready=True)
+
     session.put.assert_not_called()
 
 
@@ -378,9 +417,11 @@ def test_setup_requires_confirmed_owner(session: MagicMock) -> None:
     session.post.return_value.json.return_value = {
         "id": "test-resource", "site": {"type": "SITE", "identifier": SITE_URL}
     }
+
     with GoogleEngine(Credentials(token="test")) as engine:
         with pytest.raises(GoogleEngineError) as caught:
             engine.register_new_site(SITE_URL, "https://example.com/sitemap.xml", verification_ready=True)
+
     assert caught.value.code == "permission"
     session.put.assert_not_called()
 
@@ -390,6 +431,7 @@ def test_setup_validates_before_registration(session: MagicMock) -> None:
     with GoogleEngine(Credentials(token="test")) as engine:
         with pytest.raises(ValueError):
             engine.register_new_site(SITE_URL, "file:///tmp/sitemap.xml")
+
     session.get.assert_not_called()
     session.put.assert_not_called()
 
@@ -418,8 +460,10 @@ def test_inspect_indexed_url(session: MagicMock) -> None:
         }
     }
     before = datetime.now(timezone.utc)
+
     with GoogleEngine(Credentials(token="test")) as engine:
         result = engine.inspect_url(SITE_URL, page_url)
+
     assert result.index_status == "indexed"
     assert result.page_url == page_url
     assert result.verdict == "PASS"
@@ -453,8 +497,10 @@ def test_inspect_indexed_url(session: MagicMock) -> None:
 def test_inspection_status_mapping(session: MagicMock, index: object, expected: str) -> None:
     session.post.return_value.status_code = 200
     session.post.return_value.json.return_value = {"inspectionResult": {"indexStatusResult": index}}
+
     with GoogleEngine(Credentials(token="test")) as engine:
         result = engine.inspect_url(SITE_URL, SITE_URL)
+
     assert result.index_status == expected
 
 
@@ -484,9 +530,11 @@ def test_inspection_rejects_out_of_scope_page(session: MagicMock, page_url: str)
 def test_invalid_inspection_response(session: MagicMock, data: object) -> None:
     session.post.return_value.status_code = 200
     session.post.return_value.json.return_value = data
+
     with GoogleEngine(Credentials(token="test")) as engine:
         with pytest.raises(GoogleEngineError) as caught:
             engine.inspect_url(SITE_URL, SITE_URL)
+
     assert caught.value.code == "response"
     assert "test-secret" not in str(caught.value)
 
@@ -499,9 +547,11 @@ def test_invalid_inspection_response(session: MagicMock, data: object) -> None:
 def test_inspection_http_errors(session: MagicMock, status: int, code: str) -> None:
     session.post.return_value.status_code = status
     session.post.return_value.json.return_value = {"error": {"message": "test-secret"}}
+
     with GoogleEngine(Credentials(token="test")) as engine:
         with pytest.raises(GoogleEngineError) as caught:
             engine.inspect_url(SITE_URL, SITE_URL)
+
     assert caught.value.code == code
     assert caught.value.status_code == status
 
@@ -509,8 +559,10 @@ def test_inspection_http_errors(session: MagicMock, status: int, code: str) -> N
 # 통신 시간이 초과되면 기존 관측과 구분할 수 있는 기술 오류를 반환합니다.
 def test_inspection_timeout(session: MagicMock) -> None:
     session.post.side_effect = Timeout("test-secret")
+
     with GoogleEngine(Credentials(token="test")) as engine:
         with pytest.raises(GoogleEngineError) as caught:
             engine.inspect_url(SITE_URL, SITE_URL)
+
     assert caught.value.code == "timeout"
     assert "test-secret" not in str(caught.value)

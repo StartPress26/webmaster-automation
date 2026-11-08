@@ -24,6 +24,7 @@ def _submit_google(site_url: str, sitemap_url: str) -> bool:
             credentials = load_credentials()
     except GoogleAuthError:
         raise GoogleEngineError("authentication", "Google 인증 설정을 확인하세요.") from None
+
     with GoogleEngine(credentials) as engine:
         return engine.submit_sitemap(site_url, sitemap_url)
 
@@ -32,7 +33,9 @@ def _submit_google(site_url: str, sitemap_url: str) -> bool:
 async def submit_sitemap(engine: SitemapEngine, site_url: str, sitemap_url: str) -> bool:
     if engine == "google":
         return await run_in_threadpool(_submit_google, site_url, sitemap_url)
+
     values = dotenv_values(PROJECT_ROOT / ".env") | dict(os.environ)
+
     async with httpx.AsyncClient() as client:
         adapter = BingEngine(api_key=values.get("BING_API_KEY") or "", http_client=client)
         return await adapter.submit_sitemap(site_url, sitemap_url)

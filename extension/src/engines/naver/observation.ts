@@ -39,6 +39,7 @@ export class NaverAutomationError extends Error {
       cancelled: '네이버 자동 조회를 취소했습니다.',
       invalid_response: '네이버 자동 조회 응답의 대상·판정·작업 ID를 확인하지 못했습니다.',
     };
+
     super(messages[code]);
     this.code = code;
   }
@@ -78,11 +79,14 @@ export function isNaverInspectionPage(value: string): boolean {
 // 숨김 요소와 문서 밖 요소를 배제하고 실제 표시된 입력·결과만 읽습니다.
 export function isNaverElementVisible(element: Element, document: Document): boolean {
   if (element.closest('[hidden], [aria-hidden="true"], script, style, noscript')) return false;
+
   const view = document.defaultView;
+
   for (let parent: Element | null = element; parent; parent = parent.parentElement) {
     const style = view?.getComputedStyle(parent);
     if (style?.display === 'none' || style?.visibility === 'hidden' || style?.visibility === 'collapse') return false;
   }
+
   return element.getClientRects().length > 0;
 }
 
@@ -90,22 +94,30 @@ export function isNaverElementVisible(element: Element, document: Document): boo
 export function readNaverVisibleObservation(document: Document, pageUrl: string, readAt = new Date().toISOString()): NaverReadResult {
   if (!isNaverInspectionPage(pageUrl)) return { ok: false, code: 'wrong_page' };
   if (document.readyState === 'loading') return { ok: false, code: 'loading' };
+
   const siteUrl = canonicalNaverTarget(new URL(pageUrl).searchParams.get('site') ?? '');
   if (!siteUrl) return { ok: false, code: 'site_missing' };
+
   const inputs = Array.from(document.querySelectorAll<HTMLInputElement>('input')).filter((input): boolean =>
     ['text', 'url', 'search'].includes(input.type) && isNaverElementVisible(input, document) && canonicalNaverTarget(input.value) !== null);
   const input = inputs[0];
   if (inputs.length !== 1 || !input) return { ok: false, code: 'target_ambiguous' };
+
   const inputUrl = canonicalNaverTarget(input.value);
   if (!inputUrl) return { ok: false, code: 'target_ambiguous' };
+
   const messages = resultMarkers(document);
   if (messages.length !== 1) return { ok: false, code: 'result_unrecognized' };
+
   const marker = messages[0];
   if (!marker) return { ok: false, code: 'result_unrecognized' };
+
   const message = judgementText(marker);
   const fields = Array.from(document.querySelectorAll('button, [role="button"]')).filter((element): boolean => isNaverElementVisible(element, document)).map((element): string => element.textContent?.replace(/\s+/g, ' ').trim() ?? '');
   if (message === NAVER_INDEXED_MESSAGE && fields.some((text): boolean => /^색인\s*완료\s*(아니오|아니요)$/.test(text))) return { ok: false, code: 'result_conflict' };
+
   const updated = fields.find((text): boolean => /^최종\s*업데이트\s*\d{2,4}\.\s*\d{1,2}\.\s*\d{1,2}\.?$/.test(text));
+
   return { ok: true, observation: {
     kind: 'visible_preview', siteUrl, inputUrl, indexStatus: message === NAVER_INDEXED_MESSAGE ? 'indexed' : 'unknown', message,
     engineUpdatedText: updated ?? null, readAt, targetVerified: false,
@@ -117,8 +129,10 @@ export function naverTargetInSite(site: string, target: string): boolean {
   const siteUrl = canonicalNaverTarget(site);
   const targetUrl = canonicalNaverTarget(target);
   if (!siteUrl || !targetUrl) return false;
+
   const parent = new URL(siteUrl);
   const child = new URL(targetUrl);
+
   return parent.origin === child.origin && (child.pathname === parent.pathname || child.pathname.startsWith(parent.pathname.replace(/\/$/, '') + '/'));
 }
 
@@ -140,19 +154,23 @@ export function naverPageState(document: Document, pageUrl: string, documentToke
   if (url.origin !== 'https://searchadvisor.naver.com' || url.pathname.startsWith('/auth') || url.pathname.includes('login')) {
     return { route: 'auth', siteUrl: null, ready: false, documentToken };
   }
+
   const route = url.pathname === '/console/board' ? 'board' : url.pathname === '/console/site/summary' ? 'summary'
     : url.pathname === '/console/site/check/inspection' ? 'inspection' : 'other';
   const siteUrl = canonicalNaverTarget(url.searchParams.get('site') ?? '');
   const ready = document.readyState !== 'loading' && (route === 'board' ? !!document.querySelector('table, [role="table"]')
     : route === 'inspection' ? inspectionInputs(document).length === 1 && confirmationButtons(document).length === 1 : route === 'summary' && !!siteUrl);
+
   return { route, siteUrl, ready, documentToken };
 }
 
 // 사이트 목록의 URL과 링크 출처가 모두 맞는 항목 하나만 클릭합니다.
 export function selectNaverSite(document: Document, pageUrl: string, siteUrl: string): void {
   if (new URL(pageUrl).origin !== 'https://searchadvisor.naver.com' || new URL(pageUrl).pathname !== '/console/board') throw new NaverAutomationError('wrong_page');
+
   const expected = canonicalNaverTarget(siteUrl);
   if (!expected) throw new NaverAutomationError('invalid_response');
+
   const links = Array.from(document.querySelectorAll<HTMLAnchorElement>('table a, [role="table"] a')).filter((link): boolean => {
     const destination = new URL(link.href, pageUrl);
     return canonicalNaverTarget(link.textContent?.trim() ?? '') === expected && isNaverElementVisible(link, document)
@@ -160,6 +178,7 @@ export function selectNaverSite(document: Document, pageUrl: string, siteUrl: st
   });
   if (!links.length) throw new NaverAutomationError('site_missing');
   if (links.length !== 1) throw new NaverAutomationError('ambiguous_control');
+
   links[0]?.click();
 }
 
@@ -169,10 +188,13 @@ function judgementText(element: Element): string {
   function collect(node: Node): string {
     if (node.nodeType === 3) return node.textContent ?? '';
     if (node.nodeType !== 1) return '';
+
     const child = node as Element;
     if (child.matches('i, svg, [role="img"], [aria-hidden="true"], [hidden], .v-icon, .material-icons')) return '';
+
     return Array.from(child.childNodes).map(collect).join('');
   }
+
   return collect(element).replace(/\s+/g, ' ').trim();
 }
 
@@ -192,19 +214,25 @@ export async function inspectNaverUrl(document: Document, site: string, target: 
   const siteUrl = canonicalNaverTarget(site);
   const targetUrl = canonicalNaverTarget(target);
   if (!view || !siteUrl || !targetUrl || !naverTargetInSite(siteUrl, targetUrl)) throw new NaverAutomationError('invalid_response');
+
   const initialUrl = view.location.href;
   const page = naverPageState(document, initialUrl, '');
   if (page.route !== 'inspection' || page.siteUrl !== siteUrl) throw new NaverAutomationError('wrong_page');
+
   const inputs = inspectionInputs(document);
   const buttons = confirmationButtons(document);
   const input = inputs[0];
   const button = buttons[0];
   if (inputs.length !== 1 || buttons.length !== 1 || !input || !button) throw new NaverAutomationError('ambiguous_control');
   if (signal.aborted) throw new NaverAutomationError('cancelled');
+
   const previous = resultMarkers(document).map((node) => ({ node, text: judgementText(node) }));
   const queriedAt = new Date().toISOString();
+
   await new Promise<void>((resolve): void => { queueMicrotask(resolve); });
+
   if (signal.aborted) throw new NaverAutomationError('cancelled');
+
   return await new Promise<NaverAutomationObservation>((resolve, reject): void => {
     let clicked = false;
     let done = false;
@@ -216,10 +244,12 @@ export async function inspectNaverUrl(document: Document, site: string, target: 
     // 완료 시 감시·타이머·이벤트를 모두 해제합니다.
     function finish(error?: NaverAutomationError, observation?: NaverAutomationObservation): void {
       if (done) return;
+
       done = true;
       observer.disconnect(); clearTimeout(timeout); clearInterval(interval);
       signal.removeEventListener('abort', abort);
       document.removeEventListener('input', interference, true); document.removeEventListener('click', interference, true);
+
       if (error) reject(error); else if (observation) resolve(observation);
     }
 
@@ -232,16 +262,24 @@ export async function inspectNaverUrl(document: Document, site: string, target: 
     // 새 결과가 나타나도 사이트·입력·경로가 달라졌으면 처리하지 않습니다.
     function check(): void {
       if (!clicked || done) return;
+
       if (view!.location.href !== initialUrl || canonicalNaverTarget(input!.value) !== targetUrl) { finish(new NaverAutomationError('page_changed')); return; }
+
       const markers = resultMarkers(document);
+
       if (previous.length && previous.every((old): boolean => !old.node.isConnected || !isNaverElementVisible(old.node, document))) cleared = true;
+
       if (markers.length !== 1) return;
+
       const marker = markers[0];
       if (!marker) return;
+
       const fresh = cleared || previous.length === 0 || previous.every((old): boolean => !old.node.isConnected || !isNaverElementVisible(old.node, document) || judgementText(old.node) !== old.text)
         || !previous.some((old): boolean => old.node === marker);
       if (!fresh) return;
+
       const message = judgementText(marker);
+
       finish(undefined, { kind: 'verified_gui', siteUrl: siteUrl!, targetUrl: targetUrl!, indexStatus: message === NAVER_INDEXED_MESSAGE ? 'indexed' : 'unknown', message,
         queriedAt, readAt: new Date().toISOString(), targetVerified: true });
     }
@@ -252,9 +290,13 @@ export async function inspectNaverUrl(document: Document, site: string, target: 
     interval = setInterval(check, 150);
     signal.addEventListener('abort', abort, { once: true });
     document.addEventListener('input', interference, true); document.addEventListener('click', interference, true);
+
     if (signal.aborted) { abort(); return; }
+
     const setter = Object.getOwnPropertyDescriptor(view!.HTMLInputElement.prototype, 'value')?.set;
+
     if (!setter) { finish(new NaverAutomationError('ambiguous_control')); return; }
+
     setter.call(input, targetUrl);
     input.dispatchEvent(new view!.Event('input', { bubbles: true }));
     input.dispatchEvent(new view!.Event('change', { bubbles: true }));

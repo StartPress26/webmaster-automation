@@ -62,12 +62,15 @@ async def create_site(session: AsyncSession, data: SiteCreate) -> SiteRead:
         ).one_or_none()
         if site is None:
             raise DuplicateSiteError("이 고객사에 이미 등록된 URL입니다.")
+
         if data.indexnow_key is not None and data.indexnow_key_location is not None:
             await _save_indexnow_settings(
                 session, main_site_id=site.id, key=data.indexnow_key,
                 key_location=data.indexnow_key_location,
             )
+
         result = SiteRead.model_validate(site)
+
     return result
 
 
@@ -82,4 +85,5 @@ async def list_sites(
         .limit(limit)
         .offset(offset)
     )
+
     return tuple(SiteRead.model_validate(site) for site in sites)

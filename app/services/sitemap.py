@@ -27,6 +27,7 @@ class SitemapError(Exception):
 def validate_scope(site_url: str, data: SitemapCreate) -> None:
     try:
         TypeAdapter(IndexNowUrl).validate_python(site_url)
+
         main, sitemap = urlsplit(site_url), urlsplit(data.sitemap_url)
         ports = {"http": 80, "https": 443}
         same_origin = (main.scheme, main.hostname, main.port or ports[main.scheme]) == (
@@ -58,8 +59,11 @@ async def submit_sitemap(
             raise SitemapError("MAIN_SITE_NOT_FOUND", "메인 사이트를 찾을 수 없습니다.", 404)
         if not site.is_active:
             raise SitemapError("SITE_INACTIVE", "비활성 사이트에는 제출할 수 없습니다.", 409)
+
         site_url = site.url
+
         validate_scope(site_url, data)
+
     try:
         accepted = await submitter(data.engine, site_url, data.sitemap_url)
     except (GoogleEngineError, BingEngineError) as error:
@@ -72,9 +76,12 @@ async def submit_sitemap(
             "response": (502, "검색엔진 제출 응답을 확인하지 못했습니다."),
         }
         status, message = messages[error.code]
+
         raise SitemapError(f"ENGINE_{error.code.upper()}", message, status) from None
     except ValueError:
         raise SitemapError("INVALID_SITEMAP_SCOPE", "엔진이 지원하는 URL 범위를 확인하세요.", 422) from None
+
     if accepted is not True:
         raise SitemapError("ENGINE_RESPONSE", "검색엔진 제출 접수를 확인하지 못했습니다.", 502)
+
     return SitemapRead(main_site_id=main_site_id, engine=data.engine, sitemap_url=data.sitemap_url)

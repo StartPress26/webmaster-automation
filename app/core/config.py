@@ -23,6 +23,7 @@ class Settings:
 @lru_cache
 def get_settings() -> Settings:
     """프로세스 환경변수를 우선하며 연결 문자열을 오류에 노출하지 않습니다."""
+
     # 같은 키가 있으면 오른쪽의 프로세스 환경변수가 .env 값보다 우선합니다.
     values = dotenv_values(PROJECT_ROOT / ".env") | dict(os.environ)
     database_url = values.get("DATABASE_URL")
@@ -38,4 +39,5 @@ def get_settings() -> Settings:
     # 비동기 PostgreSQL 드라이버와 DB 이름이 지정되어 있는지 확인합니다.
     if url.drivername != "postgresql+asyncpg" or not url.database:
         raise ValueError("DB 이름이 있는 postgresql+asyncpg 연결 주소가 필요합니다.")
+
     return Settings(database_url=database_url)

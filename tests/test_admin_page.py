@@ -9,9 +9,11 @@ from app.main import app
 def test_admin_page_and_assets_are_served() -> None:
     with TestClient(app) as client:
         page = client.get("/")
+
         assert page.status_code == 200
         assert page.headers["content-type"].startswith("text/html")
         assert '<html lang="ko">' in page.text
+
         for asset, content_type in (
             ("/static/admin.css", "text/css"),
             ("/static/admin.js", "javascript"),

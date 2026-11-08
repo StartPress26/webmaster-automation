@@ -37,6 +37,7 @@ function failureMessage(result: Extract<TabCheck, { readonly connected: false }>
     url_changed: '선택한 뒤 작업 탭의 주소가 바뀌었습니다.',
     not_ready: '작업 탭이 로딩·이동 중이거나 메모리에서 해제되어 준비되지 않았습니다.',
   };
+
   return messages[result.reason];
 }
 
@@ -75,20 +76,25 @@ export function createWorkTabController(dependencies: WorkTabDependencies = {
 
     // 작업을 기다리는 동안 초기화되거나 새 요청으로 바뀌었다면 이전 결과를 버립니다.
     const requestVersion = ++version;
+
     state = { ...emptyState, scope, engine, message: '작업 탭을 확인하는 중…', busy: true };
 
     try {
       let failure = '';
+
       if (selected) {
         const result = await dependencies.check(selected);
         if (requestVersion !== version) return;
+
         if (result.connected) {
           state = {
             ...state, selected: result.tab,
             message: '탭 준비됨 · 주소와 문서 준비 상태만 확인했습니다. 로그인·선택 사이트·색인 결과 확인과 GUI 조회·저장은 아직 실행하지 않았습니다.',
           };
+
           return;
         }
+
         failure = `${failureMessage(result)} `;
       }
 
@@ -102,10 +108,12 @@ export function createWorkTabController(dependencies: WorkTabDependencies = {
       if (candidates.length === 1 && onlyCandidate && !selected) {
         const result = await dependencies.check(onlyCandidate);
         if (requestVersion !== version) return;
+
         if (result.connected) {
           state = { ...state, selected: result.tab, message: '탭 준비됨 · 주소와 문서 준비 상태만 확인했습니다. 로그인·선택 사이트·색인 결과 확인과 GUI 조회·저장은 아직 실행하지 않았습니다.' };
           return;
         }
+
         failure = `${failureMessage(result)} `;
       }
 
@@ -117,6 +125,7 @@ export function createWorkTabController(dependencies: WorkTabDependencies = {
       };
     } catch {
       if (requestVersion !== version) return;
+
       state = {
         ...state,
         message: dependencies.available()

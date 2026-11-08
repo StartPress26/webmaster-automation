@@ -14,6 +14,7 @@ def test_invalid_database_url_does_not_expose_value(
 ) -> None:
     get_settings.cache_clear()
     monkeypatch.setenv("DATABASE_URL", database_url)
+
     try:
         with pytest.raises(ValueError) as error:
             get_settings()
@@ -29,6 +30,7 @@ def test_settings_repr_does_not_expose_database_password(
     monkeypatch.setenv(
         "DATABASE_URL", "postgresql+asyncpg://user:private-value@localhost/test_db"
     )
+
     try:
         assert "private-value" not in repr(get_settings())
     finally:

@@ -11,6 +11,7 @@ test('저장 결과 GET과 글 목록 GET은 새 검사를 실행하지 않는�
     calls.push({ url, method: options.method });
     return new Response(JSON.stringify({ items: url.includes('/inspections') ? [record] : [] }));
   });
+
   assert.deepEqual(await api.getInspections('site-id'), [record]);
   assert.deepEqual(await api.listPages('site-id'), []);
   assert.deepEqual(calls, [{ url: '/api/sites/site-id/inspections', method: 'GET' }, { url: '/api/sites/site-id/pages?limit=100&offset=0', method: 'GET' }]);
@@ -23,8 +24,10 @@ test('새 검사는 선택한 UUID와 엔진만 한 번 보낸다', async () => 
     assert.equal(url, '/api/sites/site-id/inspections');
     assert.equal(options.method, 'POST');
     assert.deepEqual(JSON.parse(options.body), { engine: 'google' });
+
     return new Response(JSON.stringify(record));
   });
+
   assert.deepEqual(await api.inspect('site-id', 'google'), record);
   assert.equal(count, 1);
 });
@@ -46,6 +49,7 @@ test('대상과 다른 UUID·엔진 응답은 정상 결과로 사용하지 않�
 test('최초 실패는 성공 관측 시각을 만들지 않고 기존 오류를 그대로 읽는다', async () => {
   const firstFailure = { ...record, index_status: 'unknown', last_checked_at: null, error_message: '인증 설정 필요' };
   const api = createApi(async () => new Response(JSON.stringify({ items: [firstFailure] })));
+
   const [result] = await api.getInspections('site-id');
   assert.equal(inspectionTime(result.last_checked_at), '성공 관측 없음');
   assert.equal(result.index_status, 'unknown');

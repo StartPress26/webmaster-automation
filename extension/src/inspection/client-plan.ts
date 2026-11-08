@@ -30,25 +30,31 @@ export async function collectClientInspectionTargets(
   cancelled: () => boolean = (): boolean => false,
 ): Promise<readonly ClientInspectionTarget[]> {
   let targets: readonly ClientInspectionTarget[] = [];
+
   const sites = await api.listSites(clientId);
   if (cancelled()) throw new InspectionCollectionCancelled();
+
   for (const site of sites) {
     if (site.client_id !== clientId) throw new Error('고객사와 사이트 목록의 소속이 다릅니다.');
     if (!site.is_active) continue;
+
     const pages = await api.listPages(site.id);
     if (cancelled()) throw new InspectionCollectionCancelled();
     if (pages.some((page): boolean => page.client_id !== clientId || page.parent_site_id !== site.id)) {
       throw new Error('사이트와 글 목록의 소속이 다릅니다.');
     }
+
     const added: readonly ClientInspectionTarget[] = [site, ...pages.filter((page): boolean => page.is_active)].map((item): ClientInspectionTarget => ({
       id: item.id, name: item.name, url: item.url, siteId: site.id, siteName: site.name, siteUrl: site.url,
     }));
+
     for (const target of added) {
       const existing = targets.find((item): boolean => item.id === target.id);
       if (existing && (existing.siteId !== target.siteId || existing.url !== target.url)) throw new Error('동일한 대상 ID의 사이트·URL 정보가 다릅니다.');
       if (!existing) targets = [...targets, target];
     }
   }
+
   return targets;
 }
 
@@ -57,12 +63,14 @@ export function buildClientInspectionTasks(targets: readonly ClientInspectionTar
   return targets.flatMap((target): readonly ClientInspectionTask[] => (['google', 'naver', 'bing'] as const).map((engine): ClientInspectionTask => {
     const task = { id: `${target.id}:${engine}`, target, engine, route: engine === 'naver' ? 'gui' as const : 'api' as const };
     if (engine === 'naver') return { ...task, status: 'queued', message: '네이버 사이트 선택·URL별 GUI 검사 대기' };
+
     const parent = new URL(target.siteUrl);
     const supported = engine === 'google' ? parent.pathname.endsWith('/') && !parent.search : parent.pathname === '/' && !parent.search;
     if (!supported) return {
       ...task, status: 'skipped',
       message: engine === 'bing' ? 'Bing API 조회는 하위 경로·쿼리가 없는 루트 사이트만 지원합니다.' : 'Google 속성 URL은 쿼리 없이 /로 끝나야 합니다.',
     };
+
     return { ...task, status: 'queued', message: engine === 'bing' ? '크롤링 API 조회 대기' : 'API 조회 대기' };
   }));
 }

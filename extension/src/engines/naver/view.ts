@@ -9,6 +9,7 @@ function escape(value: string): string {
 // 화면 관측은 저장된 색인 상태와 분리하고 URL 연결이 아직 미검증임을 명시합니다.
 export function renderNaverPreview(scope: string, preview: NaverPreviewState | undefined, allowed: boolean): string {
   const observation = preview?.observation;
+
   return `<div class="naver-preview"><div class="naver-preview-heading"><h3>네이버 화면 관측 미리보기</h3><button class="inspection-text-button" id="read-naver-preview" data-scope="${escape(scope)}" ${!allowed || preview?.loading ? 'disabled' : ''}>${preview?.loading ? '화면 읽는 중…' : '현재 네이버 결과 읽기'}</button></div>
     <p class="field-help">네이버 탭에서 검증 → 색인 상태 확인을 열고 URL을 조회한 뒤 읽으세요. 결과는 서버에 저장하지 않습니다.</p>
     ${preview?.error ? `<p class="inspection-error" role="alert">${escape(preview.error)}</p>` : ''}

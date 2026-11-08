@@ -9,9 +9,11 @@ function escape(value: string): string {
 // 선택 상태를 중첩 카드 대신 엔진별 작업 행과 정렬된 입력 폼으로 표시합니다.
 export function renderWorkTabPanel(state: WorkTabState, scope: string, engineName: string): string {
   if (state.scope !== scope || !state.message || !state.engine) return '';
+
   const prefix = `work-tab-${state.engine}`;
   const selected = state.selected;
   const status = selected ? '준비됨' : state.busy ? '확인 중' : state.candidates.length ? '선택 필요' : '탭 확인 필요';
+
   return `<section class="work-tab-row" aria-labelledby="${prefix}-title">
     <div class="work-tab-row-heading"><span class="engine-symbol ${state.engine}" aria-hidden="true">${state.engine === 'naver' ? 'N' : state.engine === 'google' ? 'G' : 'b'}</span><h3 id="${prefix}-title">${escape(engineName)} 작업 탭</h3><span class="work-tab-state ${selected ? 'ready' : 'waiting'}">${status}</span></div>
     <div class="work-tab-body"><div class="work-tab-description">

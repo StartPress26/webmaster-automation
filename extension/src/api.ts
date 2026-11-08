@@ -24,10 +24,12 @@ export interface ApiClient {
 // 검사 응답에서 대상·엔진·상태와 nullable 필드를 확인합니다.
 function validateInspection(value: unknown, targetId: string, operation: Operation = 'read'): InspectionRead {
   if (!value || typeof value !== 'object') throw new ApiError(0, '검사 응답 형식을 확인하지 못했습니다.', { code: 'INVALID_RESPONSE', operation });
+
   const item = value as Record<string, unknown>;
   if (item.site_id !== targetId || !['google', 'bing', 'naver', 'brave'].includes(String(item.engine)) || !['unknown', 'submitted', 'crawled', 'indexed', 'not_indexed', 'failed'].includes(String(item.index_status)) || ['last_checked_at', 'next_check_at', 'error_message'].some((field: string): boolean => item[field] !== null && typeof item[field] !== 'string')) {
     throw new ApiError(0, '검사 응답의 대상·상태를 확인하지 못했습니다. 저장 결과를 다시 읽어 주세요.', { code: 'INVALID_RESPONSE', operation });
   }
+
   return value as InspectionRead;
 }
 
@@ -37,6 +39,7 @@ export function createApi(fetcher: typeof fetch = fetch, base = defaultApiBase(g
   async function request<T>(path: string, method = 'GET', body?: unknown, operation: Operation = method === 'GET' ? 'read' : 'save'): Promise<T> {
     const controller = new AbortController();
     const timer = setTimeout((): void => controller.abort(), timeoutMs);
+
     try {
       const response = await fetcher(`${base}${path}`, {
         method, signal: controller.signal,
@@ -46,6 +49,7 @@ export function createApi(fetcher: typeof fetch = fetch, base = defaultApiBase(g
       const data: unknown = await response.json().catch((): null => null);
       if (!response.ok) throw httpError(response.status, data && typeof data === 'object' && 'detail' in data ? data.detail : null, operation, response.headers.get('Retry-After'));
       if (data === null) throw new ApiError(0, '서버 응답의 형식을 확인하지 못했습니다.', { code: 'INVALID_RESPONSE', operation });
+
       return data as T;
     } catch (error: unknown) {
       if (error instanceof ApiError) throw error;
@@ -58,6 +62,7 @@ export function createApi(fetcher: typeof fetch = fetch, base = defaultApiBase(g
   // 목록의 모든 페이지를 읽어 100개 이후 항목도 선택할 수 있게 합니다.
   async function list<T>(path: string): Promise<readonly T[]> {
     let items: readonly T[] = [];
+
     for (let offset = 0; ; offset += 100) {
       const result = await request<{ readonly items: readonly T[] }>(`${path}${path.includes('?') ? '&' : '?'}limit=100&offset=${offset}`);
       items = [...items, ...result.items];
@@ -69,10 +74,12 @@ export function createApi(fetcher: typeof fetch = fetch, base = defaultApiBase(g
     // 선택한 메인 사이트의 사이트맵을 한 번 제출하고 접수 응답을 검증합니다.
     submitSitemap: async (id: string, engine: 'google' | 'bing', sitemapUrl: string): Promise<SitemapSubmission> => {
       if (engine !== 'google' && engine !== 'bing') throw new ApiError(422, '사이트맵 제출은 Google과 Bing만 지원합니다.', { operation: 'submit' });
+
       const result = await request<SitemapSubmission>(`/sites/${encodeURIComponent(id)}/sitemaps`, 'POST', { engine, sitemap_url: sitemapUrl }, 'submit');
       if (result?.main_site_id !== id || result?.engine !== engine || result?.status !== 'accepted' || result?.sitemap_url !== sitemapUrl) {
         throw new ApiError(0, '사이트맵 접수 응답을 확인하지 못했습니다.', { code: 'INVALID_RESPONSE', operation: 'submit' });
       }
+
       return result;
     },
     // 선택한 고객사의 등록 글 통계를 외부 검사 없이 읽습니다.
@@ -110,6 +117,7 @@ export function createApi(fetcher: typeof fetch = fetch, base = defaultApiBase(g
       if (!result?.page?.id || !result?.submission || !['accepted', 'key_pending', 'failed', 'unknown', 'skipped'].includes(result.submission.status)) {
         throw new ApiError(0, '글 저장·알림 응답 형식을 확인하지 못했습니다.', { code: 'INVALID_RESPONSE', operation: notify ? 'submit' : 'save' });
       }
+
       return result;
     },
   };

@@ -30,6 +30,7 @@ export function identifyTabEngine(value: string): Engine | null {
     const url = new URL(value);
     // url에 id혹은 비번이 포함되어 있으면 허용 x
     if (url.username || url.password) return null;
+
     return (Object.keys(consoleLocations) as Engine[]).find((engine: Engine): boolean => {
       // origin은 출처와 path는 라우팅 경로
       const [origin, path] = consoleLocations[engine];
@@ -58,6 +59,7 @@ function toWorkTab(tab: chrome.tabs.Tab): WorkTab | null {
 export async function listWorkTabs(client: TabsClient = browserTabs()): Promise<readonly WorkTab[]> {
   // 지정한 검색엔진 호스트에 맞는 열린 탭을 조회합니다.
   const tabs = await client.query({ url: Object.values(consoleLocations).map(([origin]): string => `${origin}/*`) });
+
   // flatMap -> merge
   return tabs.flatMap((tab: chrome.tabs.Tab): readonly WorkTab[] => {
     const candidate = toWorkTab(tab);
@@ -70,12 +72,15 @@ export async function checkWorkTab(selected: WorkTab, client: TabsClient = brows
   if (!Number.isInteger(selected.tabId) || selected.tabId < 0 || identifyTabEngine(selected.url) !== selected.engine) {
     return { connected: false, reason: 'invalid_selection' };
   }
+
   let current: chrome.tabs.Tab;
+
   try {
     current = await client.get(selected.tabId);
   } catch {
     return { connected: false, reason: 'unavailable' };
   }
+
   const tab = toWorkTab(current);
   if (!tab) return { connected: false, reason: 'unsupported_url' };
   if (tab.tabId !== selected.tabId || tab.engine !== selected.engine || tab.url !== selected.url) {
@@ -84,5 +89,6 @@ export async function checkWorkTab(selected: WorkTab, client: TabsClient = brows
   if (current.status !== 'complete' || current.pendingUrl || current.discarded) {
     return { connected: false, reason: 'not_ready' };
   }
+
   return { connected: true, tab };
 }

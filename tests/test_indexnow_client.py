@@ -35,15 +35,18 @@ async def test_submission_payload(key_location: str | None) -> None:
     )
     handler = Mock(return_value=httpx.Response(200))
     before = datetime.now(timezone.utc)
+
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
         result = await IndexNowClient(http_client).submit(request)
         assert not http_client.is_closed
+
     sent = handler.call_args.args[0]
     expected = {
         "host": request.host,
         "key": request.key,
         "urlList": list(request.urls),
     } | ({"keyLocation": key_location} if key_location is not None else {})
+
     assert sent.method == "POST"
     assert str(sent.url) == "https://api.indexnow.org/indexnow"
     assert sent.headers["Content-Type"] == "application/json; charset=utf-8"
@@ -66,8 +69,10 @@ async def test_response_status(http_status: int, expected: SubmissionStatus) -> 
     request = IndexNowRequest(
         host="example.com", key="a1b2c3d4", urls=("https://example.com/",),
     )
+
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
         result = await IndexNowClient(http_client).submit(request)
+
     assert result.http_status == http_status
     assert result.status == expected
     handler.assert_called_once()
@@ -81,10 +86,12 @@ async def test_redirect_is_not_followed() -> None:
     request = IndexNowRequest(
         host="example.com", key="a1b2c3d4", urls=("https://example.com/",),
     )
+
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(handler), follow_redirects=True,
     ) as http_client:
         result = await IndexNowClient(http_client).submit(request)
+
     assert result.http_status == 307
     assert result.status == "failed"
     handler.assert_called_once()
@@ -99,9 +106,11 @@ async def test_timeout_is_distinct(error_type: type[httpx.TimeoutException]) -> 
     request = IndexNowRequest(
         host="example.com", key="a1b2c3d4", urls=("https://example.com/",),
     )
+
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
         with pytest.raises(IndexNowTimeoutError) as error:
             await IndexNowClient(http_client).submit(request)
+
     assert "private-input" not in str(error.value)
     assert error.value.__suppress_context__
     handler.assert_called_once()
@@ -114,9 +123,11 @@ async def test_transport_error_is_distinct(error_type: type[httpx.RequestError])
     request = IndexNowRequest(
         host="example.com", key="a1b2c3d4", urls=("https://example.com/",),
     )
+
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
         with pytest.raises(IndexNowTransportError) as error:
             await IndexNowClient(http_client).submit(request)
+
     assert "private-input" not in str(error.value)
     assert error.value.__suppress_context__
     handler.assert_called_once()
@@ -128,7 +139,9 @@ async def test_cancellation_propagates() -> None:
     request = IndexNowRequest(
         host="example.com", key="a1b2c3d4", urls=("https://example.com/",),
     )
+
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
         with pytest.raises(asyncio.CancelledError):
             await IndexNowClient(http_client).submit(request)
+
     handler.assert_called_once()

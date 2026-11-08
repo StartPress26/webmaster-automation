@@ -35,6 +35,7 @@ def get_session_factory() -> async_sessionmaker[AsyncSession]:
 # FastAPI에 요청별 세션을 제공하고, 요청 처리가 끝나면 세션을 닫습니다.
 async def get_db() -> AsyncIterator[AsyncSession]:
     """요청이 끝나면 세션을 정리합니다. 커밋은 업무 트랜잭션에서 명시합니다."""
+
     factory = get_session_factory()  # 세션 생성기를 가져옵니다.
 
     async with factory() as session:  # 요청에 사용할 새 세션을 만듭니다.
@@ -45,8 +46,10 @@ async def get_db() -> AsyncIterator[AsyncSession]:
 # 앱 종료 시 연결 풀을 정리하고, 엔진과 팩토리 캐시를 비웁니다.
 async def dispose_database() -> None:
     """종료 시 이미 만들어진 연결 풀만 정리합니다."""
+
     # 사용한 적이 없으면 정리를 위해 새 엔진을 만들지 않습니다.
     if get_engine.cache_info().currsize:
         await get_engine().dispose()
+
     get_session_factory.cache_clear()
     get_engine.cache_clear()

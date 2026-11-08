@@ -28,6 +28,7 @@ function engineReport(engine: string, summary: EngineSummary, total: number): st
 // 고객사 전체 요약과 블로그별 상세 이동 표를 표시합니다.
 export function dashboardContent(data: ClientDashboard): string {
   const cards = [['등록 블로그', data.site_count], ['등록 글', data.page_count], ['Google 색인 확인', data.google.indexed], ['Bing 크롤링 확인', data.bing.crawled]] as const;
+
   return `<div class="dashboard-cards">${cards.map(([label, count]): string => `<section class="dashboard-card"><h2>${label}</h2><p>${count}<span>개</span></p></section>`).join('')}</div>
     <p class="dashboard-note dashboard-scope">등록된 글 기준 · 메인페이지 제외 · 비활성 블로그와 글 포함 · 저장된 최신 관측을 집계합니다.</p>
     <div class="dashboard-engines">${engineReport('Google', data.google, data.page_count)}${engineReport('Bing', data.bing, data.page_count)}</div>
@@ -45,9 +46,11 @@ export function demoDashboard(client: Client, properties: readonly Property[], i
       const observed = rows.filter((item): boolean => item.engine === engine);
       return { indexed: observed.filter((item): boolean => item.status === 'indexed').length, not_indexed: observed.filter((item): boolean => item.status === 'not_indexed').length, crawled: observed.filter((item): boolean => item.status === 'crawled').length, submitted: 0, failed: 0, unknown: paths.size - observed.filter((item): boolean => item.status !== 'waiting').length, error_count: 0, last_checked_at: null };
     };
+
     return { id: site.id, name: site.name, url: site.siteUrl, is_active: site.active, page_count: paths.size, google: summary('google'), bing: summary('bing') };
   });
   // 블로그별 예시 상태를 엔진별 합계로 변환합니다.
   const sum = (engine: 'google' | 'bing'): EngineSummary => ({ indexed: sites.reduce((n, site): number => n + site[engine].indexed, 0), not_indexed: sites.reduce((n, site): number => n + site[engine].not_indexed, 0), crawled: sites.reduce((n, site): number => n + site[engine].crawled, 0), unknown: sites.reduce((n, site): number => n + site[engine].unknown, 0), submitted: 0, failed: 0, error_count: 0, last_checked_at: null });
+
   return { client: { id: client.id, name: client.name, manager_name: client.manager || null }, site_count: sites.length, page_count: sites.reduce((n, site): number => n + site.page_count, 0), google: sum('google'), bing: sum('bing'), sites };
 }

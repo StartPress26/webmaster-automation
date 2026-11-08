@@ -42,18 +42,22 @@ class SiteCreate(BaseModel):
             raise ValueError("URL에 공백이나 제어 문자를 포함할 수 없습니다.")
         if "\\" in value:
             raise ValueError("URL에 역슬래시를 포함할 수 없습니다.")
+
         # 파서가 생략된 구분자나 호스트 앞 슬래시를 자동 보정하지 않도록 합니다.
         scheme, separator, address = value.partition("://")
         if scheme.lower() not in {"http", "https"} or not separator or address.startswith("/"):
             raise ValueError("호스트가 있는 HTTP 또는 HTTPS 주소를 입력하세요.")
+
         parsed = AnyHttpUrl(value)
         if parsed.username is not None or parsed.password is not None:
             raise ValueError("URL에 사용자 이름이나 비밀번호를 포함할 수 없습니다.")
         if parsed.fragment is not None:
             raise ValueError("URL에서 # 뒤의 프래그먼트를 제거하세요.")
+
         normalized = str(parsed)
         if len(normalized.encode("utf-8")) > 2048:
             raise ValueError("URL은 정규화 후 UTF-8 기준 2,048바이트 이하여야 합니다.")
+
         return normalized
 
     # 키·파일 주소의 동시 입력과 메인 사이트에 대한 적용 범위를 검증합니다.
@@ -63,12 +67,14 @@ class SiteCreate(BaseModel):
             return self
         if self.indexnow_key is None or self.indexnow_key_location is None:
             raise ValueError("IndexNow 키와 키 파일 주소를 함께 입력하세요.")
+
         IndexNowRequest(
             host=urlsplit(self.url).hostname or "",
             key=self.indexnow_key,
             key_location=self.indexnow_key_location,
             urls=(self.url,),
         )
+
         return self
 
 

@@ -63,6 +63,7 @@ async def _prepare_notification(
         or len({(row.indexnow_key, row.indexnow_key_location) for row in rows}) != 1
     ):
         return PageNotification(status="failed", error_code="INDEXNOW_SETTINGS_INCONSISTENT")
+
     try:
         # 부모 사이트의 키와 새 글 URL을 묶어서, IndexNow에 보낼 요청 객체를 만들기
         return IndexNowRequest(
@@ -86,6 +87,7 @@ async def create_page(
             raise PageParentNotFoundError("부모 메인 사이트를 찾을 수 없습니다.")
         if not parent.is_active:
             raise PageParentInactiveError("비활성 사이트에는 글을 추가할 수 없습니다.")
+
         _validate_page_scope(parent.url, data.url)
 
         # IndexNow에 보낼 요청
@@ -101,12 +103,15 @@ async def create_page(
 
         if page is None:
             raise DuplicatePageError("이 고객사에 이미 등록된 URL입니다.")
+
         saved = PageRead.model_validate(page)
 
     if isinstance(notification, PageNotification):
         return PageCreateResult(page=saved, submission=notification)
+
     try:
         result = await notify_published_urls(notification, client=client)
+
         return PageCreateResult(page=saved, submission=PageNotification(
             status=result.status, upstream_http_status=result.http_status,
             requested_at=result.requested_at,
@@ -129,9 +134,11 @@ async def list_pages(
         ))
         if parent is None:
             raise PageParentNotFoundError("부모 메인 사이트를 찾을 수 없습니다.")
+
         rows = await session.scalars(select(Site).where(
             Site.parent_site_id == parent.id,
             Site.target_type == "page",
             Site.client_id == parent.client_id,
         ).order_by(Site.created_at, Site.id).limit(limit).offset(offset))
+
         return tuple(PageRead.model_validate(row) for row in rows)

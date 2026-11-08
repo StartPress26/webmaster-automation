@@ -12,4 +12,5 @@ async def notify_published_urls(
 
     클라이언트 생성·종료는 호출자가 담당합니다. DB 저장과 자동 재시도는 수행하지 않습니다.
     """
+
     return await client.submit(request)

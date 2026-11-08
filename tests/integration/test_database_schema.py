@@ -42,6 +42,7 @@ async def sample(db_session: AsyncSession) -> SampleSites:
         ).returning(Site.id)
     )
     assert client_id is not None and main_id is not None and page_id is not None
+
     return SampleSites(client_id, main_id, page_id)
 
 
@@ -55,6 +56,7 @@ async def test_page_uses_main_registration_and_own_index_status(
     await db_session.execute(insert(SiteEngineStatus).values(
         site_id=sample.page_id, engine="google", index_status="crawled"
     ))
+
     row = (await db_session.execute(
         select(Site.url, EngineRegistration.registration_status, SiteEngineStatus.index_status)
         .join(EngineRegistration, EngineRegistration.main_site_id == Site.parent_site_id)
@@ -64,6 +66,7 @@ async def test_page_uses_main_registration_and_own_index_status(
             EngineRegistration.engine == SiteEngineStatus.engine,
         )
     )).one()
+
     assert tuple(row) == ("https://example.com/post-a", "verified", "crawled")
 
 
@@ -77,7 +80,9 @@ async def test_same_target_and_engine_cannot_have_two_statuses(
         if registration
         else insert(SiteEngineStatus).values(site_id=sample.page_id, engine="google")
     )
+
     await db_session.execute(statement)
+
     with pytest.raises(IntegrityError):
         async with db_session.begin_nested():
             await db_session.execute(statement)
@@ -103,6 +108,7 @@ async def test_page_requires_an_existing_main_parent(
     parent_id = {
         "page": sample.page_id, "missing": uuid4(), "none": None, "self": page_id
     }[parent_kind]
+
     with pytest.raises(IntegrityError):
         async with db_session.begin_nested():
             await db_session.execute(insert(Site).values(
@@ -151,6 +157,7 @@ async def test_not_applicable_registration_stays_null_with_orm(
     registration = EngineRegistration(
         main_site_id=sample.main_id, engine="brave", registration_status=None
     )
+
     db_session.add(registration)
     await db_session.flush()
     await db_session.refresh(registration)
@@ -159,8 +166,10 @@ async def test_not_applicable_registration_stays_null_with_orm(
 
 def test_migration_matches_models_and_can_round_trip(migrated_database_url: str) -> None:
     """임시 테스트 DB에서만 되돌리기와 재적용을 확인합니다."""
+
     config = Config(str(Path(__file__).resolve().parents[2] / "alembic.ini"))
     config.attributes["database_url"] = migrated_database_url
+
     command.check(config)
     command.downgrade(config, "base")
     command.upgrade(config, "head")
@@ -178,6 +187,7 @@ async def test_indexnow_settings_default_to_null(
         .values(main_site_id=sample.main_id, engine=engine)
         .returning(EngineRegistration.indexnow_key, EngineRegistration.indexnow_key_location)
     )).one()
+
     assert tuple(row) == (None, None)
 
 
@@ -188,15 +198,18 @@ async def test_indexnow_settings_are_shared_through_main_site(
 ) -> None:
     key = "a1b2c3d4e5f67890"
     location = f"https://example.com/{key}.txt"
+
     await db_session.execute(insert(EngineRegistration), tuple(
         {"main_site_id": sample.main_id, "engine": engine,
          "indexnow_key": key, "indexnow_key_location": location}
         for engine in ("naver", "bing")
     ))
+
     rows = (await db_session.execute(
         select(EngineRegistration.indexnow_key, EngineRegistration.indexnow_key_location)
         .join(Site, EngineRegistration.main_site_id == Site.parent_site_id)
         .where(Site.id == sample.page_id)
     )).all()
+
     assert len(rows) == 2
     assert all(tuple(row) == (key, location) for row in rows)

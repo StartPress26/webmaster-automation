@@ -44,6 +44,7 @@ async def inspection_api(migrated_database_url: str) -> AsyncIterator[AsyncClien
 
     app.dependency_overrides[get_db] = database
     app.dependency_overrides[get_inspector] = inspector
+
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             yield client
@@ -61,11 +62,14 @@ async def create_target(api: AsyncClient, kind: str = "page", root: str = "https
     })).json()
     if kind == "site":
         return parent["id"], parent["id"], root
+
     url = root + "post?lang=ko"
+
     response = await api.post(f"/sites/{parent['id']}/pages", json={
         "name": "글", "url": url, "notify_search_engines": False,
     })
     assert response.status_code == 201
+
     return parent["id"], response.json()["page"]["id"], url
 
 
@@ -79,6 +83,7 @@ def observation(engine: str, root: str, url: str, checked_at: datetime | None = 
             page_fetch_state=None, indexing_state=None, robots_txt_state=None,
             google_canonical=url, user_canonical=url, inspection_result_link=None,
         )
+
     return BingUrlInspection(
         site_url=root, page_url=url, index_status="crawled", checked_at=checked,
         discovery_date=None, last_crawl_time=checked, http_status=200, is_page=True, document_size=100,
@@ -92,6 +97,7 @@ async def test_inspection_roundtrip(
     inspection_api: AsyncClient, migrated_database_url: str, kind: str, engine_name: str,
 ) -> None:
     parent_id, target_id, url = await create_target(inspection_api, kind)
+
     result = observation(engine_name, "https://example.com/", url)
     inspector = AsyncMock(return_value=result)
 
@@ -101,10 +107,13 @@ async def test_inspection_roundtrip(
 
     app.dependency_overrides[get_inspector] = dependency
     path = f"/sites/{target_id}/inspections"
+
     assert (await inspection_api.get(path)).json() == {"items": []}
     response = await inspection_api.post(path, json={"engine": engine_name})
     assert response.status_code == 200
+
     body = response.json()
+
     assert body["site_id"] == target_id
     assert body["index_status"] == result.index_status
     assert body["last_checked_at"] is not None
@@ -112,15 +121,19 @@ async def test_inspection_roundtrip(
     inspector.assert_awaited_once_with(engine_name, "https://example.com/", url)
     assert (await inspection_api.get(path)).json() == {"items": [body]}
     inspector.assert_awaited_once()
+
     engine = create_async_engine(migrated_database_url, poolclass=NullPool, hide_parameters=True)
+
     try:
         async with AsyncSession(engine) as session:
             rows = tuple(await session.scalars(select(SiteEngineStatus).where(
                 SiteEngineStatus.site_id == UUID(target_id),
             )))
+
             assert len(rows) == 1
             assert rows[0].index_status == result.index_status
             assert rows[0].last_checked_at == result.checked_at
+
             if kind == "page":
                 assert tuple(await session.scalars(select(SiteEngineStatus).where(
                     SiteEngineStatus.site_id == UUID(parent_id),
@@ -139,6 +152,7 @@ async def test_inspection_error_preserves_status(
     inspection_api: AsyncClient, engine_name: str, code: str, http_status: int,
 ) -> None:
     _, target_id, url = await create_target(inspection_api)
+
     result = observation(engine_name, "https://example.com/", url)
     error_type = GoogleEngineError if engine_name == "google" else BingEngineError
     inspector = AsyncMock(side_effect=[result, error_type(code, "secret-key-token"), result])
@@ -150,11 +164,14 @@ async def test_inspection_error_preserves_status(
     app.dependency_overrides[get_inspector] = dependency
     path = f"/sites/{target_id}/inspections"
     before = (await inspection_api.post(path, json={"engine": engine_name})).json()
+
     failed = await inspection_api.post(path, json={"engine": engine_name})
     assert failed.status_code == http_status
     assert failed.json()["detail"]["code"] == f"ENGINE_{code.upper()}"
     assert "secret-key-token" not in failed.text
+
     stored = (await inspection_api.get(path)).json()["items"][0]
+
     assert stored["index_status"] == before["index_status"]
     assert stored["last_checked_at"] == before["last_checked_at"]
     assert stored["error_message"] is not None
@@ -169,6 +186,7 @@ async def test_inspection_error_preserves_status(
 # 첫 검사 실패도 미색인으로 단정하지 않고 unknown·관측 시각 없음으로 저장합니다.
 async def test_first_error_is_unknown(inspection_api: AsyncClient) -> None:
     _, target_id, _ = await create_target(inspection_api)
+
     inspector = AsyncMock(side_effect=GoogleEngineError("timeout", "secret"))
 
     # 성공 관측이 없는 첫 실패를 재현합니다.
@@ -177,8 +195,11 @@ async def test_first_error_is_unknown(inspection_api: AsyncClient) -> None:
 
     app.dependency_overrides[get_inspector] = dependency
     path = f"/sites/{target_id}/inspections"
+
     assert (await inspection_api.post(path, json={"engine": "google"})).status_code == 504
+
     row = (await inspection_api.get(path)).json()["items"][0]
+
     assert row["index_status"] == "unknown"
     assert row["last_checked_at"] is None
     assert row["error_message"] is not None
@@ -191,6 +212,7 @@ async def test_google_auth_code_is_persisted(inspection_api: AsyncClient) -> Non
     from app.engines.google.google_auth import GoogleAuthError
 
     _, target_id, _ = await create_target(inspection_api)
+
     inspector = AsyncMock(side_effect=GoogleInspectionAuthError(GoogleAuthError("secret-key", code="refresh_failed")))
 
     # 실제 인증 없이 정제된 인증 오류만 반환합니다.
@@ -199,10 +221,13 @@ async def test_google_auth_code_is_persisted(inspection_api: AsyncClient) -> Non
 
     app.dependency_overrides[get_inspector] = dependency
     path = f"/sites/{target_id}/inspections"
+
     failure = await inspection_api.post(path, json={"engine": "google"})
     assert failure.status_code == 503
     assert failure.json()["detail"]["code"] == "GOOGLE_AUTH_REFRESH_FAILED"
+
     row = (await inspection_api.get(path)).json()["items"][0]
+
     assert row["error_code"] == "GOOGLE_AUTH_REFRESH_FAILED"
     assert row["last_checked_at"] is None
     assert "secret-key" not in str(row)
@@ -217,6 +242,7 @@ async def test_get_is_read_only_and_missing(inspection_api: AsyncClient) -> None
         pytest.fail("GET은 엔진을 준비하지 않습니다.")
 
     app.dependency_overrides[get_inspector] = forbidden_dependency
+
     assert (await inspection_api.get(f"/sites/{target_id}/inspections")).json() == {"items": []}
     assert (await inspection_api.get(f"/sites/{uuid4()}/inspections")).status_code == 404
     app.dependency_overrides.pop(get_inspector)
@@ -237,14 +263,18 @@ async def test_inspection_preconditions(
     inspection_api: AsyncClient, migrated_database_url: str, scenario: str, expected: int,
 ) -> None:
     root = "https://example.com/blog/" if scenario == "bing_path" else "https://example.com/"
+
     parent_id, target_id, _ = await create_target(inspection_api, root=root)
+
     engine = create_async_engine(migrated_database_url, poolclass=NullPool, hide_parameters=True)
+
     try:
         async with AsyncSession(engine) as session, session.begin():
             if scenario == "inactive":
                 await session.execute(update(Site).where(Site.id == UUID(parent_id)).values(is_active=False))
             if scenario == "outside":
                 await session.execute(update(Site).where(Site.id == UUID(target_id)).values(url="https://other.test/post"))
+
         response = await inspection_api.post(f"/sites/{target_id}/inspections", json={
             "engine": "bing" if scenario == "bing_path" else "google",
         })
@@ -260,6 +290,7 @@ async def test_older_observation_does_not_replace_newer(inspection_api: AsyncCli
     from datetime import timedelta
 
     _, target_id, url = await create_target(inspection_api)
+
     newer = observation("google", "https://example.com/", url)
     older = replace(newer, checked_at=newer.checked_at - timedelta(seconds=1), index_status="not_indexed")
     inspector = AsyncMock(side_effect=[newer, older])
@@ -272,6 +303,7 @@ async def test_older_observation_does_not_replace_newer(inspection_api: AsyncCli
     path = f"/sites/{target_id}/inspections"
     first = (await inspection_api.post(path, json={"engine": "google"})).json()
     second = (await inspection_api.post(path, json={"engine": "google"})).json()
+
     assert second == first
     assert (await inspection_api.get(path)).json() == {"items": [first]}
 
@@ -279,6 +311,7 @@ async def test_older_observation_does_not_replace_newer(inspection_api: AsyncCli
 # 같은 경로에 GET·POST가 모두 공개되고 엔진을 바꿔도 기존 엔진 결과는 유지합니다.
 async def test_two_engines_and_openapi(inspection_api: AsyncClient) -> None:
     _, target_id, url = await create_target(inspection_api)
+
     inspector = AsyncMock(side_effect=[
         observation("google", "https://example.com/", url), observation("bing", "https://example.com/", url),
     ])
@@ -289,9 +322,14 @@ async def test_two_engines_and_openapi(inspection_api: AsyncClient) -> None:
 
     app.dependency_overrides[get_inspector] = dependency
     path = f"/sites/{target_id}/inspections"
+
     for engine in ("google", "bing"):
         assert (await inspection_api.post(path, json={"engine": engine})).status_code == 200
+
     rows = (await inspection_api.get(path)).json()["items"]
+
     assert [row["engine"] for row in rows] == ["bing", "google"]
+
     schema = (await inspection_api.get("/openapi.json")).json()
+
     assert {"get", "post"} <= schema["paths"]["/sites/{site_id}/inspections"].keys()

@@ -31,6 +31,7 @@ async def site_api(migrated_database_url: str) -> AsyncIterator[AsyncClient]:
             yield session
 
     app.dependency_overrides[get_db] = test_db
+
     try:
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://test"
@@ -65,7 +66,9 @@ async def test_site_create_is_committed(
 ) -> None:
     response = await site_api.post("/sites", json=site_payload(api_client_id))
     assert response.status_code == 201
+
     created = response.json()
+
     assert created["name"] == "테스트 블로그"
     assert created["url"] == "https://example.com/blog/"
     assert created["target_type"] == "site"
@@ -76,6 +79,7 @@ async def test_site_create_is_committed(
     engine = create_async_engine(
         migrated_database_url, poolclass=NullPool, hide_parameters=True
     )
+
     try:
         async with AsyncSession(engine) as session:
             stored = await session.get(Site, UUID(created["id"]))
@@ -98,12 +102,15 @@ async def test_api_creates_indexnow_registrations(
     ))
     assert response.status_code == 201
     assert "indexnow_key" not in response.json()
+
     engine = create_async_engine(migrated_database_url, poolclass=NullPool)
+
     try:
         async with AsyncSession(engine) as session:
             rows = (await session.scalars(select(EngineRegistration).where(
                 EngineRegistration.main_site_id == UUID(response.json()["id"])
             ))).all()
+
             assert {row.engine for row in rows} == {"naver", "bing"}
             assert all(row.indexnow_key == "a1b2c3d4" for row in rows)
             assert all(row.registration_status == "unknown" for row in rows)
@@ -178,12 +185,14 @@ async def test_site_listing_filters_and_paginates(
         "/sites", json=site_payload(api_client_id, url="https://example.com/second/")
     )).json()
     other_id = (await site_api.post("/clients", json={"name": "다른 고객사"})).json()["id"]
+
     other_site = await site_api.post("/sites", json=site_payload(other_id))
     assert other_site.status_code == 201
 
     engine = create_async_engine(
         migrated_database_url, poolclass=NullPool, hide_parameters=True
     )
+
     try:
         async with AsyncSession(engine) as session, session.begin():
             await session.execute(insert(Site).values(
@@ -211,7 +220,9 @@ async def test_site_listing_filters_and_paginates(
 async def test_site_routes_are_documented(site_api: AsyncClient) -> None:
     response = await site_api.get("/openapi.json")
     assert response.status_code == 200
+
     operations = response.json()["paths"]["/sites"]
+
     assert "201" in operations["post"]["responses"]
     assert {"get", "post"} <= operations.keys()
     assert (await site_api.get("/docs")).status_code == 200
@@ -223,35 +234,46 @@ async def test_indexnow_settings_roundtrip(
 ) -> None:
     created = (await site_api.post("/sites", json=site_payload(api_client_id))).json()
     path = f"/sites/{created['id']}/indexnow-settings"
+
     assert (await site_api.get(path)).json() == {"configured": False, "key_location": None}
+
     payload = {"key": "a1b2c3d4", "key_location": "https://example.com/key.txt"}
     expected = {"configured": True, "key_location": payload["key_location"]}
+
     for _ in range(2):
         response = await site_api.put(path, json=payload)
         assert response.status_code == 200
         assert response.json() == expected
         assert payload["key"] not in response.text
+
     engine = create_async_engine(migrated_database_url, poolclass=NullPool, hide_parameters=True)
+
     try:
         async with AsyncSession(engine) as session, session.begin():
             rows = tuple(await session.scalars(select(EngineRegistration).where(
                 EngineRegistration.main_site_id == UUID(created["id"])
             )))
+
             assert len(rows) == 2
             await session.execute(update(EngineRegistration).where(
                 EngineRegistration.main_site_id == UUID(created["id"])
             ).values(registration_status="verified", error_message="기존 기록"))
+
         replacement = {"key": "deadbeef", "key_location": "https://example.com/new-key.txt"}
+
         assert (await site_api.put(path, json=replacement)).status_code == 200
+
         async with AsyncSession(engine) as session:
             rows = tuple(await session.scalars(select(EngineRegistration).where(
                 EngineRegistration.main_site_id == UUID(created["id"])
             )))
+
             assert len(rows) == 2
             assert all(row.indexnow_key == replacement["key"] for row in rows)
             assert all(row.indexnow_key_location == replacement["key_location"] for row in rows)
             assert all(row.registration_status == "verified" for row in rows)
             assert all(row.error_message == "기존 기록" for row in rows)
+
         assert (await site_api.get(path)).json() == {
             "configured": True, "key_location": replacement["key_location"],
         }
@@ -272,6 +294,7 @@ async def test_indexnow_settings_invalid(
 ) -> None:
     created = (await site_api.post("/sites", json=site_payload(api_client_id))).json()
     path = f"/sites/{created['id']}/indexnow-settings"
+
     response = await site_api.put(path, json=payload)
     assert response.status_code == 422
     assert payload["key"] not in response.text
@@ -285,14 +308,17 @@ async def test_indexnow_settings_main_site_only(
     created = (await site_api.post("/sites", json=site_payload(api_client_id))).json()
     page_id = uuid4()
     engine = create_async_engine(migrated_database_url, poolclass=NullPool, hide_parameters=True)
+
     try:
         async with AsyncSession(engine) as session, session.begin():
             await session.execute(insert(Site).values(
                 id=page_id, client_id=UUID(api_client_id), parent_site_id=UUID(created["id"]),
                 target_type="page", owner_type="client", name="글", url="https://example.com/blog/post",
             ))
+
         for site_id in (uuid4(), page_id):
             path = f"/sites/{site_id}/indexnow-settings"
+
             assert (await site_api.get(path)).status_code == 404
             response = await site_api.put(path, json={
                 "key": "a1b2c3d4", "key_location": "https://example.com/key.txt",
@@ -309,12 +335,14 @@ async def test_indexnow_settings_conflict_and_repair(
     created = (await site_api.post("/sites", json=site_payload(api_client_id))).json()
     path = f"/sites/{created['id']}/indexnow-settings"
     engine = create_async_engine(migrated_database_url, poolclass=NullPool, hide_parameters=True)
+
     try:
         async with AsyncSession(engine) as session, session.begin():
             await session.execute(insert(EngineRegistration).values(
                 main_site_id=UUID(created["id"]), engine="bing", registration_status="verified",
                 indexnow_key="deadbeef", indexnow_key_location="https://example.com/old.txt",
             ))
+
         assert (await site_api.get(path)).status_code == 409
         assert (await site_api.put(path, json={
             "key": "a1b2c3d4", "key_location": "https://example.com/key.txt",
@@ -358,17 +386,21 @@ async def test_page_save_and_notify(
             assert row.parent_site_id == UUID(parent["id"])
             assert row.owner_type == parent["owner_type"]
             assert row.cms_type is None and row.can_edit_site is None
+
         assert json.loads(request.content) == {
             "host": "example.com", "key": "a1b2c3d4", "urlList": [url],
             "keyLocation": "https://example.com/key.txt",
         }
+
         if upstream == "timeout":
             raise httpx.ReadTimeout("비공개 원본 오류", request=request)
         if upstream == "network":
             raise httpx.ConnectError("비공개 원본 오류", request=request)
+
         return httpx.Response(upstream)
 
     handler = AsyncMock(side_effect=observe)
+
     try:
         async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
             # HTTP 전송만 모의 처리하고 실제 IndexNow 클라이언트를 사용합니다.
@@ -377,9 +409,12 @@ async def test_page_save_and_notify(
 
             app.dependency_overrides[get_indexnow_client] = indexnow
             path = f"/sites/{parent['id']}/pages"
+
             response = await site_api.post(path, json={"name": " 새 글 ", "url": url})
             assert response.status_code == 201
+
             body = response.json()
+
             assert body["page"]["name"] == "새 글"
             assert body["page"]["client_id"] == api_client_id
             assert body["submission"]["status"] == expected
@@ -390,6 +425,7 @@ async def test_page_save_and_notify(
             duplicate = await site_api.post(path, json={"name": "중복", "url": url})
             assert duplicate.status_code == 409
             handler.assert_awaited_once()
+
         async with AsyncSession(engine) as session:
             assert await session.get(Site, UUID(body["page"]["id"])) is not None
     finally:
@@ -415,6 +451,7 @@ async def test_page_notification_preconditions(
     parent = (await site_api.post("/sites", json=site_payload(api_client_id))).json()
     engine = create_async_engine(migrated_database_url, poolclass=NullPool, hide_parameters=True)
     handler = Mock(side_effect=AssertionError("알림을 전송하면 안 됩니다."))
+
     try:
         if scenario == "inconsistent":
             async with AsyncSession(engine) as session, session.begin():
@@ -422,20 +459,24 @@ async def test_page_notification_preconditions(
                     main_site_id=UUID(parent["id"]), engine="bing",
                     indexnow_key="a1b2c3d4", indexnow_key_location="https://example.com/key.txt",
                 ))
+
         async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
             # 선행 조건으로 알림이 생략될 때 외부 전송을 금지합니다.
             async def indexnow() -> IndexNowClient:
                 return IndexNowClient(http_client)
 
             app.dependency_overrides[get_indexnow_client] = indexnow
+
             response = await site_api.post(f"/sites/{parent['id']}/pages", json={
                 "name": "글", "url": "https://example.com/blog/hello",
                 "notify_search_engines": scenario != "disabled",
             })
+
         assert response.status_code == 201
         assert response.json()["submission"]["status"] == expected
         assert response.json()["submission"]["error_code"] == code
         handler.assert_not_called()
+
         async with AsyncSession(engine) as session:
             assert await session.get(Site, UUID(response.json()["page"]["id"])) is not None
     finally:
@@ -453,6 +494,7 @@ async def test_page_rejects_outside_parent(
     site_api: AsyncClient, api_client_id: str, url: str,
 ) -> None:
     parent = (await site_api.post("/sites", json=site_payload(api_client_id))).json()
+
     response = await site_api.post(f"/sites/{parent['id']}/pages", json={
         "name": "잘못된 글", "url": url,
     })
@@ -465,11 +507,16 @@ async def test_page_parent_validation(
     site_api: AsyncClient, api_client_id: str, migrated_database_url: str,
 ) -> None:
     payload = {"name": "글", "url": "https://example.com/blog/hello", "notify_search_engines": False}
+
     assert (await site_api.post(f"/sites/{uuid4()}/pages", json=payload)).status_code == 404
+
     parent = (await site_api.post("/sites", json=site_payload(api_client_id))).json()
     page = (await site_api.post(f"/sites/{parent['id']}/pages", json=payload)).json()["page"]
+
     assert (await site_api.post(f"/sites/{page['id']}/pages", json=payload)).status_code == 404
+
     engine = create_async_engine(migrated_database_url, poolclass=NullPool, hide_parameters=True)
+
     try:
         async with AsyncSession(engine) as session, session.begin():
             await session.execute(update(Site).where(Site.id == UUID(parent["id"])).values(is_active=False))
@@ -492,6 +539,7 @@ async def test_concurrent_page_creation_notifies_once(
         api_client_id, indexnow_key="a1b2c3d4", indexnow_key_location="https://example.com/key.txt",
     ))).json()
     handler = Mock(return_value=httpx.Response(200))
+
     try:
         async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
             # 동시 요청에 같은 모의 전송 클라이언트를 제공합니다.
@@ -500,10 +548,12 @@ async def test_concurrent_page_creation_notifies_once(
 
             app.dependency_overrides[get_indexnow_client] = indexnow
             path = f"/sites/{parent['id']}/pages"
+
             responses = await asyncio.gather(*(
                 site_api.post(path, json={"name": "글", "url": "https://example.com/blog/concurrent"})
                 for _ in range(2)
             ))
+
         assert sorted(response.status_code for response in responses) == [201, 409]
         handler.assert_called_once()
     finally:
@@ -536,7 +586,9 @@ async def test_page_storage_failure_does_not_notify(
         return result
 
     monkeypatch.setattr(AsyncSession, "scalar", fail_insert)
+
     url = "https://example.com/blog/rollback"
+
     try:
         async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
             # 저장 실패 시에는 모의 클라이언트도 호출되지 않아야 합니다.
@@ -544,10 +596,14 @@ async def test_page_storage_failure_does_not_notify(
                 return IndexNowClient(http_client)
 
             app.dependency_overrides[get_indexnow_client] = indexnow
+
             with pytest.raises(SQLAlchemyError, match="글 저장 테스트 오류"):
                 await site_api.post(f"/sites/{parent['id']}/pages", json={"name": "글", "url": url})
+
         handler.assert_not_called()
+
         engine = create_async_engine(migrated_database_url, poolclass=NullPool, hide_parameters=True)
+
         try:
             async with AsyncSession(engine) as session:
                 assert await session.scalar(select(Site).where(
@@ -576,6 +632,7 @@ async def test_page_listing_filters_and_paginates(
         "name": f"글 {index}", "url": f"https://example.com/blog/post-{index}",
         "notify_search_engines": False,
     })).json()["page"]["id"] for index in range(3)])
+
     for main_id, url in (
         (other_parent["id"], "https://example.com/other/post"),
         (foreign_parent["id"], "https://example.com/blog/foreign"),
@@ -583,7 +640,9 @@ async def test_page_listing_filters_and_paginates(
         assert (await site_api.post(f"/sites/{main_id}/pages", json={
             "name": "다른 부모의 글", "url": url, "notify_search_engines": False,
         })).status_code == 201
+
     engine = create_async_engine(migrated_database_url, poolclass=NullPool, hide_parameters=True)
+
     try:
         async with AsyncSession(engine) as session, session.begin():
             await session.execute(update(Site).where(Site.id.in_(tuple(UUID(value) for value in page_ids))).values(
@@ -597,16 +656,21 @@ async def test_page_listing_filters_and_paginates(
 
         app.dependency_overrides[get_indexnow_client] = forbidden_client
         path = f"/sites/{parent['id']}/pages"
+
         response = await site_api.get(path)
         assert response.status_code == 200
+
         rows = response.json()["items"]
+
         assert [row["id"] for row in rows] == sorted(page_ids)
         assert all(row["client_id"] == api_client_id and row["parent_site_id"] == parent["id"] for row in rows)
         assert all(row["target_type"] == "page" for row in rows)
         assert next(row for row in rows if row["id"] == page_ids[0])["is_active"] is False
         assert (await site_api.get(path, params={"limit": 1, "offset": 1})).json() == {"items": rows[1:2]}
         assert (await site_api.get(path, params={"offset": 3})).json() == {"items": []}
+
         schema = (await site_api.get("/openapi.json")).json()
+
         assert {"get", "post"} <= schema["paths"]["/sites/{main_site_id}/pages"].keys()
     finally:
         app.dependency_overrides.pop(get_indexnow_client, None)
@@ -617,14 +681,18 @@ async def test_page_listing_filters_and_paginates(
 async def test_page_listing_parent_validation(site_api: AsyncClient, api_client_id: str) -> None:
     parent = (await site_api.post("/sites", json=site_payload(api_client_id))).json()
     path = f"/sites/{parent['id']}/pages"
+
     assert (await site_api.get(path)).json() == {"items": []}
+
     page = (await site_api.post(path, json={
         "name": "글", "url": "https://example.com/blog/post", "notify_search_engines": False,
     })).json()["page"]
+
     for parent_id in (uuid4(), page["id"]):
         response = await site_api.get(f"/sites/{parent_id}/pages")
         assert response.status_code == 404
         assert response.json()["detail"]["code"] == "MAIN_SITE_NOT_FOUND"
+
     assert (await site_api.get("/sites/not-a-uuid/pages")).status_code == 422
 
 

@@ -18,6 +18,7 @@ async def create_client(session: AsyncSession, data: ClientCreate) -> ClientRead
             )
         ).one() # 결과가 정확히 한 행일 때만 객체를 꺼낸다.
         result = ClientRead.model_validate(client)
+
     return result
 
 
@@ -32,4 +33,5 @@ async def list_clients(
         .limit(limit)
         .offset(offset)
     )
+
     return tuple(ClientRead.model_validate(client) for client in clients)

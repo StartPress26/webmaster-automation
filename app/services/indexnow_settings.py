@@ -34,6 +34,7 @@ async def _get_main_site(session: AsyncSession, site_id: UUID, *, write: bool) -
     # 찾은 사이트에 설정을 동시에 바꾸는 것을 막기 위해 lock을 건다.
     if site is None:
         raise MainSiteNotFoundError("메인 사이트를 찾을 수 없습니다.")
+
     return site
 
 
@@ -44,6 +45,7 @@ async def put_settings(
     # session -> DB 작업을 하나의 트랜잭션으로 만든 것
     async with session.begin():
         site = await _get_main_site(session, site_id, write=True)
+
         try:
             # 검증
             IndexNowRequest(
@@ -54,6 +56,7 @@ async def put_settings(
             raise InvalidIndexNowScopeError(
                 "키 파일의 호스트·적용 경로가 메인 사이트와 일치해야 합니다."
             ) from None
+
         statement = insert(EngineRegistration).values(tuple(
             {
                 "main_site_id": site_id, "engine": engine,
@@ -62,6 +65,7 @@ async def put_settings(
             }
             for engine in ("bing", "naver")
         ))
+
         # on_conflict_do_update 이미 있으면 삽입이 아닌 업데이트
         await session.execute(statement.on_conflict_do_update(
             constraint="uq_engine_registrations_site_engine",
@@ -70,6 +74,7 @@ async def put_settings(
                 "indexnow_key_location": statement.excluded.indexnow_key_location,
             },
         ))
+
     return IndexNowSettingsRead(configured=True, key_location=data.key_location)
 
 
@@ -77,6 +82,7 @@ async def put_settings(
 async def get_settings(session: AsyncSession, site_id: UUID) -> IndexNowSettingsRead:
     async with session.begin():
         await _get_main_site(session, site_id, write=False)
+
         rows = tuple(await session.scalars(select(EngineRegistration).where(
             EngineRegistration.main_site_id == site_id,
             EngineRegistration.engine.in_(("bing", "naver")),
@@ -94,4 +100,5 @@ async def get_settings(session: AsyncSession, site_id: UUID) -> IndexNowSettings
             or len({(row.indexnow_key, row.indexnow_key_location) for row in rows}) != 1
         ):
             raise InconsistentIndexNowSettingsError("Naver·Bing의 IndexNow 설정이 일치하지 않습니다.")
+
         return IndexNowSettingsRead(configured=True, key_location=rows[0].indexnow_key_location)

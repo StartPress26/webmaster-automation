@@ -29,8 +29,11 @@ async def client_api(migrated_database_url: str) -> AsyncIterator[AsyncClient]:
             yield session
 
     application = FastAPI()
+
     application.include_router(router)
+
     application.dependency_overrides[get_db] = test_db
+
     try:
         async with AsyncClient(
             transport=ASGITransport(app=application), base_url="http://test"
@@ -47,8 +50,10 @@ async def test_created_client_is_committed_and_listed(
         "/clients", json={"name": "  테스트 고객사  ", "manager_name": "  김담당  "}
     )
     assert response.status_code == 201
+
     created = response.json()
     client_id = UUID(created["id"])
+
     assert created["name"] == "테스트 고객사"
     assert created["manager_name"] == "김담당"
     assert created["created_at"] is not None
@@ -57,6 +62,7 @@ async def test_created_client_is_committed_and_listed(
     engine = create_async_engine(
         migrated_database_url, poolclass=NullPool, hide_parameters=True
     )
+
     try:
         async with AsyncSession(engine) as session:
             stored_name = await session.scalar(select(Client.name).where(Client.id == client_id))
@@ -88,7 +94,9 @@ async def test_invalid_client_does_not_create_a_row(
 async def test_listing_supports_pagination(client_api: AsyncClient) -> None:
     for name in ("페이지 검증 A", "페이지 검증 B"):
         assert (await client_api.post("/clients", json={"name": name})).status_code == 201
+
     items = (await client_api.get("/clients")).json()["items"]
+
     page = await client_api.get("/clients", params={"limit": 1, "offset": 1})
     assert page.status_code == 200
     assert page.json()["items"] == items[1:2]

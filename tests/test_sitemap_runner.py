@@ -41,8 +41,10 @@ async def test_google_worker(monkeypatch: pytest.MonkeyPatch) -> None:
 # 인증 로드 실패의 원본 메시지는 외부로 전달하지 않습니다.
 async def test_google_auth_sanitized(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(runner, "load_credentials", Mock(side_effect=GoogleAuthError("secret-token")))
+
     with pytest.raises(GoogleEngineError) as error:
         await runner.submit_sitemap("google", "https://example.com/", "https://example.com/sitemap.xml")
+
     assert error.value.code == "authentication"
     assert "secret-token" not in str(error.value)
 
@@ -53,15 +55,19 @@ async def test_google_cleanup(monkeypatch: pytest.MonkeyPatch, fail: bool) -> No
     adapter = MagicMock()
     adapter.__enter__.return_value = adapter
     adapter.submit_sitemap.return_value = True
+
     if fail:
         adapter.submit_sitemap.side_effect = GoogleEngineError("timeout", "시간 초과")
+
     monkeypatch.setattr(runner, "load_credentials", Mock())
     monkeypatch.setattr(runner, "GoogleEngine", Mock(return_value=adapter))
+
     if fail:
         with pytest.raises(GoogleEngineError):
             await runner.submit_sitemap("google", "https://example.com/", "https://example.com/sitemap.xml")
     else:
         assert await runner.submit_sitemap("google", "https://example.com/", "https://example.com/sitemap.xml")
+
     adapter.__exit__.assert_called_once()
 
 
@@ -69,16 +75,22 @@ async def test_google_cleanup(monkeypatch: pytest.MonkeyPatch, fail: bool) -> No
 @pytest.mark.parametrize("fail", [False, True])
 async def test_bing_cleanup(monkeypatch: pytest.MonkeyPatch, fail: bool) -> None:
     monkeypatch.setenv("BING_API_KEY", "test-key")
+
     adapter = Mock(submit_sitemap=AsyncMock(return_value=True))
+
     if fail:
         adapter.submit_sitemap.side_effect = BingEngineError("timeout", "시간 초과")
+
     factory = Mock(return_value=adapter)
+
     monkeypatch.setattr(runner, "BingEngine", factory)
+
     if fail:
         with pytest.raises(BingEngineError):
             await runner.submit_sitemap("bing", "https://example.com/", "https://example.com/sitemap.xml")
     else:
         assert await runner.submit_sitemap("bing", "https://example.com/", "https://example.com/sitemap.xml")
+
     assert factory.call_args.kwargs["http_client"].is_closed
     adapter.submit_sitemap.assert_awaited_once_with("https://example.com/", "https://example.com/sitemap.xml")
 
@@ -97,6 +109,7 @@ async def test_transaction_closed_before_submit(accepted: bool | None) -> None:
         return cast(bool, accepted)
 
     request = SitemapCreate(engine="google", sitemap_url="https://example.com/sitemap.xml")
+
     if accepted:
         result = await submit_sitemap(session, uuid4(), request, submitter=submit)
         assert result.status == "accepted"
