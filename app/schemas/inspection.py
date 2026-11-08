@@ -1,10 +1,10 @@
 """새 검사 요청과 DB에 저장된 엔진별 최신 상태입니다."""
 
 from datetime import datetime
-from typing import Literal
+from typing import Literal, Self
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import AwareDatetime, BaseModel, ConfigDict, HttpUrl, model_validator
 
 InspectionEngine = Literal["google", "bing"]
 
@@ -13,6 +13,26 @@ class InspectionCreate(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     engine: InspectionEngine
+
+
+class GuiInspectionCreate(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    engine: Literal["naver", "bing"]
+    site_url: HttpUrl
+    target_url: HttpUrl
+    index_status: Literal["indexed", "not_indexed", "unknown"]
+    queried_at: AwareDatetime
+    observed_at: AwareDatetime
+
+    # 엔진별 판정 범위와 검사 시작·관측 시각의 순서를 검증합니다.
+    @model_validator(mode="after")
+    def validate_observation(self) -> Self:
+        if self.engine == "naver" and self.index_status == "not_indexed":
+            raise ValueError("네이버 GUI 판정은 indexed 또는 unknown이어야 합니다.")
+        if self.observed_at < self.queried_at:
+            raise ValueError("관측 시각은 검사 시작 시각보다 빠를 수 없습니다.")
+        return self
 
 
 class InspectionRead(BaseModel):

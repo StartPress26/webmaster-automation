@@ -1,7 +1,7 @@
 """임시 DB와 모의 엔진으로 검사 실행·저장·읽기 전용 GET을 검증합니다."""
 
 from collections.abc import AsyncIterator
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
 
@@ -333,3 +333,124 @@ async def test_two_engines_and_openapi(inspection_api: AsyncClient) -> None:
     schema = (await inspection_api.get("/openapi.json")).json()
 
     assert {"get", "post"} <= schema["paths"]["/sites/{site_id}/inspections"].keys()
+
+
+# 실제 DB에서 GUI 최신 결과를 저장하고 같은 요청·과거 관측은 그대로 유지합니다.
+@pytest.mark.parametrize("kind", ["site", "page"])
+@pytest.mark.parametrize("engine_name", ["naver", "bing"])
+async def test_gui_inspection_roundtrip_and_stale_result(
+    inspection_api: AsyncClient, migrated_database_url: str, kind: str, engine_name: str,
+) -> None:
+    root = "https://example.com/blog/"
+    _, target_id, url = await create_target(inspection_api, kind, root)
+    now = datetime.now(timezone.utc)
+    payload = {
+        "engine": engine_name, "site_url": root, "target_url": url, "index_status": "indexed",
+        "queried_at": (now - timedelta(seconds=2)).isoformat(), "observed_at": now.isoformat(),
+    }
+    path = f"/sites/{target_id}/gui-inspections"
+    response = await inspection_api.post(path, json=payload)
+    assert response.status_code == 200
+    first = response.json()
+    assert first["site_id"] == target_id
+    assert first["engine"] == engine_name
+    assert first["index_status"] == "indexed"
+    assert first["last_checked_at"]
+    assert first["error_message"] is None
+    assert (await inspection_api.get(f"/sites/{target_id}/inspections")).json() == {"items": [first]}
+    assert (await inspection_api.post(path, json=payload)).json() == first
+
+    older = payload | {
+        "index_status": "unknown", "queried_at": (now - timedelta(minutes=2)).isoformat(),
+        "observed_at": (now - timedelta(minutes=1)).isoformat(),
+    }
+    assert (await inspection_api.post(path, json=older)).json() == first
+    newer = payload | {"index_status": "unknown", "observed_at": (now + timedelta(seconds=1)).isoformat()}
+    updated = await inspection_api.post(path, json=newer)
+    assert updated.status_code == 200
+    assert updated.json()["index_status"] == "unknown"
+
+    engine = create_async_engine(migrated_database_url, poolclass=NullPool, hide_parameters=True)
+    try:
+        async with AsyncSession(engine) as session:
+            rows = (await session.scalars(select(SiteEngineStatus).where(
+                SiteEngineStatus.site_id == UUID(target_id), SiteEngineStatus.engine == engine_name,
+            ))).all()
+            assert len(rows) == 1
+            assert rows[0].index_status == "unknown"
+    finally:
+        await engine.dispose()
+
+
+# Bing API·GUI가 같은 엔진별 행을 사용하고 최신 관측으로 갱신합니다.
+async def test_bing_api_and_gui_update_same_status(
+    inspection_api: AsyncClient, migrated_database_url: str,
+) -> None:
+    _, target_id, url = await create_target(inspection_api)
+    inspector = AsyncMock(return_value=observation("bing", "https://example.com/", url))
+
+    # 실제 Bing 호출 대신 크롤링 관측을 반환합니다.
+    def dependency() -> Inspector:
+        return inspector
+
+    app.dependency_overrides[get_inspector] = dependency
+    path = f"/sites/{target_id}/inspections"
+    api_result = (await inspection_api.post(path, json={"engine": "bing"})).json()
+    assert api_result["index_status"] == "crawled"
+    now = datetime.now(timezone.utc).isoformat()
+    response = await inspection_api.post(f"/sites/{target_id}/gui-inspections", json={
+        "engine": "bing", "site_url": "https://example.com/", "target_url": url,
+        "index_status": "not_indexed", "queried_at": now, "observed_at": now,
+    })
+    assert response.status_code == 200
+    assert (await inspection_api.get(path)).json() == {"items": [response.json()]}
+    inspector.return_value = observation("bing", "https://example.com/", url, datetime.now(timezone.utc) + timedelta(seconds=1))
+    assert (await inspection_api.post(path, json={"engine": "bing"})).status_code == 200
+    engine = create_async_engine(migrated_database_url, poolclass=NullPool, hide_parameters=True)
+    try:
+        async with AsyncSession(engine) as session:
+            rows = (await session.scalars(select(SiteEngineStatus).where(
+                SiteEngineStatus.site_id == UUID(target_id), SiteEngineStatus.engine == "bing",
+            ))).all()
+            assert len(rows) == 1
+            assert rows[0].index_status == "crawled"
+    finally:
+        await engine.dispose()
+
+
+# 불일치하는 GUI 관측은 저장하지 않고 대상 없음·비활성도 거부합니다.
+@pytest.mark.parametrize("case,status", [
+    ("site_url", 422), ("target_url", 422), ("missing", 404),
+    ("inactive_target", 409), ("inactive_parent", 409),
+])
+async def test_gui_inspection_rejects_invalid_target(
+    inspection_api: AsyncClient, migrated_database_url: str, case: str, status: int,
+) -> None:
+    parent_id, target_id, url = await create_target(inspection_api)
+    if case.startswith("inactive"):
+        engine = create_async_engine(migrated_database_url, poolclass=NullPool, hide_parameters=True)
+        try:
+            async with AsyncSession(engine) as session, session.begin():
+                await session.execute(update(Site).where(Site.id == UUID(
+                    parent_id if case == "inactive_parent" else target_id,
+                )).values(is_active=False))
+        finally:
+            await engine.dispose()
+    now = datetime.now(timezone.utc).isoformat()
+    payload = {
+        "engine": "naver", "site_url": "https://example.com/", "target_url": url,
+        "index_status": "indexed", "queried_at": now, "observed_at": now,
+    }
+    if case in {"site_url", "target_url"}:
+        payload = payload | {case: "https://other.example/"}
+    destination = str(uuid4()) if case == "missing" else target_id
+    response = await inspection_api.post(f"/sites/{destination}/gui-inspections", json=payload)
+    assert response.status_code == status
+    engine = create_async_engine(migrated_database_url, poolclass=NullPool, hide_parameters=True)
+    try:
+        async with AsyncSession(engine) as session:
+            assert await session.scalar(select(SiteEngineStatus).where(
+                SiteEngineStatus.site_id == UUID(target_id),
+            )) is None
+    finally:
+        await engine.dispose()

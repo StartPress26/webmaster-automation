@@ -1,4 +1,4 @@
-"""같은 inspections 경로에서 새 검사와 저장 결과 조회를 구분합니다."""
+"""API 검사 실행·조회와 GUI 관측 저장을 구분합니다."""
 
 from typing import Annotated
 from uuid import UUID
@@ -8,8 +8,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.engines.inspection import Inspector, inspect_url
-from app.schemas.inspection import InspectionCreate, InspectionList, InspectionRead
+from app.schemas.inspection import (
+    GuiInspectionCreate, InspectionCreate, InspectionList, InspectionRead,
+)
 from app.services import inspection as service
+from app.services.gui_inspection import save_gui_inspection
 
 router = APIRouter(prefix="/sites", tags=["수집·색인 상태 검사"])
 DatabaseSession = Annotated[AsyncSession, Depends(get_db)]
@@ -41,6 +44,25 @@ async def create_inspection(
         raise HTTPException(status_code=422, detail={"code": "INVALID_INSPECTION_SCOPE", "message": str(error)}) from error
     except service.InspectionUpstreamError as error:
         raise HTTPException(status_code=error.http_status, detail={"code": error.code, "message": str(error)}) from error
+
+
+# GUI 관측을 검증하고 기존 엔진별 최신 상태에 저장합니다.
+@router.post(
+    "/{site_id}/gui-inspections", response_model=InspectionRead,
+    responses={404: {"description": "대상 없음"}, 409: {"description": "비활성 대상"},
+               422: {"description": "GUI 관측 또는 대상 범위 오류"}},
+)
+async def create_gui_inspection(
+    site_id: UUID, data: GuiInspectionCreate, session: DatabaseSession,
+) -> InspectionRead:
+    try:
+        return await save_gui_inspection(session, site_id, data)
+    except service.InspectionTargetNotFoundError as error:
+        raise HTTPException(status_code=404, detail={"code": "TARGET_NOT_FOUND", "message": str(error)}) from error
+    except service.InspectionInactiveError as error:
+        raise HTTPException(status_code=409, detail={"code": "SITE_INACTIVE", "message": str(error)}) from error
+    except service.InspectionScopeError as error:
+        raise HTTPException(status_code=422, detail={"code": "INVALID_INSPECTION_SCOPE", "message": str(error)}) from error
 
 
 # 외부 요청 없이 대상 URL의 엔진별 최신 저장 상태를 반환합니다.
