@@ -17,6 +17,11 @@ function createClientInspectionController(api, changed) {
       hooks.onStart(item);
       hooks.onResult(item, { kind: 'verified_gui', siteUrl: item.siteUrl, targetUrl: item.url, indexStatus: 'unknown', message: 'URL 검사 결과가 없습니다.', queriedAt: new Date().toISOString(), readAt: new Date().toISOString(), targetVerified: true });
     }
+  }, async (selected, targets, hooks) => {
+    for (const item of targets) {
+      hooks.onStart(item);
+      hooks.onResult(item, { kind: 'verified_bing_gui', siteUrl: item.siteUrl, targetUrl: item.url, indexStatus: 'indexed', message: '색인화되었습니다.', reason: '<제외 사유>', canonicalUrl: 'https://one.example/?x=<script>', crawlStatus: 'succeeded', lastCrawledText: null, queriedAt: new Date().toISOString(), readAt: new Date().toISOString(), targetVerified: true });
+    }
   });
 }
 
@@ -47,13 +52,13 @@ test('활성 사이트와 글을 스냅샷으로 수집하고 각 URL에 API와 
 
   const tasks = buildClientInspectionTasks(targets);
 
-  assert.equal(tasks.length, 9);
-  assert.equal(tasks.filter((task) => task.status === 'queued').length, 9);
+  assert.equal(tasks.length, 12);
+  assert.equal(tasks.filter((task) => task.status === 'queued').length, 12);
   assert.equal(tasks.filter((task) => task.status === 'gui_required').length, 0);
 
   const scoped = buildClientInspectionTasks([{ ...targets[0], siteUrl: 'https://one.example/blog' }]);
 
-  assert.deepEqual(scoped.map((task) => task.status), ['skipped', 'queued', 'skipped']);
+  assert.deepEqual(scoped.map((task) => task.status), ['skipped', 'queued', 'skipped', 'queued']);
 });
 
 test('전체 목록 수집 실패나 고객사·부모 불일치이면 외부 검사를 시작하지 않는다', async () => {
@@ -93,13 +98,14 @@ test('API 저장과 네이버 GUI 관측을 구분하고 Bing 크롤링을 색�
   assert.equal(run.targetCount, 3);
   assert.equal(run.tasks.filter((task) => task.status === 'succeeded').length, 3);
   assert.equal(run.tasks.filter((task) => task.status === 'partial').length, 3);
-  assert.equal(run.tasks.filter((task) => task.status === 'observed').length, 3);
+  assert.equal(run.tasks.filter((task) => task.status === 'observed').length, 6);
 
   const html = renderClientInspection(run, 'a', '<고객사>', false);
 
-  assert.match(html, /GUI 관측 3건/);
+  assert.match(html, /GUI 관측 6건/);
   assert.match(html, /API 처리 6\/6건/);
   assert.ok(html.includes('&lt;고객사&gt;'));
+  assert.ok(html.includes('&lt;제외 사유&gt;'));
   assert.ok(!html.includes('<script>'));
   assert.equal(run.tasks.filter((task) => task.engine === 'bing' && task.route === 'api' && task.status === 'partial').length, 3);
   assert.ok(!renderClientInspection(run, 'b', 'B', false).includes('https://one.example'));

@@ -1,5 +1,6 @@
 import type { ApiClient } from '../api';
 import type { Engine } from '../types';
+import type { BingAutomationObservation } from '../engines/bing/observation';
 import type { NaverAutomationObservation } from '../engines/naver/observation';
 
 export interface ClientInspectionTarget {
@@ -18,7 +19,7 @@ export interface ClientInspectionTask {
   readonly route: 'api' | 'gui';
   readonly status: 'queued' | 'running' | 'succeeded' | 'partial' | 'observed' | 'gui_required' | 'skipped' | 'failed' | 'blocked' | 'cancelled';
   readonly message: string;
-  readonly guiObservation?: NaverAutomationObservation;
+  readonly guiObservation?: NaverAutomationObservation | BingAutomationObservation;
 }
 
 export class InspectionCollectionCancelled extends Error {}
@@ -60,7 +61,7 @@ export async function collectClientInspectionTargets(
 
 // API 관측과 GUI 색인 관측을 별도 작업으로 만들어 저장 여부를 구분합니다.
 export function buildClientInspectionTasks(targets: readonly ClientInspectionTarget[]): readonly ClientInspectionTask[] {
-  return targets.flatMap((target): readonly ClientInspectionTask[] => (['google', 'naver', 'bing'] as const).map((engine): ClientInspectionTask => {
+  return targets.flatMap((target): readonly ClientInspectionTask[] => [...(['google', 'naver', 'bing'] as const).map((engine): ClientInspectionTask => {
     const task = { id: `${target.id}:${engine}`, target, engine, route: engine === 'naver' ? 'gui' as const : 'api' as const };
     if (engine === 'naver') return { ...task, status: 'queued', message: '네이버 사이트 선택·URL별 GUI 검사 대기' };
 
@@ -68,9 +69,9 @@ export function buildClientInspectionTasks(targets: readonly ClientInspectionTar
     const supported = engine === 'google' ? parent.pathname.endsWith('/') && !parent.search : parent.pathname === '/' && !parent.search;
     if (!supported) return {
       ...task, status: 'skipped',
-      message: engine === 'bing' ? 'Bing API 조회는 하위 경로·쿼리가 없는 루트 사이트만 지원합니다.' : 'Google 속성 URL은 쿼리 없이 /로 끝나야 합니다.',
+      message: engine === 'bing' ? '이 사이트는 Bing API 지원 범위 밖입니다. 별도 GUI 작업에서 색인을 확인합니다.' : 'Google 속성 URL은 쿼리 없이 /로 끝나야 합니다.',
     };
 
     return { ...task, status: 'queued', message: engine === 'bing' ? '크롤링 API 조회 대기' : 'API 조회 대기' };
-  }));
+  }), { id: `${target.id}:bing-gui`, target, engine: 'bing', route: 'gui', status: 'queued', message: 'Bing 사이트 선택·URL별 GUI 검사 대기' }]);
 }

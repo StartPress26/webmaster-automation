@@ -462,3 +462,48 @@ test('전체 조회 버튼은 네이버 사이트별 URL 조회를 실행하고 
     await waitFor(() => !app.document.querySelector('#refresh-index').disabled);
   } finally { await delay(0); app.dom.window.close(); }
 });
+
+// Bing API 크롤링 저장과 Bing GUI 색인 관측이 전체 화면에서 분리되는지 검증합니다.
+test('전체 조회는 Bing 사이트를 바꿔 URL들을 검사하고 API 저장과 GUI 결과를 따로 표시한다', async () => {
+  let bingUrl = 'https://www.bing.com/webmasters/';
+  const events = [];
+  const chromeClient = { tabs: {
+    query: async () => [{ id: 1, title: '네이버', url: 'https://searchadvisor.naver.com/console/', status: 'complete' }, { id: 2, title: 'Bing', url: bingUrl, status: 'complete' }],
+    get: async (id) => ({ id, url: id === 2 ? bingUrl : 'https://searchadvisor.naver.com/console/', status: 'complete' }),
+    update: async (id, patch) => { if (id !== 2) throw new Error('네이버 생략'); bingUrl = patch.url; return { id, url: bingUrl }; },
+    sendMessage: async (id, request) => {
+      assert.equal(id, 2);
+
+      let value;
+
+      if (request.action === 'state') value = { route: 'inspection', siteUrl: new URL(bingUrl).searchParams.get('siteUrl'), ready: true, documentToken: 'doc' };
+
+      if (request.action === 'select_site') { events.push(['select', request.siteUrl]); value = { siteUrl: request.siteUrl, destinationUrl: `https://www.bing.com/webmasters/urlinspection?siteUrl=${encodeURIComponent(request.siteUrl)}` }; }
+
+      if (request.action === 'inspect_url') {
+        events.push(['inspect', request.targetUrl]);
+        value = { kind: 'verified_bing_gui', siteUrl: request.siteUrl, targetUrl: request.targetUrl, indexStatus: 'indexed', message: '색인화되었습니다.', canonicalUrl: null, reason: null, crawlStatus: 'succeeded', lastCrawledText: null, queriedAt: new Date().toISOString(), readAt: new Date().toISOString(), targetVerified: true };
+      }
+
+      return { requestId: request.requestId, ok: true, value };
+    },
+  } };
+
+  const app = await workspace((url, options) => {
+    if (options.method === 'POST') return new Response(JSON.stringify({ site_id: url.split('/')[3], engine: JSON.parse(options.body).engine, index_status: 'unknown', last_checked_at: null, next_check_at: null, error_message: null }));
+    if (url.startsWith('/api/sites/a1/pages')) return new Response(JSON.stringify({ items: [{ id: 'p1', client_id: 'a', parent_site_id: 'a1', name: '등록 글', url: 'https://a.example/post', is_active: true }] }));
+  }, '', chromeClient);
+
+  try {
+    app.navigate('inspect');
+    await waitFor(() => !app.document.querySelector('#refresh-index').disabled);
+    app.document.querySelector('#refresh-index').click();
+    await waitFor(() => app.document.querySelector('#client-inspection-progress')?.textContent.includes('처리가 끝났습니다'));
+    assert.deepEqual(events, [['select', 'https://a.example/'], ['inspect', 'https://a.example/'], ['inspect', 'https://a.example/post'], ['select', 'https://second.example/'], ['inspect', 'https://second.example/']]);
+    assert.match(app.document.querySelector('#client-inspection-progress').textContent, /Bing GUI 관측 3\/3건/);
+    assert.equal(app.document.querySelectorAll('.inspection-result-status.partial').length, 3);
+    assert.equal(app.document.querySelectorAll('.inspection-result-status.observed').length, 3);
+    assert.match(app.document.querySelector('.inspection-results-table').textContent, /Bing API/);
+    assert.match(app.document.querySelector('.inspection-results-table').textContent, /Bing GUI/);
+  } finally { await delay(0); app.dom.window.close(); }
+});

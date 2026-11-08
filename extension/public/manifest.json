@@ -20,6 +20,17 @@
       ],
       "run_at": "document_idle",
       "all_frames": false
+    },
+    {
+      "matches": [
+        "https://www.bing.com/webmasters",
+        "https://www.bing.com/webmasters/*"
+      ],
+      "js": [
+        "bing-content.js"
+      ],
+      "run_at": "document_idle",
+      "all_frames": false
     }
   ],
   "host_permissions": [

@@ -7,6 +7,8 @@ import type { WorkTabController, WorkTabState } from '../tabs/controller';
 import { readNaverPreview } from '../engines/naver/preview.ts';
 import type { NaverPreviewState } from '../engines/naver/preview';
 import { runNaverAutomation } from '../engines/naver/automation.ts';
+import { runBingAutomation } from '../engines/bing/automation.ts';
+import { BingAutomationError, BING_STAGE_LABELS } from '../engines/bing/observation.ts';
 import { NaverAutomationError } from '../engines/naver/observation.ts';
 
 export type GuiEngine = 'naver' | 'bing';
@@ -44,10 +46,12 @@ export function createClientInspectionController(
   changed: () => void = (): void => {},
   tabControllers: Readonly<Record<GuiEngine, WorkTabController>> = { naver: createWorkTabController(), bing: createWorkTabController() },
   naverAutomation: typeof runNaverAutomation = runNaverAutomation,
+  bingAutomation: typeof runBingAutomation = runBingAutomation,
 ): ClientInspectionController {
   let state: ClientInspectionRun = { clientId: '', clientName: '', scope: '', tabs: {}, phase: 'idle', cancelRequested: false, targetCount: 0, tasks: [], message: '' };
   let sequence = 0;
   let naverAbort = new AbortController();
+  let bingAbort = new AbortController();
 
   // 실행 상태를 새 객체로 교체하고 화면에 변경을 알립니다.
   function update(patch: Partial<ClientInspectionRun>): void {
@@ -68,6 +72,7 @@ export function createClientInspectionController(
 
     update({ cancelRequested: true, message: '현재 요청이 끝나면 중단합니다. 이미 저장된 결과는 유지됩니다.' });
     naverAbort.abort();
+    bingAbort.abort();
 
     if (waiting) finishCancelled();
   }
@@ -193,9 +198,39 @@ export function createClientInspectionController(
         ? { ...task, status: 'gui_required', message: 'GUI 탭 준비를 건너뛰어 네이버 조회는 실행하지 않았습니다.' } : task) });
     }
 
+    const bingTasks = state.tasks.filter((task): boolean => task.engine === 'bing' && task.route === 'gui' && task.status === 'queued');
+    const bingTab = state.tabs.bing?.selected;
+
+    if (!state.cancelRequested && includeGui && bingTab && bingTasks.length) {
+      try {
+        await bingAutomation(bingTab, bingTasks.map((task) => task.target), {
+          signal: bingAbort.signal,
+          onStart: (target): void => {
+            update({ message: `Bing: ${target.siteName} 사이트 선택·URL 검사 중` });
+            updateTask(`${target.id}:bing-gui`, { status: 'running', message: 'Bing 사이트·검사 URL 확인 및 새 결과 대기' });
+          },
+          onStage: (target, stage): void => {
+            const message = `Bing ${BING_STAGE_LABELS[stage]} 중`;
+            update({ message: `${message} · ${target.siteName}` });
+            updateTask(`${target.id}:bing-gui`, { message });
+          },
+          onResult: (target, observation): void => {
+            const status = { indexed: '색인됨 확인', not_indexed: '색인되지 않음', unknown: '색인 상태 미확인' }[observation.indexStatus];
+            updateTask(`${target.id}:bing-gui`, { status: 'observed', guiObservation: observation, message: `${status} · 새 GUI 응답 관측 · DB 미저장` });
+          },
+        });
+      } catch (error: unknown) {
+        if (!state.cancelRequested) update({ tasks: state.tasks.map((task): ClientInspectionTask => task.engine === 'bing' && task.route === 'gui' && ['queued', 'running'].includes(task.status)
+          ? { ...task, status: task.status === 'running' ? 'failed' : 'blocked', message: error instanceof BingAutomationError ? error.message : 'Bing 탭 연결 또는 화면 전환에 실패해 중단했습니다.' } : task) });
+      }
+    } else if (!state.cancelRequested) {
+      update({ tasks: state.tasks.map((task): ClientInspectionTask => task.engine === 'bing' && task.route === 'gui' && task.status === 'queued'
+        ? { ...task, status: 'gui_required', message: 'GUI 탭 준비를 건너뛰어 Bing 색인 조회는 실행하지 않았습니다.' } : task) });
+    }
+
     if (state.cancelRequested) { finishCancelled(); return; }
 
-    update({ phase: 'finished', message: state.targetCount ? '전체 조회 처리가 끝났습니다. 네이버 GUI 관측은 이 화면에서만 보관하며 실패·미지원 항목을 확인하세요.' : '조회할 활성 사이트·글이 없습니다.' });
+    update({ phase: 'finished', message: state.targetCount ? '전체 조회 처리가 끝났습니다. 네이버·Bing GUI 관측은 이 화면에서만 보관하며 실패·미지원 항목을 확인하세요.' : '조회할 활성 사이트·글이 없습니다.' });
   }
 
   // 시작 고객사·실행 ID를 고정하고 전체 대상 확정 후 엔진별 탭을 먼저 준비합니다.
@@ -205,6 +240,7 @@ export function createClientInspectionController(
     tabControllers.naver.reset();
     tabControllers.bing.reset();
     naverAbort = new AbortController();
+    bingAbort = new AbortController();
     update({ clientId, clientName, scope: `${++sequence}:${clientId}`, tabs: {}, naverPreview: undefined, phase: 'collecting', cancelRequested: false, targetCount: 0, tasks: [], message: '고객사의 활성 사이트·등록 글 목록을 수집하고 있습니다.' });
 
     try {
