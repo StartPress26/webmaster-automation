@@ -158,7 +158,7 @@ export function presentError(error: ApiError, title: string): ErrorPresentation 
       error.retryAfterSeconds !== null
         ? `서버가 안내한 ${error.retryAfterSeconds}초 뒤 수동으로 다시 실행하세요. 자동 재시도하지 않습니다.`
         : '호출 한도 또는 제한 해제 여부를 확인한 뒤 수동으로 실행하세요. 자동 재시도하지 않습니다.',
-    network: '서버 실행 상태와 네트워크 연결을 확인하세요. 저장된 결과는 다시 읽을 수 있습니다.',
+    network: 'SSH 터널 연결 상태와 서버 실행 상태, 네트워크 연결을 확인하세요. 연결을 복구한 뒤 저장된 결과를 다시 읽을 수 있습니다.',
     timeout: '응답 시간이 초과됐습니다. 기존 결과를 유지하며 자동으로 반복 요청하지 않습니다.',
     server: '서버 상태를 확인한 뒤 목록 또는 저장된 결과를 다시 읽어 주세요.',
     response: '응답 형식을 확인하지 못했습니다. 저장된 결과를 먼저 다시 읽어 주세요.',
