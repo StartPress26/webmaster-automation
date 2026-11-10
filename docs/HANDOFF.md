@@ -16,6 +16,7 @@
 
 ### Git·산출물과 검증 범위
 
+- 후속 Git 작업 완료: 문서·스토어 이미지 커밋 `4b19604`까지 push했고 [PR #7](https://github.com/StartPress26/webmaster-automation/pull/7)을 main 대상으로 생성했다. 생성 직후 로컬·원격·PR HEAD 일치를 확인했다. PR은 OPEN이며 병합하지 않았다. 이 완료 기록도 같은 브랜치에 커밋·push하며 최종 HEAD는 `git log -1`로 확인한다.
 - 현재 브랜치는 `chore/private-extension-release`. 문서·스크린샷 커밋 직전 HEAD는 `2820ceb`이다. 이번 fetch 기준 origin/main의 누락 커밋은 없고 기존 같은 브랜치 PR도 없다. 사용자가 남은 변경 정리·커밋·push·main 대상 PR 생성을 요청했다. 최종 HEAD·원격 일치·PR URL은 완료 후 Git/GitHub에서 확인한다. 병합은 요청하지 않았다.
 - 커밋 대상은 기존 변경을 포함한 `docs/HANDOFF.md`와 `outputs/store/startpress-dashboard-1280x800.jpg`다. 스크린샷을 직접 열어 확인했으며 비밀키·쿠키·OTP는 보이지 않았다. ZIP·dist·비밀파일은 커밋하지 않는다.
 - ZIP SHA-256: `c221efdc4c36876075e95673a4c018720755d8475f3bb583525f96ad0081cac4`.
@@ -1115,7 +1116,7 @@ Notion은 요구사항·설계 자료다. 실제 구현·적용 여부는 이 �
 ## 마지막 상태 — 최신 / 2026-11-10 스토어 심사 제출 사용자 확인
 
 - 사용자가 스토어 심사 제출 완료를 알렸다. 승인·게시 완료 여부, 최종 Private 설정과 허용 사용자 목록은 직접 확인하지 않았다.
-- `chore/private-extension-release`에서 아이콘 `0e7d2e8`·SSH 안내 `2820ceb`를 완료했다. 사용자의 후속 요청으로 인계 문서·스토어 스크린샷을 정리해 커밋·push·main 대상 PR 생성까지 진행한다. 최종 HEAD·PR 상태는 `git log -1`, `git status`, `gh pr view`로 확인한다. main 직접 push·PR 병합은 하지 않는다.
+- `chore/private-extension-release`에서 아이콘 `0e7d2e8`·SSH 안내 `2820ceb`를 완료했다. 인계 문서·스토어 스크린샷을 `4b19604`로 커밋·push하고 main 대상 [PR #7](https://github.com/StartPress26/webmaster-automation/pull/7)을 생성했다. PR은 OPEN이며 병합하지 않았다. 최종 HEAD·PR 상태는 `git log -1`, `git status`, `gh pr view`로 확인한다. main 직접 push·PR 병합은 하지 않는다.
 - 최신 ZIP은 0.1.0·11파일·66,421바이트이며 원본 로고 제외·압축 무결성·SSH 안내 포함을 재확인했다. ZIP은 로컬 미추적 배포 산출물로 남기며 커밋하지 않는다.
 - Notion 개인정보처리방침 작성과 사용자 확정 사항 반영을 완료했다. 공개 설정·익명 접근은 미확인이다. 공개 페이지에는 확인용 메모나 미정 표시를 넣지 않는다. 질문은 채팅에서만 한다.
 - 다음은 심사 결과 확인→필요한 보완→비공개 게시·팀원 설치 및 SSH 사용 검증이다. 운영 서버·GUI 전체 흐름의 실제 검증은 과거 기록과 구분한다.
