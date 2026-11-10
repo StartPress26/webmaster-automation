@@ -1,17 +1,94 @@
 # 작업 인계 문서
 
-## 현재 인계 요약 — 2026-11-08 / Asia/Seoul
+## 현재 인계 요약 — 2026-11-10 Chrome 웹 스토어 심사 제출 / Asia/Seoul
 
-**새 세션은 이 절과 맨 아래 `마지막 상태 — 최신 / 2026-11-08`을 먼저 읽는다. GUI 결과 저장·운영 인증 연결은 아래 최신 코드 상태가 기준이다. 과거 절의 main·8000 포트·GUI 미구현·DB 미저장 설명은 당시 기록이며, 기존 API 계약과 Lightsail 배포 자료만 필요한 범위에서 참고한다.**
+**현재 상태는 이 절과 맨 아래 2026-11-10 최신 상태를 우선한다. 과거의 스토어 미업로드·미제출 설명은 당시 기록이다.**
+
+### 완료된 작업
+
+- [x] **사용자가 2026-11-10 스토어 심사 제출 완료를 확인했다.** 에이전트가 직접 제출하거나 승인·게시 상태를 조회한 것은 아니다. 심사 승인·스토어 게시·팀원 설치 완료로 설명하지 않는다.
+- [x] SP 로고의 16·32·48·128px 아이콘과 manifest 설정 추가(`0e7d2e8`), API 모드 상시 안내 및 네트워크 오류의 SSH 터널 안내 추가(`2820ceb`). SSH 연결과 서버의 기존 Google OAuth 토큰·Bing API 키를 유지한다.
+- [x] 단일 목적 설명·호스트 권한 사유·사용자 데이터 사용 공개·게시자 연락처 이메일 입력 및 인증 경로를 안내했다. 비공개 설치 대상은 스토어의 Private 설정이며 Unlisted와 구분한다. 최종 설정값·허용 계정 목록·인증 상태는 에이전트가 직접 확인하지 않았다.
+- [x] 지정 Notion 페이지에 개인정보처리방침을 작성했다: https://app.notion.com/p/414210261e95807a8a7ae5a66b79a20b . 팀원 SEO·GEO 업무에 필요한 개인정보와 사이트·URL·검사 운영 데이터를 구분하고 저장·전송·삭제 범위를 설명했다.
+- [x] 사용자가 확정한 운영자·문의 이메일·시행일(2026-11-10)과 별도 만료 기간 없이 업무 목적으로 보관하되 삭제 요청 접수 후 7일 이내 처리하는 기준을 반영했다. 이는 운영자가 이행할 기준이며 자동 삭제 기능을 구현한 것이 아니다. 방침은 법적 적합성이나 스토어 승인을 검증한 결과가 아니다.
+- [x] **사용자 요청에 따라 개인정보처리방침에서 초안 안내·확인 체크리스트·미확정 표시를 제거했다. 공개·제출용 페이지에는 확정된 내용만 적고, 질문·검토 메모·미정 사항은 채팅에서만 다룬다.** Notion 웹 게시 설정·익명 접근 가능한 공개 URL은 에이전트가 변경하거나 확인하지 않았다.
+- [x] 최신 ZIP은 `extension/startpress-extension.zip`, 버전 `0.1.0`, 11파일·66,421바이트다. 이번에는 압축 무결성·원본 로고 제외·SSH 문자열 포함·SHA-256을 재확인했다. 실제 업로드된 파일과의 일치는 별도 확인이 필요하다.
+
+### Git·산출물과 검증 범위
+
+- 후속 Git 작업 완료: 문서·스토어 이미지 커밋 `4b19604`까지 push했고 [PR #7](https://github.com/StartPress26/webmaster-automation/pull/7)을 main 대상으로 생성했다. 생성 직후 로컬·원격·PR HEAD 일치를 확인했다. PR은 OPEN이며 병합하지 않았다. 이 완료 기록도 같은 브랜치에 커밋·push하며 최종 HEAD는 `git log -1`로 확인한다.
+- 현재 브랜치는 `chore/private-extension-release`. 문서·스크린샷 커밋 직전 HEAD는 `2820ceb`이다. 이번 fetch 기준 origin/main의 누락 커밋은 없고 기존 같은 브랜치 PR도 없다. 사용자가 남은 변경 정리·커밋·push·main 대상 PR 생성을 요청했다. 최종 HEAD·원격 일치·PR URL은 완료 후 Git/GitHub에서 확인한다. 병합은 요청하지 않았다.
+- 커밋 대상은 기존 변경을 포함한 `docs/HANDOFF.md`와 `outputs/store/startpress-dashboard-1280x800.jpg`다. 스크린샷을 직접 열어 확인했으며 비밀키·쿠키·OTP는 보이지 않았다. ZIP·dist·비밀파일은 커밋하지 않는다.
+- ZIP SHA-256: `c221efdc4c36876075e95673a4c018720755d8475f3bb583525f96ad0081cac4`.
+- 직전 ZIP 생성 시 TypeScript·Vite 빌드·필수 파일·아이콘 크기·dist 바이트 일치 검증이 통과했다. 이번 커밋 전 프론트 테스트 121 passed와 문서 diff 검사가 통과했다. 백엔드 테스트·실제 GUI 순회·운영 API 인증은 다시 실행하지 않았다.
+- CUA가 스토어 편집 탭 접근을 `The extensions gallery cannot be scripted`로 차단했다. 이를 다른 UI 경로로 우회하지 않았고 양식 수정·제출은 하지 않았다. 실행 기록은 Git 제외된 `.secrets/bot_runs/store-privacy-20261110T012725Z.jsonl`에 민감값 없이 남겼다.
+
+### 다음에 해야 할 작업
+
+1. 스토어의 심사 결과와 보완 요청을 확인한다. 승인 시 Private 대상 설정·게시 상태를 확인하고 팀원 설치→SSH 연결→검색엔진 로그인→조회·저장 흐름을 검증한다. 반복 제출·중복 상품 생성은 하지 않는다.
+2. 개인정보처리방침의 로그인 없는 공개 URL이 실제로 열리고 스토어에 올바르게 등록됐는지 확인한다. 추가 운영 정보가 필요하면 채팅에서 먼저 확정하고 페이지에 반영한다.
+3. PR을 검토하고 요청 시 병합한다. 서버 반영 여부는 별도로 확인한다. Lightsail 최신 코드·Google/Bing 운영 인증·GUI 병렬 순회·저장 GET·네이버 대시보드 반영 실검증은 여전히 완료 근거가 없다.
+4. 팀원 설치 문서는 별도 스토어 필수 제출물로 취급하지 않는다. 필요 시 작성하며 README의 과거 API 8000 안내는 현재 18001 연결과 구분한다.
+5. 후속 기능은 네이버/Bing 수집 요청 자동화, HTTPS·팀원 인증을 통한 SSH 제거, 필요 시 API 계정별 연결이다. 이번 배포에서 구현한 것으로 설명하지 않는다.
+
+### 관련 파일·페이지
+
+- `extension/public/manifest.json`, `extension/public/icons/`: 확장 권한·아이콘 설정과 이미지.
+- `extension/src/main.ts`, `extension/src/errors.ts`: SSH 안내.
+- `extension/startpress-extension.zip`: Git에 넣지 않는 제출용 산출물. 소스를 바꾸면 재빌드·재생성한다.
+- `outputs/store/startpress-dashboard-1280x800.jpg`: 스토어 등록용 화면 이미지.
+- 개인정보처리방침: https://app.notion.com/p/414210261e95807a8a7ae5a66b79a20b
+- 스토어 개발자 대시보드: https://chrome.google.com/webstore/devconsole
+
+## 이전 인계 요약 — 2026-11-09 비공개 Chrome 스토어 배포 준비 / Asia/Seoul
+
+**새 세션은 이 절과 맨 아래 `마지막 상태 — 최신 / 2026-11-09 비공개 스토어 제출용 ZIP 재생성`을 먼저 읽는다. 아래 main 기준 요약은 배포 준비 브랜치 이전 기록이다. 이번 요청은 ZIP 재생성과 인계 갱신까지다.**
+
+### 확정한 방향과 현재 Git
+
+- Chrome Web Store 비공개 배포를 먼저 진행하고 **SSH 터널은 유지**한다. HTTPS API·팀원 로그인·SSH 제거·검색엔진별 계정 연결은 후속 과제다. 네이버/Bing GUI는 팀원 Chrome의 로그인된 작업 탭을 사용하고 Google API 토큰·Bing API 키는 현재 서버 설정을 사용한다.
+- 브랜치 **`chore/private-extension-release`**, HEAD **`2820ceb` — `[docs] API 연결 화면과 오류 메시지에 SSH 터널 안내 추가`**.
+- 아이콘 커밋 `0e7d2e8`은 이 세션에서 push·원격 HEAD 일치를 확인했다. SSH 안내 `2820ceb`은 로컬 커밋만 완료했다. 현재 로컬 원격 추적 참조보다 1커밋 앞서며 이번 재생성에서는 원격을 새로 조회하지 않았다. PR은 생성하지 않았다.
+- 기존 `docs/HANDOFF.md` 미커밋 변경을 보존해 이번 내용을 추가했다. ZIP은 미추적 로컬 배포 산출물이다. 이번 요청에서는 커밋·push·스토어 업로드·제출·서버 배포를 수행하지 않는다.
+
+### 완료된 작업
+
+- [x] 사용자가 `extension/public/icons/source.png`에 저장한 SP 로고를 16·32·48·128px로 변환하고 manifest의 `icons`·`action.default_icon`에 연결했다. 원본을 보존하고 여백을 줄여 로고가 더 크게 보이도록 조정했다. 16px 확대 표시에는 해상도 한계가 있다.
+- [x] 현재 `host_permissions`와 API·작업 탭 코드를 대조했다. 로컬 API·네이버·Google·Bing 호스트를 선언했으며 광범위한 `tabs` 권한은 추가하지 않았다. 사용자는 수정했다고 했으나 당시 저장 파일은 커밋과 동일했으므로 별도 권한 축소가 반영됐다고 기록하지 않는다.
+- [x] API 모드 상시 안내에 `사용 전 SSH 터널을 연결해 주세요.`를 추가했다. 네트워크 오류에는 SSH 터널·서버·네트워크 확인과 연결 복구 후 재조회 안내를 추가했다. SSH 미연결로 단정하지 않는다.
+- [x] **SSH 안내가 포함된 최신 HEAD로 빌드하고 `extension/startpress-extension.zip`을 교체했다.** ZIP 루트에 `manifest.json`이 있으며 dist 내용만 포함한다. `icons/source.png`는 제외했다. 총 11파일·66,421바이트다.
+- [x] TypeScript·Vite 관리 화면/네이버/Bing 콘텐츠 스크립트 빌드, ZIP 무결성·manifest 참조 파일·아이콘 크기·최신 dist와 바이트 일치를 확인했다. ZIP 내 관리 화면 JS의 SSH 안내 포함도 확인했다. 전체 테스트·실제 Chrome·서버 조회는 이번에 실행하지 않았다.
+
+### 제출용 산출물과 관련 파일
+
+- `extension/startpress-extension.zip`: 현재 제출 후보. SHA-256 `c221efdc4c36876075e95673a4c018720755d8475f3bb583525f96ad0081cac4`.
+- `extension/public/manifest.json`, `extension/public/icons/`: 확장 설정·아이콘·원본 로고.
+- `extension/src/main.ts`, `extension/src/errors.ts`: API 모드 상시 SSH 안내·서버 연결 오류 안내.
+- `extension/src/runtime.ts`: 설치된 확장의 API 주소 `http://127.0.0.1:18001`.
+- `extension/README.md`: 과거 API `8000` 설명이 남아 있다. 현재 연결 기준은 runtime과 최신 인계다. 별도 팀원 설치 문서는 아직 새로 작성하지 않았다.
+
+### 다음 작업과 주의사항
+
+1. **스토어 등록 자료:** 설명·이미지·개인정보처리방침/데이터 사용 공개·권한 이유·심사용 테스트 방법을 준비한다. SSH와 검색엔진 로그인 권한이 필요한 환경이므로 심사자가 기능을 확인할 방법을 구체화한다. ZIP 생성 성공이 심사 통과를 뜻하지 않는다.
+2. **비공개 설정·제출:** 지정 Google 계정 또는 관리하는 Google Group 구성원 대상으로 `Private`를 설정한다. `Unlisted` 및 npm 공개 방지인 `package.json`의 `private: true`와 구분한다. 비공개도 심사를 거친다. 스토어 업로드·제출은 아직 수행하지 않았다.
+3. **요청 시 Git 후속 처리:** SSH 안내 push·문서 커밋·PR 생성은 별도 요청 범위다. 문서와 ZIP을 임의로 커밋하지 않는다. 소스 수정 시 다시 빌드하고 ZIP을 교체한다. ZIP 생성용 npm 스크립트는 아직 추가하지 않았다.
+4. **팀원 설치 문서:** 별도 문서를 스토어 필수 제출물로 취급하지 않기로 했다. 필요하면 스토어 설치 → SSH 연결 → 검색엔진 로그인 → 사용 순서로 작성한다. 저장소 문서는 스토어에 자동 노출되지 않는다. 상시 안내만 추가했으며 SSH 연결 절차를 프론트에 구현한 것은 아니다.
+5. **실사용 검증:** Lightsail 최신 배포·Google/Bing 운영 인증·여러 사이트 GUI 병렬 순회·저장 GET·대시보드 반영은 여전히 미검증이다. 팀원 인증 전에는 API localhost 바인딩과 SSH 터널을 유지한다. 실제 브라우저 검증 전 `.cursor/rules/bot-execution-records.mdc`를 읽는다. 키·토큰·SSH 개인키를 ZIP·코드·로그에 포함하지 않는다.
+
+공식 참고: [스토어 설명·이미지·지원 링크](https://developer.chrome.com/docs/webstore/cws-dashboard-listing), [비공개 배포 설정](https://developer.chrome.com/docs/webstore/cws-dashboard-distribution), [제출 절차·심사 테스트 안내](https://developer.chrome.com/docs/webstore/publish).
+
+## 이전 인계 요약 — 2026-11-09 main 병합·네이버 집계
+
+**새 세션은 이 절과 맨 아래 `마지막 상태 — 최신 / 2026-11-09`을 먼저 읽는다. GUI 결과 저장·네이버 대시보드 집계·운영 인증 준비는 아래 최신 코드 상태가 기준이다. 과거 절의 main·8000 포트·GUI 미구현·DB 미저장 설명은 당시 기록이며, 기존 API 계약과 Lightsail 배포 자료만 필요한 범위에서 참고한다.**
 
 ### 현재 목표와 확정 범위
 
-- 한국어로 간결하게 설명하며 사용자가 코드를 이해하고 따라갈 수 있게 지도한다. 안내 문구 정리·인계 문서 갱신·세 커밋 계획을 마친 뒤, 사용자가 **커밋·push·PR 생성까지 후속 요청**했다. 이번 작업에서 병합·Lightsail 배포는 수행하지 않는다.
+- 한국어로 간결하게 설명하며 사용자가 코드를 이해하고 따라갈 수 있게 지도한다. GUI 저장·운영 인증 준비는 PR #5, 네이버 대시보드 집계는 PR #6으로 main에 병합된 이력이 로컬 Git에서 확인된다. **이번 요청은 `docs/HANDOFF.md` 갱신만이며 커밋·push·서버 배포·실제 검색엔진 호출은 수행하지 않는다.**
 - **로그인된 기존 네이버·Bing 탭에서 사이트별 URL을 검사하는 Chrome 확장 기능을 구현했다. API 조회 후 네이버와 Bing GUI를 병렬 실행하며, 각 엔진 안에서는 사이트·URL을 순차 처리한다.**
 - Google은 기존 공식 API, Bing은 기존 크롤링 API와 GUI 색인 관측을 함께 사용한다. 과거의 Google·Bing API 전용 방향 중 Bing GUI 제한은 이번 사용자 요청으로 변경됐다.
 - 신규 도메인 등록·소유권 확인 UI/API, 자동 로그인·인증정보 수집, 주기 실행은 이번 범위에 포함하지 않는다. 사이트맵 제출은 별도 버튼으로 유지하고 `/pages` 등록에 자동 연결하지 않는다.
 - **네이버·Bing GUI 결과는 `POST /sites/{id}/gui-inspections`로 기존 `site_engine_statuses`에 요약 상태를 저장한다. 같은 대상·엔진의 최신 관측 하나만 유지하며 Bing API·GUI도 같은 행을 갱신한다. 신규 테이블·마이그레이션은 없다.**
-- 저장한 상태·시각은 기존 `GET /sites/{id}/inspections`에서 읽는다. 실행 목록과 GUI 판정 원문·대표 URL·제외 사유 등의 상세 관측은 관리 탭 메모리에만 남는다. 네이버 대시보드 집계는 아직 지원하지 않는다.
+- 저장한 상태·시각은 기존 `GET /sites/{id}/inspections`에서 읽는다. 실행 목록과 GUI 판정 원문·대표 URL·제외 사유 등의 상세 관측은 관리 탭 메모리에만 남는다. 네이버 대시보드 집계도 구현됐다. `GET /clients/{id}/dashboard`는 DB에 저장된 등록 글 상태를 집계하며 새 외부 검사를 실행하지 않는다.
 - 사용자의 별도 블로그 canonical 문제는 `nextjs-notion-starter-kit`에서 별도로 처리하기로 했다. 이 프로젝트는 Bing에 표시된 대표 URL·제외 사유를 읽으며 사이트 코드 수정·대표 URL 자동 재검사·색인 요청은 수행하지 않는다.
 
 ### 완료된 작업
@@ -26,12 +103,14 @@
 - [x] GUI 관측의 대상·부모·고객사·URL·시각 검증과 최신 상태 저장 API를 구현했다.
 - [x] 확장이 URL별 GUI 저장 응답을 기다린 뒤 다음 URL을 조회하도록 연결했다. 저장 실패는 관측을 보존하고 해당 엔진의 후속 조회를 중단한다.
 - [x] 운영 Compose에 Google 토큰 경로·Bing API 키 전달과 토큰 폴더 연결을 추가했다. `.env.prod.example`은 두 인증 변수의 빈 입력란을 제공하고 준비 방법·권한은 이 문서에 정리했다. 서버 적용은 아직 확인하지 않았다.
-- [x] 대시보드의 네이버 연결 준비 중 문구와 README의 GUI 결과 DB 미저장 설명을 현재 구현에 맞게 수정했다.
+- [x] README의 GUI 결과 DB 미저장 설명을 현재 구현에 맞게 수정했다.
+- [x] 네이버 대시보드의 전체 색인 확인 카드·엔진별 상태·블로그별 건수·최근 성공 관측 시각을 구현했다(`6adcbcc`, PR #6). 메인페이지는 글 통계에서 제외하고 비활성 블로그·글은 포함한다. 미관측·성공 관측 시각이 없는 글은 `unknown`이다.
+- [x] GUI 저장·운영 인증 준비 PR #5와 네이버 집계 PR #6의 main 병합 이력을 로컬 Git에서 확인했다. 원격 GitHub 상태를 이번에 새로 조회한 것은 아니다.
 
 ### 현재 Git과 보존할 변경
 
-- 현재 브랜치: **`feat/webmaster-tab-automation`**. GUI 저장 기능 기준 커밋은 **`f8f049fa822af4952f1e233264dfed3fd834b7f5`**, 이 문서 커밋 직전 HEAD는 **`c305c58`**이다. 문서 자체를 포함한 최종 HEAD는 `git log -1`로 확인한다.
-- 후속 요청에서 `git fetch origin`과 기존 PR 조회를 완료했다. 시작 시 로컬·원격 작업 브랜치는 `f8f049f`로 일치했고 원격 main보다 9커밋 앞서 있으며 누락된 main 커밋은 없었다. 같은 작업 브랜치의 기존 PR은 없었다. 아래 세 커밋을 완료한 뒤 작업 브랜치 push·main 대상 PR 생성을 진행한다. 최종 원격 HEAD와 PR 상태는 생성 후 다시 조회한다.
+- 현재 브랜치: **`main`**, HEAD: **`b37251a` — Merge pull request #6 from StartPress26/feat/naver-dashboard**. 로컬 `origin/main` 참조와 일치한다. 이번에는 fetch·원격 PR 조회를 실행하지 않았으므로 원격의 실시간 상태는 필요한 Git 작업 직전에 재확인한다.
+- 로컬 이력에서 PR #5 병합 `dd694d6`, 네이버 집계 구현 `6adcbcc`, PR #6 병합 `b37251a`를 확인했다. 과거의 인계 문서 커밋·push·PR 생성 대기는 완료된 작업이므로 반복하지 않는다.
 
 | 커밋 | 완료 내용 |
 |---|---|
@@ -47,8 +126,9 @@
 | `cf71d18` | GUI 조회·저장 안내와 README 정리 |
 | `c305c58` | 운영 Google·Bing 인증 전달과 토큰 폴더 연결 |
 
-- 안내·운영 인증 네 파일은 위 두 커밋으로 완료했고, 이 인계 문서를 세 번째 커밋으로 묶는다. 기존 `extension/src/engines/bing/.gitkeep`는 미추적 상태로 보존하고 커밋에서 제외한다.
-- 과거 미커밋으로 기록한 Python 두 파일은 현재 작업 트리에 차이가 없다. main/master 직접 push 금지, 새 브랜치는 `feat/`·`fix/` 등 사용, 한국어 `[타입] 제목`, Git 작성자 유지, 공동 작성자 트레일러 없음.
+- 인계 문서 커밋은 `c2c0169`로 완료됐고 위 변경은 PR #5에 병합됐다. 네이버 집계는 `6adcbcc`로 추가돼 PR #6에 병합됐다.
+- 이번 문서 수정 전 작업 트리는 깨끗했다(`git status --short --untracked-files=all`). 과거에 미추적으로 기록한 `.gitkeep`는 현재 미추적 목록에 없으며 임의로 복원하지 않는다. 이번 수정은 `docs/HANDOFF.md`만 미커밋으로 남긴다.
+- main/master 직접 push 금지, 새 브랜치는 `feat/`·`fix/` 등 사용, 한국어 `[타입] 제목`, Git 작성자 유지, 공동 작성자 트레일러 없음. 비밀파일·빌드 산출물은 커밋하지 않는다.
 
 ### 전체 조회와 탭 준비
 
@@ -84,8 +164,10 @@
 
 ### 검증 결과와 남은 한계
 
+- 아래 테스트 수치와 브라우저 성공 사례는 이전 세션의 검증 기록이다. **2026-11-09 이번 문서 갱신에서는 Git 이력·대시보드 코드·API 문서를 읽고 문서 diff만 검사했다. 테스트·빌드·DB·원격 서버·브라우저 실행은 수행하지 않았다.**
+
 - 직전 전체 검수에서 **백엔드 691 passed(단위 531 + PostgreSQL 통합 160), 프론트 121 passed**, TypeScript 검사·Vite 빌드·운영 Compose 설정 검사·`git diff --check`가 통과했다. 통합 테스트는 UUID 이름의 임시 DB만 생성·삭제하고 개발 DB를 보존했다. 과거 검증 수치와 합산하지 않는다.
-- 이번 안내 문구 변경 후에도 **프론트 121 passed**, TypeScript·Vite 빌드·운영 Compose 설정·diff 검사가 통과했다. 백엔드 소스는 바꾸지 않았으므로 위 백엔드 수치는 직전 전체 검수 결과다.
+- 이전 안내 문구 변경 후에도 **프론트 121 passed**, TypeScript·Vite 빌드·운영 Compose 설정·diff 검사가 통과했다. 백엔드 소스는 바꾸지 않았으므로 위 백엔드 수치는 직전 전체 검수 결과다.
 - 빌드는 관리 화면·백그라운드와 import 없는 IIFE `dist/naver-content.js`, `dist/bing-content.js`를 생성한다. 빌드 산출물은 커밋하지 않는다.
 - 네이버: 이전 비공개 실행 기록에 **설치된 확장에서 기존 결과 읽기 성공**이 있다(`2026-11-08-naver-reader-debug-d71f16c0.json`). 이후 자동 순회의 탭 URL 누락·결과 제목 판독 문제를 실제 화면에서 진단하고 코드·모의 테스트로 보완했다. 수정 후 여러 실제 사이트 전체 자동 순회 완료를 확인한 것으로 설명하지 않는다.
 - Bing: 사용자가 확장을 다시 로드해 조회를 시작했고, 에이전트가 실제 Bing 탭에서 **사이트 선택을 통과해 등록 글 URL의 색인 결과 카드에 도달한 것**을 확인했다. 여러 실제 사이트 간 전환·관리 화면의 최종 관측 건수와 DB 저장은 검증한 범위가 아니다.
@@ -106,10 +188,12 @@ npm --prefix extension run check
 npm --prefix extension run build
 ```
 
-1. **후속 요청의 Git 작업:** 아래 세 묶음의 커밋을 마무리하고 작업 브랜치에 push·main 대상 PR을 생성한다. 기존 PR이 없음을 확인했으며 완료 후 원격 PR의 head와 로컬 HEAD 일치 여부를 검증한다. main 직접 push나 요청 없는 병합을 하지 않는다.
-2. **병합 후 Lightsail 반영:** 서버의 main을 갱신하고 `.env.prod`·토큰 전용 폴더·컨테이너 쓰기 권한을 확인한 뒤 서버에서 컨테이너를 재생성한다. 로컬 파일 수정이나 Mac의 Docker 실행은 Lightsail 배포가 아니다.
-3. **배포 후 실검증:** 확장 새로고침 → 로그인된 네이버·Bing 탭 새로고침 → 관리 탭 다시 열기 → 고객사 전체 색인 조회. Google/Bing API 인증, 두 GUI의 동시 진행·사이트/URL 대응·오류 분리·전체 취소, 저장 완료 뒤 GET 재조회까지 확인한다. 실제 실행 기록과 모의 테스트 범위를 구분하고 검증 목적으로 색인 요청·사이트맵·IndexNow 제출을 반복하지 않는다.
-4. **후속 운영:** 네이버 대시보드 집계, 필요 시 GUI 상세 관측·출처·이력 저장 계약, 공개 HTTPS·팀원 인증·고정 IP·외부 백업/복구·인계 절차는 별도 요청 범위다. 이전 AI 로그인봇 실험을 자동 재개하지 않는다.
+1. **Lightsail 현재 배포 확인·최신 코드 반영:** 서버의 Git/컨테이너 상태를 먼저 확인하고 GUI 저장 API·네이버 대시보드 반영 여부를 확인한다. 필요하면 서버 main을 갱신하고 `.env.prod`·토큰 전용 폴더·컨테이너 쓰기 권한을 준비한 뒤 서버에서 API 컨테이너를 재생성한다. 네이버 필드가 추가된 서버를 먼저 배포한 뒤 새 확장을 적용한다. 로컬 main 병합은 서버 배포 완료를 뜻하지 않는다.
+2. **운영 API 인증 확인:** Lightsail에서 Google·Bing 실제 조회 성공을 확인한다. 로컬 Google 인증 성공·사용자의 토큰 전송 확인·`/health` 응답만으로 운영 인증 성공을 단정하지 않는다.
+3. **확장 전체 조회 실검증:** 확장 새로고침 → 로그인된 네이버·Bing 탭 새로고침 → 관리 탭 다시 열기 → 고객사 전체 색인 조회. 여러 사이트·URL 대응, 두 GUI 동시 진행·오류 분리·전체 취소를 확인한다. 실제 실행 기록을 남기고 검증 목적으로 색인 요청·사이트맵·IndexNow 제출을 반복하지 않는다.
+4. **저장·대시보드 연결 검증:** GUI 저장 응답 이후 `GET /sites/{id}/inspections`로 상태·시각을 확인한다. 관리 화면을 다시 열어 저장 결과 유지와 `GET /clients/{id}/dashboard`의 네이버 집계 반영을 확인한다. 메인페이지 제외·비활성 포함이라는 집계 기준과 활성 대상만 실행하는 전체 조회 범위를 구분한다.
+5. **검증 후 인계 갱신:** 실제 서버 버전·인증·순회·저장·집계 확인 결과와 미검증 범위를 이 문서에 기록한다.
+6. **별도 후속 과제:** 필요 시 GUI 상세 관측·출처·이력 저장 계약, 공개 HTTPS·팀원 인증·고정 IP·외부 백업/복구·인계 절차를 다룬다. 네이버 집계는 구현 완료이며 후속 구현 목록에 다시 넣지 않는다. 이전 AI 로그인봇 실험을 자동 재개하지 않는다.
 
 ### Google·Bing 인증과 Lightsail 배포 준비
 
@@ -123,7 +207,7 @@ npm --prefix extension run build
 - 서버 `.env.prod`에는 `GOOGLE_TOKEN_FILE=.secrets/google-token.json`과 실제 `BING_API_KEY`를 별도로 설정하고 기존 DB 설정을 유지한다. `.env.prod`는 배포 사용자 소유·권한 `600`으로 관리한다. 실제 값은 Git으로 배포하지 않는다.
 - 현재 API에는 팀원 인증이 없으므로 `127.0.0.1:18000` 바인딩과 SSH 터널 접근을 유지한다. `/health`는 앱 응답만 확인하며 DB·검색엔진 인증 성공을 보장하지 않는다.
 
-main 병합 후 **Lightsail SSH 터미널의 서버 프로젝트 폴더**에서 아래 순서로 실행한다. 서버 작업 트리에 변경이 있으면 먼저 보존·확인하고 `git pull`을 강행하지 않는다. 비공개 설정과 토큰 권한을 준비한 뒤 `up`을 실행한다.
+배포 작업을 진행할 때 **Lightsail SSH 터미널의 서버 프로젝트 폴더**에서 아래 순서로 실행한다. 서버 작업 트리에 변경이 있으면 먼저 보존·확인하고 `git pull`을 강행하지 않는다. 비공개 설정과 토큰 권한을 준비한 뒤 `up`을 실행한다.
 
 ```bash
 cd ~/webmaster-automation
@@ -134,7 +218,7 @@ docker compose --env-file .env.prod -f compose.prod.yaml up -d --build api
 docker compose --env-file .env.prod -f compose.prod.yaml ps
 ```
 
-### 커밋 구성 — 후속 사용자 요청으로 실행 중
+### 과거 커밋 구성 — PR #5 병합 완료
 
 | 순서 | 커밋 메시지 | 포함 파일 |
 |---|---|---|
@@ -142,7 +226,7 @@ docker compose --env-file .env.prod -f compose.prod.yaml ps
 | 2 | `[chore] 운영 Google·Bing 인증 환경변수와 토큰 폴더 연결` | `compose.prod.yaml`, `.env.prod.example` |
 | 3 | `[docs] GUI 저장과 운영 인증 배포 인계 갱신` | `docs/HANDOFF.md` |
 
-`ee93834`·`f8f049f`의 GUI 저장 기능은 이미 커밋돼 있으므로 재커밋하지 않는다. 첫 두 묶음은 각각 `cf71d18`·`c305c58`로 커밋했고 이 문서를 세 번째로 커밋한다. `.gitkeep`·실제 `.env.prod`·토큰·빌드 산출물은 제외한다. 사용자 요청 범위는 작업 브랜치 push·PR 생성까지이며 main 병합은 별도다.
+`ee93834`·`f8f049f`의 GUI 저장 기능과 위 세 묶음(`cf71d18`·`c305c58`·`c2c0169`)은 PR #5로 main에 병합됐다. 재커밋·중복 PR을 만들지 않는다. 이번 인계 문서 수정은 별도 미커밋이며 커밋·push 요청은 없다. 실제 `.env.prod`·토큰·빌드 산출물은 제외한다.
 
 ### 관련 파일
 
@@ -162,7 +246,8 @@ docker compose --env-file .env.prod -f compose.prod.yaml ps
 | `extension/README.md` | 설치·조회·엔진별 동작·검증 한계 |
 | `app/api/inspections.py`, `app/schemas/inspection.py`, `app/services/gui_inspection.py` | GUI 저장 요청·대상·URL·시각 검증과 최신 관측 저장 |
 | `extension/src/api.ts`, `types.ts` | GUI 저장 요청·응답 계약 |
-| `extension/src/dashboard.ts` | 네이버 조회·저장 지원과 집계 미지원 안내 |
+| `extension/src/dashboard.ts` | Google·네이버·Bing 저장 상태 집계 화면 |
+| `app/services/dashboard.py`, `app/schemas/dashboard.py`, `docs/dashboard-api.md` | 네이버 포함 대시보드 집계·응답·집계 기준 |
 | `compose.prod.yaml`, `.env.prod.example`, `Dockerfile` | 운영 인증 전달·토큰 폴더 연결·컨테이너 사용자 |
 
 ## 과거 기록 안내
@@ -992,7 +1077,7 @@ Notion은 요구사항·설계 자료다. 실제 구현·적용 여부는 이 �
 
 새 세션 시작 문구: **“docs/HANDOFF.md의 2026-11-08 최신 요약을 읽고 이어서 진행해줘. feat/webmaster-tab-automation의 499f553까지 push했고 네이버·Bing GUI를 병렬 실행해. GUI 관측은 DB 미저장이며 실제 두 엔진 병렬·여러 사이트 순회는 아직 미검증이야. 기존 미커밋 변경을 보존하고, 먼저 확장·작업 탭·관리 탭 빌드 상태와 로그인 상태를 확인해줘.”**
 
-## 마지막 상태 — 최신 / 2026-11-08 GUI 저장·운영 인증 준비와 최종 검수
+## 과거 마지막 상태 — 2026-11-08 GUI 저장·운영 인증 준비와 최종 검수
 
 - 브랜치 `feat/webmaster-tab-automation`, GUI 저장 기능 기준은 `f8f049fa822af4952f1e233264dfed3fd834b7f5`다. 후속 요청으로 원격과 기존 PR을 확인하고 안내 정리 `cf71d18`·운영 인증 `c305c58`을 커밋했다. 이 문서 커밋 후 push·PR 생성까지 진행하며, 최종 HEAD·PR 상태는 Git/GitHub에서 조회한다.
 - 네이버·Bing의 GUI 요약 관측을 기존 `site_engine_statuses`에 저장하며 Bing API·GUI는 같은 대상의 최신 상태 한 행을 공유한다. 별도 테이블·새 마이그레이션은 없다. 실행 목록과 판정 원문·대표 URL·제외 사유 등 상세 관측은 화면 메모리에만 남는다.
@@ -1003,3 +1088,37 @@ Notion은 요구사항·설계 자료다. 실제 구현·적용 여부는 이 �
 - 다음 순서: 인계 문서 커밋 → push·PR 생성 후 최종 상태 검증 → main 병합 후 서버 main 갱신 → 서버 비공개 설정·토큰 권한 준비 → **서버 SSH 터미널에서** `docker compose --env-file .env.prod -f compose.prod.yaml up -d --build api` → API 인증·GUI 저장 후 GET 확인이다. 팀원 인증 전에는 localhost 바인딩과 SSH 터널을 유지한다.
 
 새 세션 시작 문구: **“docs/HANDOFF.md의 최상단과 맨 아래 최신 상태를 읽고 이어서 진행해줘. feat/webmaster-tab-automation에서 GUI 저장 기능과 안내·운영 인증 배포 설정을 커밋했고, 사용자가 push·PR 생성까지 요청했어. 실제 완료 상태는 git status·HEAD와 기존 PR을 조회해 확인해줘. Google 토큰은 로컬 인증 성공·서버 전송 사용자 확인까지이며 Lightsail 반영과 실제 전체 GUI 저장은 미검증이야. 키·토큰·.gitkeep는 제외하고 병합·서버 배포는 별도 요청 범위로 유지해줘.”**
+
+
+## 과거 마지막 상태 — 2026-11-09 main 병합·네이버 집계 반영과 다음 작업
+
+- 현재 로컬 브랜치는 `main`, HEAD는 `b37251a`이며 로컬 `origin/main` 참조와 일치한다. PR #5 병합(`dd694d6`)과 네이버 대시보드 PR #6 병합(`b37251a`)은 로컬 이력에서 확인했다. 이번에는 fetch·원격 GitHub 조회를 하지 않았다.
+- GUI 저장 API·확장 저장 연결·운영 Google/Bing 인증 전달 설정이 main에 포함돼 있다. 네이버 대시보드 집계도 `6adcbcc`로 구현돼 있으므로 신규 구현 대상으로 잡지 않는다.
+- 대시보드는 외부 요청 없이 DB의 등록 글 상태를 집계한다. 메인페이지 제외·비활성 포함, 미관측 또는 성공 관측 시각 없음은 `unknown`이다. 전체 조회는 활성 사이트·글을 대상으로 하므로 두 범위를 구분한다.
+- Lightsail 최신 배포·Google/Bing 운영 인증·실제 두 GUI 병렬 실행·여러 사이트 전체 순회·GUI 저장 후 GET·네이버 집계 반영은 이번 세션에서 검증하지 않았다. Google 로컬 인증 성공과 서버 토큰 전송 사용자 확인은 이전 기록이며 서버 인증 성공 증거가 아니다.
+- 다음 순서: 서버 배포 상태 확인 → 필요 시 서버 main 갱신·비공개 설정·토큰 권한 준비·API 재빌드 → Google/Bing 운영 조회 → 새 확장 적용·전체 GUI 순회 → 저장 GET·대시보드 재조회 확인. 서버를 먼저 배포하고 팀원 인증 전에는 localhost 바인딩과 SSH 터널을 유지한다.
+- 이번 요청은 `docs/HANDOFF.md`만 갱신했다. 수정 전 작업 트리는 깨끗했으며 수정 후 이 문서만 미커밋으로 남긴다. 기존 테스트 수치는 과거 기록이며 이번에는 문서 diff만 검증했다. 커밋·push·배포·DB 변경·실제 외부 호출은 수행하지 않았다.
+
+새 세션 시작 문구: **“docs/HANDOFF.md의 최상단과 맨 아래 2026-11-09 최신 상태를 읽고 이어서 진행해줘. 로컬 main b37251a에 GUI 저장 PR #5와 네이버 대시보드 PR #6이 병합돼 있어. 인계 문서 수정은 미커밋이므로 보존해줘. 다음은 Lightsail 배포 상태·운영 인증 확인과 실제 전체 조회·GUI 저장·대시보드 반영 검증이야. 로컬 병합과 서버 배포, 과거 테스트와 실검증을 구분하고 실제 작업 범위는 새 요청에 맞춰 진행해줘.”**
+
+
+## 과거 마지막 상태 — 2026-11-09 비공개 스토어 제출용 ZIP 재생성
+
+- 브랜치 `chore/private-extension-release`, HEAD `2820ceb`. 아이콘 `0e7d2e8` push 완료, SSH 안내 `2820ceb` 로컬 커밋 완료·미push. 로컬 원격 추적 참조보다 1커밋 앞선 상태다.
+- 최신 빌드로 `extension/startpress-extension.zip`을 교체했다. ZIP 루트 manifest·필수 파일·아이콘 크기·무결성·최신 dist 바이트 일치·SSH 안내 포함을 확인했다. 11파일·66,421바이트이며 원본 로고는 제외했다.
+- 이번 검증: TypeScript·Vite 빌드·ZIP 검사·`git diff --check`. 전체 테스트·실제 브라우저·원격 서버 인증·스토어 업로드·심사 완료는 검증하지 않았다.
+- `docs/HANDOFF.md`는 기존 변경을 포함한 미커밋, ZIP은 미추적으로 보존한다. 이번 요청에서는 추가 커밋·push·PR 생성·서버 배포·외부 제출을 수행하지 않았다.
+- 다음은 스토어 설명/이미지·개인정보 공개·권한 이유·심사 테스트 방법·비공개 사용자 설정 준비 후 제출이다. 별도 팀원 설치 문서는 추후 작성할 수 있으며 SSH는 현재 계속 필요하다.
+
+새 세션 시작 문구: **“docs/HANDOFF.md의 최상단과 맨 아래 최신 상태를 읽고 이어서 진행해줘. chore/private-extension-release HEAD 2820ceb에 아이콘과 SSH 안내를 커밋했고, 아이콘만 push했어. 최신 ZIP은 extension/startpress-extension.zip이며 SSH 안내가 포함됐고 빌드·ZIP 검증을 통과했어. 문서는 미커밋·ZIP은 미추적이므로 보존해줘. 스토어 업로드는 아직 안 했고 설명·개인정보 공개·심사 테스트 방법·비공개 사용자 설정을 준비해야 해. SSH는 유지하며 원격 배포와 실검증을 완료된 것으로 설명하지 마.”**
+
+
+## 마지막 상태 — 최신 / 2026-11-10 스토어 심사 제출 사용자 확인
+
+- 사용자가 스토어 심사 제출 완료를 알렸다. 승인·게시 완료 여부, 최종 Private 설정과 허용 사용자 목록은 직접 확인하지 않았다.
+- `chore/private-extension-release`에서 아이콘 `0e7d2e8`·SSH 안내 `2820ceb`를 완료했다. 인계 문서·스토어 스크린샷을 `4b19604`로 커밋·push하고 main 대상 [PR #7](https://github.com/StartPress26/webmaster-automation/pull/7)을 생성했다. PR은 OPEN이며 병합하지 않았다. 최종 HEAD·PR 상태는 `git log -1`, `git status`, `gh pr view`로 확인한다. main 직접 push·PR 병합은 하지 않는다.
+- 최신 ZIP은 0.1.0·11파일·66,421바이트이며 원본 로고 제외·압축 무결성·SSH 안내 포함을 재확인했다. ZIP은 로컬 미추적 배포 산출물로 남기며 커밋하지 않는다.
+- Notion 개인정보처리방침 작성과 사용자 확정 사항 반영을 완료했다. 공개 설정·익명 접근은 미확인이다. 공개 페이지에는 확인용 메모나 미정 표시를 넣지 않는다. 질문은 채팅에서만 한다.
+- 다음은 심사 결과 확인→필요한 보완→비공개 게시·팀원 설치 및 SSH 사용 검증이다. 운영 서버·GUI 전체 흐름의 실제 검증은 과거 기록과 구분한다.
+
+새 세션 시작 문구: **“docs/HANDOFF.md의 최상단과 맨 아래 2026-11-10 최신 상태를 읽고 이어서 진행해줘. 사용자가 Chrome 웹 스토어 심사 제출을 완료했다고 확인했어. chore/private-extension-release에서 아이콘·SSH 안내와 인계 문서·스토어 스크린샷을 정리했고 커밋·push·PR 생성도 요청했으니 최종 Git/PR 상태부터 확인해줘. ZIP은 로컬 산출물로 보존하고 개인정보처리방침은 지정 Notion 페이지에 작성돼 있어. 공개 페이지에는 검토 메모·미정 표시를 넣지 말고 채팅에서 먼저 확인해줘. 심사 승인·게시·운영 서버 실검증은 완료된 것으로 단정하지 마.”**
