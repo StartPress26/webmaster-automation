@@ -29,6 +29,11 @@ class Site(UUIDPrimaryKey, CreatedAt, Base):
             "target_type = 'site' OR (cms_type IS NULL AND can_edit_site IS NULL)",
             name="ck_sites_shared_settings_on_main",
         ),
+        CheckConstraint(
+            "target_type = 'site' OR (google_account_email IS NULL "
+            "AND bing_account_email IS NULL AND naver_account_email IS NULL)",
+            name="ck_sites_accounts_on_main",
+        ),
     )
 
     client_id: Mapped[UUID] = mapped_column(
@@ -43,4 +48,18 @@ class Site(UUIDPrimaryKey, CreatedAt, Base):
     owner_type: Mapped[str] = mapped_column(Text)
     cms_type: Mapped[str | None] = mapped_column(Text)
     can_edit_site: Mapped[bool | None] = mapped_column(Boolean)
+    google_account_email: Mapped[str | None] = mapped_column(
+        Text, ForeignKey(
+            "auth_accounts.email", name="fk_sites_google_account_email",
+            onupdate="CASCADE", ondelete="RESTRICT",
+        ),
+    )
+    bing_account_email: Mapped[str | None] = mapped_column(
+        Text, ForeignKey(
+            "auth_accounts.email", name="fk_sites_bing_account_email",
+            onupdate="CASCADE", ondelete="RESTRICT",
+        ),
+    )
+    # 네이버 계정은 GUI 작업 참고용이며 API 인증 FK로 연결하지 않습니다.
+    naver_account_email: Mapped[str | None] = mapped_column(Text)
     is_active: Mapped[bool] = mapped_column(Boolean, server_default=text("true"))
