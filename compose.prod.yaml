@@ -40,8 +40,6 @@ services:
     restart: unless-stopped
     environment:
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL을 .env.prod에 설정하세요}
-      BING_API_KEY: ${BING_API_KEY:?BING_API_KEY를 .env.prod에 설정하세요}
-      GOOGLE_TOKEN_FILE: ${GOOGLE_TOKEN_FILE:?GOOGLE_TOKEN_FILE을 .env.prod에 설정하세요}
     depends_on:
       db:
         condition: service_healthy
