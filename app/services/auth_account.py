@@ -1,4 +1,6 @@
-"""인증 계정을 저장하고 비밀파일 참조를 제외한 목록을 조회합니다."""
+"""인증 계정을 관리하고 서버 내부에서 사용할 비밀파일 참조를 조회합니다."""
+
+from typing import Literal
 
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
@@ -10,6 +12,32 @@ from app.schemas.auth_account import AuthAccountCreate, AuthAccountRead
 
 class DuplicateAuthAccountError(Exception):
     """동일한 이메일의 인증 계정이 이미 등록돼 있습니다."""
+
+
+class AuthAccountNotFoundError(Exception):
+    """요청한 이메일의 인증 계정이 없습니다."""
+
+
+class SecretReferenceNotFoundError(Exception):
+    """인증 계정에 해당 엔진의 비밀파일 참조가 없습니다."""
+
+
+# 이메일과 엔진에 해당하는 파일 참조만 조회하며 파일 접근과 트랜잭션 종료는 하지 않습니다.
+async def get_secret_reference(
+    session: AsyncSession, *, email: str, engine: Literal["google", "bing"],
+) -> str:
+    if engine not in {"google", "bing"}:
+        raise ValueError("지원하지 않는 인증 엔진입니다.")
+
+    account = await session.scalar(select(AuthAccount).where(AuthAccount.email == email))
+    if account is None:
+        raise AuthAccountNotFoundError("등록된 인증 계정이 없습니다.")
+
+    reference = account.google_secret_ref if engine == "google" else account.bing_secret_ref
+    if not reference or not reference.strip():
+        raise SecretReferenceNotFoundError("해당 엔진의 비밀파일 참조가 등록되지 않았습니다.")
+
+    return reference
 
 
 # 실제 파일을 읽지 않고 비밀파일 참조의 등록 여부만 응답으로 변환합니다.
