@@ -111,9 +111,10 @@ npm --prefix extension run dev
 
 | 설정 | 용도 |
 |---|---|
-| `GOOGLE_OAUTH_CLIENT_FILE` | 최초 사용자 동의용 Google OAuth 클라이언트 JSON |
-| `GOOGLE_TOKEN_FILE` | 서버가 읽고 필요 시 갱신하는 OAuth 토큰 JSON (`.secrets/` 내부) |
-| `BING_API_KEY` | 서버의 Bing Webmaster API 호출 |
+| `GOOGLE_OAUTH_CLIENT_FILE` | 로컬 `google_probe.py`의 최초 사용자 동의용 OAuth 클라이언트 JSON |
+| `GOOGLE_TOKEN_FILE` | 로컬 `google_probe.py`가 읽고 저장하는 OAuth 토큰 경로 (`.secrets/` 내부) |
+| `auth_accounts.google_secret_ref` | 검사·사이트맵에서 사용하는 Google OAuth JSON의 상대 경로 |
+| `auth_accounts.bing_secret_ref` | 검사·사이트맵에서 사용하는 Bing 키 JSON의 상대 경로 |
 | 사이트별 IndexNow 키·파일 주소 | 발행 알림 설정. Bing API 키와 별개 |
 | 로그인된 네이버·Bing 탭 | 확장의 GUI 조회. 로그인·추가 인증은 사용자가 직접 수행 |
 
@@ -124,11 +125,20 @@ python google_probe.py auth
 python google_probe.py sites
 ```
 
-`auth`는 필요 시 사용자 로그인·동의를 진행하고, `sites`는 실제 Google API를 호출합니다. 인증파일·키·토큰과 비공개 실행 기록은 Git에 포함하지 않습니다.
+이 도구는 `.env`의 `GOOGLE_OAUTH_CLIENT_FILE`·`GOOGLE_TOKEN_FILE`을 읽습니다. 계정별 파일을 발급할 때는 저장 경로를 `.secrets/google/<이메일>.json`으로 맞춥니다. `auth`는 토큰 파일이 없을 때 사용자 로그인·동의를 진행하고, 이미 있으면 기존 토큰을 확인·갱신합니다. 갱신 토큰이 거부되면 기존 파일을 비공개 위치에 백업해 대상 경로를 비운 뒤 재인증합니다. `sites`는 사이트 목록을 실제 조회합니다. 인증파일·키·토큰과 비공개 실행 기록은 Git에 포함하지 않습니다.
 
-인증 계정 API는 이메일과 서버 비밀파일의 상대 경로 참조를 저장하며, 조회 시 이메일과 엔진별 참조 등록 여부만 반환합니다. 사이트 등록·변경 시 Google·Bing 계정을 연결할 수 있고 네이버 이메일은 참고 정보입니다. **현재 검사·사이트맵 어댑터는 계속 서버의 `GOOGLE_TOKEN_FILE`·`BING_API_KEY`를 사용합니다. 사이트별 계정 연결이 실제 호출 계정을 전환하지는 않습니다.**
+인증 계정 API는 이메일과 서버 비밀파일의 상대 경로 참조를 저장하며, 조회 시 이메일과 엔진별 참조 등록 여부만 반환합니다. 사이트 등록·변경 시 Google·Bing 계정을 연결할 수 있고 네이버 이메일은 참고 정보입니다. **검사·사이트맵은 메인 사이트의 엔진별 이메일 → 인증 계정의 파일 참조 → 비밀파일 순서로 인증정보를 선택합니다.** 개별 글 검사는 부모 메인 사이트의 계정을 사용합니다. 연결 계정이나 파일 참조가 없으면 503을 반환하며 공통 환경변수의 인증정보로 대체하지 않습니다. 인증파일 오류도 503으로 처리하고 비밀값은 응답·검사 이력에 저장하지 않습니다.
 
-- `POST /auth-accounts`, `GET /auth-accounts`: 인증 계정 등록·목록 조회. 실제 키가 아닌 `google/account-a.json` 같은 상대 파일 참조를 받습니다.
+로컬 파일과 DB 참조는 다음처럼 대응합니다.
+
+```text
+.secrets/google/<이메일>.json  ← google_secret_ref: google/<이메일>.json
+.secrets/bing/<이메일>.json    ← bing_secret_ref:   bing/<이메일>.json
+```
+
+Google은 OAuth 토큰 JSON 형식을 유지하며 갱신 후 선택한 파일에 저장합니다. 검사·사이트맵은 동일 프로세스의 갱신 잠금을 공유합니다. Bing 파일은 `{"api_key": "..."}` 형식이며 키가 비어 있거나 잘못된 형식이면 요청 전에 거부합니다. DB 참조에는 `.secrets/`나 절대 경로를 넣지 않습니다. 공통 로더는 상위 폴더 이동과 심볼릭 링크를 통한 기준 폴더 이탈을 차단합니다.
+
+- `POST /auth-accounts`, `GET /auth-accounts`: 인증 계정 등록·목록 조회. 실제 키가 아닌 `google/<이메일>.json` 같은 상대 파일 참조를 받습니다. 중복 이메일 POST는 409이며 기존 참조를 갱신하지 않습니다. 파일 참조 변경 API는 아직 없습니다.
 - `POST /sites`: 선택적인 Google·Bing·네이버 이메일과 함께 사이트를 등록합니다. Google·Bing 이메일은 인증 테이블에 존재해야 합니다.
 - `PATCH /sites/{site_id}/auth-accounts`: 기존 메인 사이트의 계정 연결을 변경합니다. 생략한 필드는 유지하고 `null`은 연결 해제이며 빈 객체는 변경하지 않습니다. 없는 메인 사이트·개별 글·없는 인증 계정은 `404`, 잘못된 이메일은 `422`입니다.
 - 사이트 등록 화면에서 계정을 선택하고, 고객사 관리 화면에서 기존 사이트의 계정을 변경할 수 있습니다. 참조 등록 여부는 파일 존재나 인증 성공을 의미하지 않습니다.
@@ -154,9 +164,13 @@ ssh -i /path/to/lightsail-key.pem \
 
 터널을 유지한 상태에서 `curl -fsS http://127.0.0.1:18001/health`로 연결을 확인합니다.
 
-운영 구성은 `compose.prod.yaml`과 `.env.prod.example`에 있습니다. API·마이그레이션·DB를 함께 구성하며 기본 호스트 포트는 `18000`입니다. Google 토큰 전용 서버 폴더 `/home/ubuntu/webmaster-secrets`를 컨테이너의 `/srv/startpress/.secrets`로 연결합니다. 토큰 갱신을 위해 컨테이너 사용자 `10001:10001`에 폴더 쓰기 권한이 필요합니다. 폴더·파일 권한은 각각 `700`·`600`으로 관리하며 운영 환경변수에는 `GOOGLE_TOKEN_FILE=.secrets/google-token.json`과 실제 Bing 키를 설정합니다.
+운영 구성은 `compose.prod.yaml`과 `.env.prod.example`에 있습니다. API·마이그레이션·DB를 함께 구성하며 기본 호스트 포트는 `18000`입니다. 서버 비밀폴더 `/home/ubuntu/webmaster-secrets`를 컨테이너의 `/srv/startpress/.secrets`로 연결합니다. 호스트의 `google/<이메일>.json`·`bing/<이메일>.json`을 준비하고 DB에는 같은 상대 경로를 등록합니다. 토큰 갱신을 위해 컨테이너 사용자 `10001:10001`에 Google 파일·상위 폴더 쓰기 권한이 필요합니다. 폴더·파일 권한은 각각 `700`·`600`으로 관리합니다. 운영 Compose는 공통 `GOOGLE_TOKEN_FILE`·`BING_API_KEY`를 요구하거나 API 컨테이너에 전달하지 않습니다.
 
-배포 절차와 과거 확인 결과는 [HANDOFF](docs/HANDOFF.md)의 **Google·Bing 인증과 Lightsail 배포 준비** 절을 참고하세요. 코드 구현·로컬 빌드 완료는 서버 반영이나 운영 인증 성공을 뜻하지 않습니다.
+사이트별 인증으로 전환할 때는 main 반영 후 서버 코드를 갱신하고 API 이미지를 빌드합니다. 같은 이미지로 마이그레이션을 적용해 `0004` 테이블·컬럼을 준비한 뒤, 계정별 파일·DB 참조·메인 사이트 계정을 연결하고 API를 재생성해 조회를 확인합니다. 연결이 없는 기존 사이트는 검사·사이트맵에서 503을 반환하므로 사용할 사이트의 계정 연결을 함께 준비해야 합니다. 로컬에서 갱신한 Google 파일은 서버에 자동 반영되지 않습니다.
+
+로컬 자동 검증은 백엔드 단위 655개·검사 및 사이트맵 API의 임시 PostgreSQL 통합 81개가 통과했습니다. Google 재인증 후 에이전트가 Search Console 사이트 목록 HTTP 200을 확인했고, 사용자가 로컬 Google·Bing 검사 성공을 확인했습니다. 실제 사이트맵 제출과 Lightsail 운영 인증·배포는 아직 검증하지 않았습니다.
+
+현재 배포 준비와 검증 범위는 [HANDOFF](docs/HANDOFF.md)의 **맨 위 현재 인계 요약**을 참고하세요. 코드 구현·로컬 빌드 완료는 서버 반영이나 운영 인증 성공을 뜻하지 않습니다.
 
 ## 주요 API
 

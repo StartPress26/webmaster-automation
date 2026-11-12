@@ -1,6 +1,75 @@
 # 작업 인계 문서
 
-## 현재 인계 요약 — 2026-11-12 이메일 기반 사이트별 인증 계정 연결 / Asia/Seoul
+## 현재 인계 요약 — 2026-11-12 사이트별 인증 실검증·커밋 정리 / Asia/Seoul
+
+**이 절과 맨 아래 `마지막 상태 — 최신 / 2026-11-12 사이트별 인증 실검증·커밋 정리`를 우선한다. 같은 날짜의 계정 연결 저장까지만 완료됐다는 아래 기록은 과거 상태다.**
+
+### 완료된 작업
+
+- [x] `app/core/secret_loader.py` 추가: `resolve_secret_path()`로 비공개 기준 폴더 내부의 상대 경로만 허용하고 심볼릭 링크 이탈을 차단한다. `load_secret_json()`은 UTF-8 JSON 객체를 반환하며 경로·내용을 오류 메시지에 노출하지 않는다. 엔진별 형식 검증과 Google 토큰 갱신은 인증 코드가 맡는다.
+- [x] 사용자가 만든 `app/services/auth_account.py`의 `get_secret_reference(session, email=..., engine=...)`와 테스트를 보존했다. 인증 행과 엔진별 참조 누락을 별도로 구분하며 파일 접근이나 트랜잭션 종료는 하지 않는다.
+- [x] 검사 서비스의 `_get_context()`가 부모 메인 사이트의 엔진별 이메일로 파일 참조를 조회하고 `(main_url, page_url, reference)`를 반환하도록 연결했다. 개별 글은 부모 계정을 상속한다. `Inspector`와 실제 검사 함수는 네 번째 인자로 참조를 받는다.
+- [x] 사이트맵 서비스도 메인 사이트의 엔진별 이메일로 참조를 조회하고 `SitemapSubmitter`에 네 번째 인자로 전달한다. 두 서비스 모두 조회 트랜잭션을 닫은 뒤 파일 로드·외부 요청을 실행한다.
+- [x] 검사·사이트맵에서 Google은 `load_credentials(secret_reference=...)`, Bing은 공통 로더의 `api_key`를 사용한다. 계정·참조 누락은 `AUTH_ACCOUNT_NOT_LINKED`, `AUTH_ACCOUNT_NOT_FOUND`, `SECRET_REFERENCE_NOT_FOUND`의 503이며 공통 계정으로 대체하지 않는다. Google 갱신은 두 경로가 기존 동일 프로세스 잠금을 공유한다. 프로세스 간 잠금이나 계정별 잠금은 추가하지 않았다.
+- [x] Google 갱신 토큰은 선택된 계정 파일에 원자적으로 저장된다. `load_credentials()`에서 명시적인 참조 없이 호출하는 기존 방식은 호환용으로 유지했지만 검사·사이트맵은 항상 참조를 전달한다.
+- [x] 로컬 기존 Google 토큰과 `.env`의 Bing 키를 사용해 엔진별 계정 파일 두 개를 생성했다. 사용자가 Google·Bing에 같은 실제 이메일을 지정했다. 파일 권한은 0600이며 Git 제외를 확인했다. 원본 토큰과 기존 환경변수는 유지했다. 이메일·인증값은 이 문서에 복사하지 않는다.
+
+### 확정된 비밀파일 배치
+
+```text
+Lightsail 호스트: /home/ubuntu/webmaster-secrets/
+컨테이너:        /srv/startpress/.secrets/
+로컬:            <프로젝트 루트>/.secrets/
+각 기준 폴더 아래:
+  google/<이메일>.json   # 기존 Google OAuth JSON 그대로
+  bing/<이메일>.json     # {"api_key": "..."}
+DB 상대 참조:
+  google/<이메일>.json
+  bing/<이메일>.json
+```
+
+- 처음에는 Lightsail 프로젝트 내부 `.secrets` 배치를 논의했으나 **기존 `/home/ubuntu/webmaster-secrets`를 유지하기로 했다.** 현재 Compose 마운트도 유지했다. 서버 폴더를 컨테이너의 `.secrets`로 연결하는 바인드 마운트이므로 두 이름이 달라도 같은 파일이다.
+- 사용자가 제시한 서버 목록에서 비밀폴더는 소유자·그룹 `10001:10001`, 권한 0700이고 기존 `google-token.json`은 0600이었다. `ubuntu` 사용자의 `cd` 권한 없음은 이 권한 설정 때문이다. 엔진별 하위 폴더 생성·Google 파일 복사·기존 `.env.prod`의 Bing 키를 JSON에 저장하는 단계는 사용자 완료 보고다. 에이전트가 원격 파일 내용·권한을 직접 재확인한 것은 아니다.
+- Google은 갱신 후 파일 교체를 하므로 컨테이너 실행 UID 10001에 파일·상위 폴더 쓰기 권한이 필요하다. 서버의 기존 Google 파일·환경변수는 운영 전환 확인 전 삭제하지 않는다. 이번 코드의 `compose.prod.yaml`은 공통 `GOOGLE_TOKEN_FILE`·`BING_API_KEY` 필수 설정과 API 전달을 제거했으며 `.env.prod.example`도 계정별 파일 배치 안내로 바꿨다. 기존 서버의 Compose 반영 여부는 별도 확인이 필요하다.
+
+### 실제 검증 결과
+
+- 사용자는 로컬 DB에 실제 계정의 파일 참조를 등록하고 Swagger PATCH로 테스트 메인 사이트의 Google·Bing 계정을 연결했다. 선택한 사이트 ID·URL과 DB 내용은 에이전트가 직접 조회하지 않았다. 인증 계정 API에는 기존 참조 변경용 PATCH가 없고 중복 POST는 409다.
+- 첫 Google 검사는 503 `GOOGLE_AUTH_REFRESH_FAILED`였으며 에이전트가 공식 OAuth 서버에서 `invalid_grant`를 재현했다. 파일 연결은 정상이고 기존 refresh token이 거부된 상태였다. OAuth 앱의 Testing 게시 상태가 원인인지는 확인하지 않았다.
+- 이후 사용자가 직접 Google 로그인·동의를 완료했다. 에이전트는 `google_probe.Settings`에 계정별 임시 저장 경로를 명시해 재인증을 진행하고, 새 토큰에 refresh token이 있는지 확인한 뒤 기존 계정 토큰을 비공개 백업하고 원자적으로 교체했다. 새 파일 권한은 0600이다. `.env`·기존 원본 토큰은 수정하지 않았다.
+- 새 계정별 파일로 에이전트가 Google Search Console 사이트 목록을 조회해 **HTTP 200**, 접근 가능한 속성 1개를 확인했다. 실제 응답·사이트 주소·키·토큰은 공개 문서에 저장하지 않았다. 인증 전후 단계와 결과는 Git 제외된 `.secrets/bot_runs/` 기록으로 보존했다.
+- 이후 **사용자가 로컬 Google·Bing 실제 검사 모두 성공했다고 확인했다.** 이는 사용자 확인이며 에이전트가 Swagger의 두 검사 응답을 직접 조회한 것은 아니다. 사이트 목록 조회는 색인 검사와 구분한다.
+- 실제 사이트맵 제출·Lightsail 배포·운영 DB 버전·운영 인증 성공은 아직 확인하지 않았다. 새 로컬 Google 토큰은 서버에 자동 동기화되지 않는다.
+
+### 검증·Git·보존할 변경
+
+- 브랜치 `feat/site-auth-profiles`. 사용자는 리뷰 보고의 4개 커밋 계획 실행을 승인했다. 기준 HEAD는 `d6ed73b`이며 로더·조회 `103ce1d`, 실제 인증 전달 `d408424`, 운영 설정 `c21efe5`를 커밋했다. 이 문서는 별도 네 번째 커밋으로 정리한다. 최종 커밋은 `git log -4 --oneline`에서 확인한다. 이번 승인 범위는 로컬 커밋까지이며 push·PR 생성·main 병합·Lightsail 배포는 수행하지 않는다. 원격 최신 상태는 조회하지 않았다.
+- 코드 리뷰 때 다시 실행한 백엔드 단위 테스트 **655 passed**, 임시 PostgreSQL의 검사·사이트맵 API 통합 테스트 **81 passed**. 계정 선택·변경 반영·미연결·참조 누락·파일 오류·동시 갱신·요청 자원 정리를 검증했다. 실제 외부 사이트맵 제출은 하지 않았다. 프론트 테스트·빌드는 이번 인증 연결 작업에서 재실행하지 않았다.
+- 실행 환경은 `/opt/miniconda3/envs/startpress/bin/python`. 개인 사용자 패키지의 `typing_extensions`가 conda의 AnyIO와 충돌했으므로 **`PYTHONNOUSERSITE=1`**을 붙여 검증했다. 패키지를 임의로 업그레이드하거나 프로젝트 환경을 교체하지 않았다.
+- 운영 설정 수정 후 공통 인증 변수를 제외한 테스트용 환경으로 `docker compose --env-file /dev/null -f compose.prod.yaml config --quiet`가 통과했다. 실제 `.env.prod`·컨테이너·서버를 변경하지 않았다. 한국어 주석 정리 후 로더·조회 단위 테스트 37개와 `git diff --check`도 통과했다.
+- 단위: `PYTHONNOUSERSITE=1 /opt/miniconda3/envs/startpress/bin/python -m pytest tests --ignore=tests/integration -q`.
+- 통합: `PYTHONNOUSERSITE=1 RUN_POSTGRES_TESTS=1 /opt/miniconda3/envs/startpress/bin/python -m pytest tests/integration/test_sitemaps_api.py tests/integration/test_inspections_api.py -q`. 테스트가 UUID 이름의 임시 DB를 만들고 삭제하며 개발 DB를 마이그레이션 대상으로 삼지 않는다. 로컬 DB 연결은 sandbox 밖 실행 권한이 필요했다.
+- 기존 `extension/vite.config.ts`의 프록시 8000 변경과 `extension/startpress-extension.zip`은 그대로 보존·커밋 제외한다. 사용자 작성 `auth_account.py`, `tests/test_auth_account_service.py`와 로더에 추가한 설명 주석도 보존한다. `.env`, `.secrets`와 실제 인증파일·백업·비공개 실행 기록은 출력·커밋하지 않는다.
+- 코드 리뷰에서 운영 Compose의 불필요한 공통 인증 변수 의존, README·인계의 오래된 상태, 테스트의 일본어 주석을 확인해 정리했다. README는 계정별 인증 흐름·파일 형식·재인증·서버 전환 순서를 설명한다. 변경 코드의 치명적인 문제는 발견하지 못했다. 실제 계정 파일·백업·비공개 기록은 커밋 대상이 아니다.
+
+### 다음에 해야 할 작업
+
+1. 사용자가 요청하면 원격 브랜치와 기존 PR을 확인하고 push·PR을 진행한다. main 직접 push·자동 병합·자동 배포를 하지 않는다. main 반영은 별도 요청 범위다.
+2. Lightsail의 실제 브랜치·HEAD·DB 리비전을 확인한다. 서버 확인 명령은 안내했지만 실행 결과를 받지 않아 현재 운영 상태·`0004` 적용 여부는 미확인이다.
+3. main 반영 후 서버 코드를 갱신하고 API 이미지를 빌드한다. 같은 이미지로 마이그레이션을 적용하고 계정별 유효한 파일·DB 참조·메인 사이트 연결을 준비한 뒤 API를 재생성한다. 새 로컬 Google 토큰을 서버에 별도로 반영해야 하며 비밀값을 로그·문서·Git에 남기지 않는다.
+4. 운영 Google·Bing 조회를 확인한다. 연결이 없는 기존 사이트는 503을 반환하므로 운영에서 사용할 사이트의 계정도 준비한다. 실제 사이트맵 제출은 조회와 구분해 필요할 때 수행한다. localhost 바인딩·SSH 터널은 유지한다.
+
+### 관련 파일
+
+- `app/core/secret_loader.py`, `tests/test_secret_loader.py`: 공통 비밀파일 로더.
+- `app/services/auth_account.py`, `tests/test_auth_account_service.py`: 이메일·엔진별 파일 참조 조회.
+- `app/services/inspection.py`, `app/engines/inspection.py`, `tests/test_inspection_context.py`, `tests/test_inspection_runner.py`, `tests/integration/test_inspections_api.py`: 사이트별 검사 인증.
+- `app/services/sitemap.py`, `app/engines/sitemap.py`, `tests/test_sitemap_runner.py`, `tests/integration/test_sitemaps_api.py`: 사이트별 사이트맵 인증.
+- `app/engines/google/google_auth.py`, `tests/test_google_auth.py`: 선택 파일의 OAuth 로드·갱신·저장.
+- `google_probe.py`: 기존 로컬 최초 인증 도구. 이번 작업에서 수정하지 않았다.
+- `compose.prod.yaml`, `.env.prod.example`: 기존 비밀폴더 마운트를 유지하고 공통 인증 환경변수 의존을 제거했다.
+
+## 이전 인계 요약 — 2026-11-12 이메일 기반 사이트별 인증 계정 연결 / Asia/Seoul
 
 **이 절과 맨 아래 2026-11-12 기록을 우선한다. 아래 2026-11-10까지의 요약·마지막 상태는 과거 기록이다.**
 
@@ -1170,10 +1239,30 @@ Notion은 요구사항·설계 자료다. 실제 구현·적용 여부는 이 �
 새 세션 시작 문구: **“docs/HANDOFF.md의 최상단과 맨 아래 2026-11-10 최신 상태를 읽고 이어서 진행해줘. 사용자가 Chrome 웹 스토어 심사 제출을 완료했다고 확인했어. chore/private-extension-release에서 아이콘·SSH 안내와 인계 문서·스토어 스크린샷을 정리했고 커밋·push·PR 생성도 요청했으니 최종 Git/PR 상태부터 확인해줘. ZIP은 로컬 산출물로 보존하고 개인정보처리방침은 지정 Notion 페이지에 작성돼 있어. 공개 페이지에는 검토 메모·미정 표시를 넣지 말고 채팅에서 먼저 확인해줘. 심사 승인·게시·운영 서버 실검증은 완료된 것으로 단정하지 마.”**
 
 
-## 마지막 상태 — 최신 / 2026-11-12 사이트별 인증 계정 연결
+## 과거 마지막 상태 — 2026-11-12 사이트별 인증 계정 연결
 
 - 브랜치 `feat/site-auth-profiles`. 모델·마이그레이션 `8566309`, 계정 등록·조회 `a128d68`, 사이트 등록·PATCH `c7c1de1`, 프론트 연결 `a57f6ef`, 의존성 보안 업데이트 `966d07b`를 완료했다. 이 인계와 README는 별도 문서 커밋으로 정리하며 같은 브랜치 push 범위에 포함한다. 최종 HEAD·원격 일치는 Git에서 확인한다.
 - 사용자 로컬 `0004` 적용·테이블/FK 확인·계정 API 테스트 완료. 자동 검증은 단위 580개·관련 PostgreSQL 통합 82개, 프론트 131개·TypeScript·빌드 통과다. 실제 사이트별 검색엔진 인증은 아직 공통 서버 인증에서 전환되지 않았다.
 - 남길 로컬 변경: `extension/vite.config.ts`의 프록시 `8000`. 미추적 ZIP은 보존·커밋 제외하며 재생성하지 않았다. 실제 브라우저·운영 서버 배포·스토어 심사 결과는 이번에 검증하지 않았다.
 
 새 세션 시작 문구: **“docs/HANDOFF.md의 최상단과 맨 아래 2026-11-12 요약부터 읽고 이어서 진행해줘. 이메일 기반 인증 계정과 사이트 등록·PATCH, 프론트 연결까지 구현됐고 실제 엔진 호출은 여전히 공통 서버 인증이야. 프록시 8000 로컬 변경과 ZIP은 커밋 제외로 보존해줘. 현재 Git/원격 상태를 먼저 확인하고, 다음은 비밀파일 로더와 사이트별 API 인증 주입을 단계적으로 진행하자.”**
+
+
+## 과거 마지막 상태 — 2026-11-12 사이트별 API 인증·재인증 인계
+
+- `feat/site-auth-profiles`, HEAD `d6ed73b`. 공통 로더와 검사·사이트맵의 계정별 인증 전달은 구현했고 소스·테스트는 미커밋이다. 단위 655개·관련 PostgreSQL 통합 81개 통과. 개인 패키지 충돌을 피하려면 `PYTHONNOUSERSITE=1`로 실행한다.
+- 로컬 계정별 Google·Bing 파일은 생성했고 사용자 DB 참조 등록·사이트 계정 PATCH 완료 보고가 있다. Google 실제 검사는 503이며 직접 갱신 재현에서도 `invalid_grant`가 확인됐다. 새 토큰 발급과 실제 API 조회 성공은 미완료다.
+- 사용자가 요청한 Google 재인증은 클라이언트 파일·토큰 파일 존재 확인까지만 했다. `.env` 수정·토큰 백업·OAuth 실행·로그인·새 토큰 저장은 아직 하지 않았다. 이 작업 중단 후 사용자가 인계 문서 갱신을 요청했다.
+- 기존 Vite 프록시 변경·ZIP·사용자 작성 코드·비밀파일을 보존한다. 서버 비밀폴더는 `/home/ubuntu/webmaster-secrets`를 유지한다. 원격 Git·운영 DB 버전·실제 배포는 미확인이다. 이번 요청에서 문서만 갱신하고 커밋·push·배포는 하지 않는다.
+
+새 세션 시작 문구: **“docs/HANDOFF.md의 최상단과 맨 아래 사이트별 API 인증·재인증 인계를 읽고 이어서 진행해줘. 검사·사이트맵의 계정별 인증은 미커밋 상태로 구현됐고 단위 655개·통합 81개 통과했어. 로컬 Google refresh token이 invalid_grant로 거부돼 재인증이 필요해. 재인증은 아직 실행하지 않았으니 대상 계정 파일과 OAuth 클라이언트를 확인하고 사용자 로그인·동의를 받아 새 토큰 저장부터 진행해줘. 키·토큰은 출력하지 말고 Vite 프록시·ZIP·사용자 변경을 보존해줘. 서버 배포와 실제 API 성공은 아직 확인하지 않았어.”**
+
+
+## 마지막 상태 — 최신 / 2026-11-12 사이트별 인증 실검증·커밋 정리
+
+- `feat/site-auth-profiles`에서 로더·참조 조회 `103ce1d`, 검사·사이트맵 인증 전달 `d408424`, 운영 환경변수 정리 `c21efe5`를 커밋했고 이 문서를 네 번째 커밋으로 정리한다. 사용자는 리뷰 후 해당 계획 실행을 승인했다. 최종 HEAD·커밋 목록은 `git log -4 --oneline`으로 확인한다. push·PR·main 병합·배포는 하지 않는다.
+- Google 사용자 동의로 새 계정 토큰을 발급·저장했고 기존 파일은 비공개 백업했다. 에이전트가 계정별 파일로 Search Console 사이트 목록 HTTP 200을 확인했고 사용자가 Google·Bing 실제 검사 모두 성공했다고 보고했다. 실제 사이트맵 제출·운영 반영은 미검증이다.
+- 단위 655개·임시 PostgreSQL의 관련 통합 81개 통과. 운영 Compose의 공통 `GOOGLE_TOKEN_FILE`·`BING_API_KEY` 필수 설정을 제거하고 비밀폴더 마운트를 유지한다. 공통 인증 변수를 제외한 Compose 설정 검증과 로더·조회 단위 테스트 37개도 통과했다.
+- Vite 프록시 8000 변경·미추적 ZIP·`.env`·`.secrets`·실제 토큰과 키·백업·비공개 기록은 커밋 제외다. 서버 비밀폴더는 `/home/ubuntu/webmaster-secrets`를 유지한다.
+
+새 세션 시작 문구: **“docs/HANDOFF.md의 최상단과 맨 아래 최신 요약을 읽고 이어서 진행해줘. 사이트별 인증 연결과 로컬 Google 재인증이 완료됐고 사용자가 Google·Bing 실제 검사를 확인했어. 승인된 4개 커밋의 완료 상태는 git log와 status로 확인해줘. push·PR·main 병합·Lightsail 배포는 아직 수행하지 않았어. 운영에서는 새 Google 파일과 DB 계정·참조·사이트 연결을 별도로 준비해야 해. Vite 프록시·ZIP·비밀파일은 커밋에서 제외해줘.”**
