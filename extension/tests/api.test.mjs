@@ -50,6 +50,44 @@ test('고객사 목록은 100개 다음 페이지도 읽는다', async () => {
   assert.deepEqual(calls, ['/api/clients?limit=100&offset=0', '/api/clients?limit=100&offset=100']);
 });
 
+// 계정 목록은 모든 페이지를 읽고 서버의 추가 필드가 화면 상태에 들어오지 않게 합니다.
+test('인증 계정 목록을 페이지별로 조회하고 공개 필드만 반환한다', async () => {
+  const calls = [];
+  const account = { email: 'user@example.com', google_configured: true, bing_configured: false };
+  const api = createApi(async (url) => {
+    calls.push(url);
+    return json({ items: calls.length === 1 ? Array.from({ length: 100 }, () => ({ ...account, google_secret_ref: 'private.json' })) : [] });
+  });
+  const result = await api.listAuthAccounts();
+  assert.equal(result.length, 100);
+  assert.deepEqual(result[0], account);
+  assert.deepEqual(calls, ['/api/auth-accounts?limit=100&offset=0', '/api/auth-accounts?limit=100&offset=100']);
+});
+
+// 인증 참조 등록 여부가 잘못된 응답이면 선택 목록으로 사용하지 않습니다.
+test('잘못된 인증 계정 응답은 거부한다', async () => {
+  const api = createApi(async () => json({ items: [{ email: 'user@example.com', google_configured: 'true', bing_configured: false }] }));
+  await assert.rejects(api.listAuthAccounts(), (error) => error instanceof ApiError && error.code === 'INVALID_RESPONSE');
+});
+
+// 부분 변경은 생략한 필드를 추가하지 않고 연결 해제용 null을 그대로 보냅니다.
+test('사이트 인증 계정 PATCH는 변경 필드와 null만 전송한다', async () => {
+  const api = createApi(async (url, options) => {
+    assert.equal(url, '/api/sites/site%2Fid/auth-accounts');
+    assert.equal(options.method, 'PATCH');
+    assert.deepEqual(JSON.parse(options.body), { google_account_email: 'new@example.com', naver_account_email: null });
+    return json({ id: 'site/id', google_account_email: 'new@example.com', bing_account_email: 'bing@example.com', naver_account_email: null });
+  });
+  const result = await api.updateSiteAuthAccounts('site/id', { google_account_email: 'new@example.com', naver_account_email: null });
+  assert.equal(result.bing_account_email, 'bing@example.com');
+});
+
+// 다른 사이트의 변경 응답은 현재 화면 상태에 반영하지 않습니다.
+test('사이트 인증 계정 PATCH 응답의 대상이 다르면 거부한다', async () => {
+  const api = createApi(async () => json({ id: 'other', google_account_email: null, bing_account_email: null, naver_account_email: null }));
+  await assert.rejects(api.updateSiteAuthAccounts('site', { bing_account_email: null }), (error) => error.code === 'INVALID_RESPONSE');
+});
+
 test('IndexNow PUT은 서버 필드 이름으로 보내고 원문 키가 없는 응답을 사용한다', async () => {
   const api = createApi(async (url, options) => {
     assert.equal(url, '/api/sites/site-id/indexnow-settings');

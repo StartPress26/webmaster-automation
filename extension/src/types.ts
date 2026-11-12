@@ -12,6 +12,9 @@ export interface Client {
 }
 
 export interface Property {
+  readonly googleAccountEmail?: string | null;
+  readonly bingAccountEmail?: string | null;
+  readonly naverAccountEmail?: string | null;
   readonly id: string;
   readonly clientId: string;
   readonly name: string;
@@ -39,6 +42,9 @@ export interface ClientRead {
 }
 
 export interface SiteRead {
+  readonly google_account_email?: string | null;
+  readonly bing_account_email?: string | null;
+  readonly naver_account_email?: string | null;
   readonly id: string;
   readonly client_id: string;
   readonly name: string;
@@ -87,6 +93,9 @@ export interface SitemapSubmission {
 }
 
 export interface SiteWrite {
+  readonly google_account_email: string | null;
+  readonly bing_account_email: string | null;
+  readonly naver_account_email: string | null;
   readonly client_id: string;
   readonly name: string;
   readonly url: string;
@@ -96,6 +105,20 @@ export interface SiteWrite {
   readonly indexnow_key: string | null;
   readonly indexnow_key_location: string | null;
 }
+
+export interface AuthAccountRead {
+  readonly email: string;
+  readonly google_configured: boolean;
+  readonly bing_configured: boolean;
+}
+
+export interface SiteAuthAccounts {
+  readonly google_account_email: string | null;
+  readonly bing_account_email: string | null;
+  readonly naver_account_email: string | null;
+}
+
+export type SiteAuthAccountsUpdate = Partial<SiteAuthAccounts>;
 
 export interface Article {
   readonly name: string;

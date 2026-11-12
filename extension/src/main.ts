@@ -17,6 +17,7 @@ import type { ClientDashboard } from './types';
 import type { FormDrafts } from './forms';
 import type {
   Activity,
+  AuthAccountRead,
   AppState,
   Client,
   Engine,
@@ -26,6 +27,8 @@ import type {
   Property,
   View,
   SiteRead,
+  SiteAuthAccounts,
+  SiteAuthAccountsUpdate,
   PageOutcome,
   PageCreateResult,
   InspectionTarget,
@@ -124,6 +127,16 @@ let dashboardError: ApiError | null = null;
 let dashboardVersion = 0;
 let loading = !demo;
 let loadError: ApiError | null = null;
+let authAccounts: readonly AuthAccountRead[] = [];
+let authAccountsLoading = false;
+let authAccountsError: ApiError | null = null;
+let accountEditor: {
+  readonly siteId: string;
+  readonly clientId: string;
+  readonly formId: string;
+  readonly original: SiteAuthAccounts;
+} | null = null;
+let accountEditorError: ApiError | null = null;
 let settingsLoading = false;
 let settingsError: ApiError | null = null;
 let settingsRequest = 0;
@@ -275,7 +288,11 @@ function selectProperty(id: string): void {
 function selectClient(id: string): void {
   if (!clients.some((client): boolean => client.id === id)) return;
 
-  if (id !== state.clientId) activities = [];
+  if (id !== state.clientId) {
+    activities = [];
+    accountEditor = null;
+    accountEditorError = null;
+  }
 
   state = { ...state, ...clientSelection(properties, id), notice: '' };
   dashboardData = null;
@@ -315,6 +332,10 @@ function addActivity(label: string): void {
 
 // 상태를 새 객체로 교체하고 화면을 다시 표시합니다.
 function update(patch: Partial<AppState>): void {
+  if (patch.view && patch.view !== state.view) {
+    accountEditor = null;
+    accountEditorError = null;
+  }
   state = { ...state, ...('notice' in patch ? { noticeTone: 'success' as const } : {}), ...patch };
   render();
 }
@@ -451,9 +472,37 @@ function registrationView(): string {
       <label>도메인 URL <span class="required">*</span><input name="origin" type="url" required placeholder="https://example.com"><span class="field-help">글 주소가 아닌 사이트의 루트 주소를 입력하세요.</span></label>
       <fieldset><legend>사이트 소유 구분</legend><div class="radio-row"><label class="radio-label"><input type="radio" name="ownership" value="client" checked>고객사 사이트</label><label class="radio-label"><input type="radio" name="ownership" value="internal">우리 팀 사이트</label></div></fieldset>
       <div class="two-fields"><label>사용 플랫폼<select name="cmsType"><option value="">미지정</option><option value="wordpress">WordPress</option><option value="notion">Notion</option><option value="custom">자체 제작</option></select></label><label>인증 파일·태그 설치<select name="editable"><option value="">모름</option><option value="true">설치 가능</option><option value="false">설치 불가능</option></select></label></div><div class="inline-note">사이트 정보와 선택한 IndexNow 설정을 우리 DB에 저장합니다. 검색엔진 사이트 등록·소유 확인은 별도 작업입니다.</div>
+      ${authAccountFields()}
       <fieldset class="indexnow-fields"><legend>IndexNow 설정 <span class="muted small">선택 · 네이버 / Bing 공통</span></legend>${indexNowFields()}<p class="field-help">키 파일은 관리 서버가 아닌 대상 도메인에 공개해야 합니다. 두 항목을 비우면 설정 없이 사이트만 등록합니다.</p></fieldset>
       <div class="form-error" id="registration-error"></div><div class="form-footer"><span class="muted small">* 필수 항목</span><button class="button primary" type="submit">${icon('plus')}사이트 등록</button></div></form></section>
       <aside class="context-column"><h3>등록 후 진행 과정</h3><ol class="vertical-steps"><li><strong>사이트 정보 등록</strong><p>고객사와 도메인을 연결합니다.</p></li><li><strong>소유권 또는 접근 권한 확인</strong><p>검색엔진별로 인증 파일·태그 또는 부여된 권한을 확인합니다.</p></li><li><strong>검색엔진 연결</strong><p>연결이 완료되면 발행 알림과 색인 상태 조회를 진행합니다.</p></li></ol><div class="context-note">${icon('info')}<p>${demo ? '예시 사이트 목록만 추가합니다.' : '고객사와 사이트 정보를 DB에 저장합니다.'} 실제 검색엔진 등록·소유 확인은 실행하지 않습니다.</p></div></aside></div>`;
+}
+
+// 등록된 계정 이메일과 엔진별 파일 참조 등록 여부를 선택지로 표시합니다.
+function authAccountOptions(
+  engine: 'google' | 'bing', selected: string | null = null, formId = 'registration-form',
+): string {
+  const scope = `${state.clientId}:${state.view}:${state.propertyId}:${state.route}`;
+  const previous = formDrafts.get(`${scope}:${formId}`)?.[`${engine}AccountEmail`] ?? selected;
+  const missing = typeof previous === 'string' && previous &&
+    !authAccounts.some((account): boolean => account.email === previous)
+    ? `<option value="${escape(previous)}" selected>${escape(previous)} · 목록에서 찾을 수 없음</option>` : '';
+  return `<option value="" ${previous ? '' : 'selected'}>연결 안 함</option>` + missing + authAccounts.map((account): string =>
+    `<option value="${escape(account.email)}" ${account.email === previous ? 'selected' : ''}>${escape(account.email)} · ${account[`${engine}_configured`] ? '참조 등록됨' : '참조 미등록'}</option>`,
+  ).join('');
+}
+
+// 실제 키 입력 없이 API 계정과 GUI 참고 이메일을 구분해서 받습니다.
+function authAccountFields(values?: SiteAuthAccounts, formId = 'registration-form'): string {
+  return `<fieldset class="auth-account-fields"><legend>검색엔진 계정 <span class="muted small">선택</span></legend>
+    <button type="button" class="button secondary" id="refresh-auth-accounts">계정 목록 새로고침</button>
+    ${authAccountsLoading ? '<p class="field-help" role="status">인증 계정 목록을 불러오는 중…</p>' : ''}
+    ${authAccountsError ? errorPanel(authAccountsError, '인증 계정 목록을 불러오지 못했습니다') : ''}
+    ${!authAccountsLoading && !authAccountsError && !authAccounts.length ? `<p class="field-help">${demo ? '예시 모드에서는 인증 계정을 연결하지 않습니다.' : '등록된 인증 계정이 없습니다. 연결 없이 사이트를 등록할 수 있습니다.'}</p>` : ''}
+    <div class="two-fields"><label>Google 계정<select name="googleAccountEmail">${authAccountOptions('google', values?.google_account_email, formId)}</select></label>
+    <label>Bing 계정<select name="bingAccountEmail">${authAccountOptions('bing', values?.bing_account_email, formId)}</select></label></div>
+    <p class="field-help">참조 등록 여부는 실제 인증 성공 여부와 다릅니다. 사이트별 API 인증 적용은 아직 준비 중입니다.</p>
+    <label>네이버 계정 이메일<input name="naverAccountEmail" type="email" value="${escape(values?.naver_account_email ?? '')}" placeholder="선택 입력"><span class="field-help">GUI 작업 참고용입니다. 브라우저 로그인 계정을 변경하지 않습니다.</span></label></fieldset>`;
 }
 
 // 신규 등록과 기존 사이트 설정에서 공통으로 사용할 입력칸을 표시합니다.
@@ -494,9 +543,19 @@ function notificationView(): string {
     <div id="batch-results">${outcomeView()}</div>${activityView()}`;
 }
 
+// 선택한 고객사의 사이트별 계정 연결을 읽기 전용으로 표시합니다.
+function siteAccountsView(): string {
+  const sites = clientProperties(properties, state.clientId);
+  return `<section class="report"><div class="report-header"><h2>사이트별 계정 연결</h2></div><div class="table-scroll"><table class="client-table"><thead><tr><th>사이트</th><th>Google</th><th>Bing</th><th>네이버 · 참고용</th><th>작업</th></tr></thead><tbody>${sites.map((site): string => {
+    const editor = accountEditor?.siteId === site.id && accountEditor.clientId === state.clientId ? accountEditor : null;
+    return `<tr><td>${escape(site.name)}</td><td>${escape(site.googleAccountEmail ?? '미연결')}</td><td>${escape(site.bingAccountEmail ?? '미연결')}</td><td>${escape(site.naverAccountEmail ?? '미입력')}</td><td><button type="button" class="button secondary" data-edit-accounts="${escape(site.id)}" aria-expanded="${!!editor}">계정 변경</button></td></tr>
+      ${editor ? `<tr><td colspan="5"><form id="${escape(editor.formId)}" data-account-editor class="work-form"><h3>${escape(site.name)} 계정 변경</h3><p class="field-help">${escape(site.siteUrl)}</p>${authAccountFields(editor.original, editor.formId)}<div id="account-editor-error">${accountEditorError ? errorPanel(accountEditorError, '사이트 계정을 변경하지 못했습니다') : ''}</div><div><button type="submit" class="button primary" id="save-site-accounts">저장</button> <button type="button" class="button secondary" id="cancel-site-accounts">취소</button></div></form></td></tr>` : ''}`;
+  }).join('') || '<tr><td colspan="5">등록된 사이트가 없습니다.</td></tr>'}</tbody></table></div></section>`;
+}
+
 // 고객사 목록과 신규 고객사 입력 화면을 표시합니다.
 function clientsView(): string {
-  return `<div class="page-heading"><div><h1>고객사 관리</h1><p>팀에서 관리하는 고객사와 연결된 사이트를 확인하세요.</p></div></div>
+  return `<div class="page-heading"><div><h1>고객사 관리</h1><p>팀에서 관리하는 고객사와 연결된 사이트를 확인하세요.</p></div></div>${siteAccountsView()}
     <section class="report"><div class="report-header"><h2>고객사 목록 <span class="count">${clients.length}</span></h2></div><div class="table-scroll"><table class="client-table"><thead><tr><th>고객사</th><th>담당자</th><th>등록된 사이트</th></tr></thead><tbody>${clients.map((client: Client): string => `<tr><td><strong>${escape(client.name)}</strong></td><td>${escape(client.manager || '미지정')}</td><td>${properties.filter((item: Property): boolean => item.clientId === client.id).length}개</td></tr>`).join('')}</tbody></table></div></section>
     <section class="report form-report"><div class="report-header"><h2>고객사 추가</h2></div><form id="client-form" class="work-form"><div class="two-fields"><label>고객사 이름 *<input name="clientName" required maxlength="100" placeholder="고객사 이름"></label><label>담당자<input name="manager" maxlength="100" placeholder="선택 입력"></label></div><div class="form-error" id="client-error"></div><div class="form-footer"><span class="muted small">${demo ? '예시 목록에 추가됩니다' : '고객사 정보를 DB에 저장합니다'}</span><button class="button primary" type="submit">${icon('plus')}고객사 추가</button></div></form></section>`;
 }
@@ -635,6 +694,9 @@ function showError(selector: string, error: unknown): void {
     key_location: 'indexnowLocation',
     indexnow_key: 'indexnowKey',
     indexnow_key_location: 'indexnowLocation',
+    google_account_email: 'googleAccountEmail',
+    bing_account_email: 'bingAccountEmail',
+    naver_account_email: 'naverAccountEmail',
   };
   let first: HTMLElement | null = null;
 
@@ -715,6 +777,9 @@ function mapSite(item: SiteRead): Property {
     active: item.is_active,
     owned: item.owner_type === 'internal',
     indexNow: null,
+    googleAccountEmail: item.google_account_email ?? null,
+    bingAccountEmail: item.bing_account_email ?? null,
+    naverAccountEmail: item.naver_account_email ?? null,
   };
 }
 
@@ -840,6 +905,22 @@ async function loadSettings(): Promise<void> {
   }
 }
 
+// 계정 목록 조회 실패를 빈 목록과 구분하고 등록 폼의 다른 입력은 보존합니다.
+async function loadAuthAccounts(): Promise<void> {
+  if (demo || authAccountsLoading) return;
+  authAccountsLoading = true;
+  authAccountsError = null;
+  if (state.view === 'register' || (state.view === 'clients' && accountEditor)) render();
+  try {
+    authAccounts = await api.listAuthAccounts();
+  } catch (error: unknown) {
+    authAccountsError = asAppError(error);
+  } finally {
+    authAccountsLoading = false;
+    if (state.view === 'register' || (state.view === 'clients' && accountEditor)) render();
+  }
+}
+
 // 고객사와 메인 사이트 목록을 서버에서 읽고 실패 시 예시 데이터로 대체하지 않습니다.
 async function loadWorkspace(): Promise<void> {
   if (loading && clients.length > 0) return;
@@ -937,7 +1018,21 @@ function applyAvailability(): void {
     '#registration-form button[type="submit"]',
   );
 
-  if (registration) registration.disabled = !state.clientId;
+  if (registration) registration.disabled = !state.clientId || authAccountsLoading || !!authAccountsError;
+  app.querySelectorAll<HTMLSelectElement>(
+    '[name="googleAccountEmail"], [name="bingAccountEmail"]',
+  ).forEach((select): void => {
+    select.disabled = demo || authAccountsLoading || !!authAccountsError;
+  });
+  const refreshAccounts = app.querySelector<HTMLButtonElement>('#refresh-auth-accounts');
+  if (refreshAccounts) refreshAccounts.disabled = demo || authAccountsLoading;
+  const editForm = app.querySelector<HTMLFormElement>('[data-account-editor]');
+  const editSave = app.querySelector<HTMLButtonElement>('#save-site-accounts');
+  if (editSave) editSave.disabled = demo || authAccountsLoading || !!authAccountsError ||
+    !editForm || !accountEditor || !Object.keys(accountChanges(editForm, accountEditor.original)).length;
+  app.querySelectorAll<HTMLButtonElement>('[data-edit-accounts]').forEach((button): void => {
+    button.disabled = demo;
+  });
 
   const search = app.querySelector<HTMLInputElement>('#url-inspect');
 
@@ -1082,11 +1177,59 @@ function inspectUrl(event: SubmitEvent): void {
   }
 }
 
+// 폼과 편집 시작 시 값을 비교해 변경된 필드만 반환합니다.
+function accountChanges(form: HTMLFormElement, original: SiteAuthAccounts): SiteAuthAccountsUpdate {
+  const data = new FormData(form);
+  const fields = [
+    ['google_account_email', 'googleAccountEmail'],
+    ['bing_account_email', 'bingAccountEmail'],
+    ['naver_account_email', 'naverAccountEmail'],
+  ] as const;
+  return Object.fromEntries(fields.flatMap(([key, name]) => {
+    const value = String(data.get(name) ?? '').trim() || null;
+    return value === original[key] ? [] : [[key, value]];
+  }));
+}
+
+// 편집 대상 사이트를 고정해 차이만 저장하고 실패 시 입력을 유지합니다.
+async function saveSiteAccounts(event: SubmitEvent): Promise<void> {
+  event.preventDefault();
+  if (pending || demo || !accountEditor || authAccountsLoading || authAccountsError) return;
+  const editor = accountEditor;
+  const form = event.currentTarget as HTMLFormElement;
+  const changes = accountChanges(form, editor.original);
+  if (!Object.keys(changes).length) return;
+  accountEditorError = null;
+  try {
+    for (const key of ['google_account_email', 'bing_account_email'] as const) {
+      const email = changes[key];
+      if (email && !authAccounts.some((account): boolean => account.email === email))
+        throw new Error('목록에 없는 인증 계정입니다. 사용할 계정을 다시 선택하세요.');
+    }
+    setPending(true);
+    const saved = await api.updateSiteAuthAccounts(editor.siteId, changes);
+    if (saved.client_id !== editor.clientId) throw new ApiError(0, '계정 변경 응답의 고객사가 다릅니다.', {
+      code: 'INVALID_RESPONSE', operation: 'save',
+    });
+    properties = properties.map((site): Property => site.id === editor.siteId
+      ? { ...mapSite(saved), indexNow: site.indexNow } : site);
+    if (accountEditor?.formId === editor.formId) {
+      accountEditor = null;
+      state = { ...state, notice: '사이트 계정 연결을 저장했습니다.', noticeTone: 'success' };
+    }
+  } catch (error: unknown) {
+    if (accountEditor?.formId === editor.formId) accountEditorError = asAppError(error, 'save');
+  } finally {
+    pending = false;
+    render();
+  }
+}
+
 // 새 도메인을 예시 목록에 추가하되 검색엔진 등록 완료로 처리하지 않습니다.
 async function registerSite(event: SubmitEvent): Promise<void> {
   event.preventDefault();
 
-  if (pending || !state.clientId) return;
+  if (pending || !state.clientId || authAccountsLoading || authAccountsError) return;
 
   const form = event.currentTarget as HTMLFormElement;
 
@@ -1108,6 +1251,11 @@ async function registerSite(event: SubmitEvent): Promise<void> {
       String(data.get('indexnowLocation') ?? ''),
     );
     const editable = String(data.get('editable') ?? '');
+    for (const field of ['googleAccountEmail', 'bingAccountEmail']) {
+      const email = String(data.get(field) ?? '');
+      if (email && !authAccounts.some((account): boolean => account.email === email))
+        throw new Error('목록에 없는 인증 계정입니다. 사용할 계정을 다시 선택하세요.');
+    }
     const payload = {
       client_id: state.clientId,
       name,
@@ -1116,6 +1264,9 @@ async function registerSite(event: SubmitEvent): Promise<void> {
         data.get('ownership') === 'internal' ? ('internal' as const) : ('client' as const),
       cms_type: String(data.get('cmsType') ?? '') || null,
       can_edit_site: editable === '' ? null : editable === 'true',
+      google_account_email: String(data.get('googleAccountEmail') ?? '').trim() || null,
+      bing_account_email: String(data.get('bingAccountEmail') ?? '').trim() || null,
+      naver_account_email: String(data.get('naverAccountEmail') ?? '').trim() || null,
       indexnow_key: indexNow?.key ?? null,
       indexnow_key_location: indexNow?.keyLocation ?? null,
     };
@@ -1131,6 +1282,9 @@ async function registerSite(event: SubmitEvent): Promise<void> {
           siteUrl: url.href,
           active: true,
           owned: payload.owner_type === 'internal',
+          googleAccountEmail: payload.google_account_email,
+          bingAccountEmail: payload.bing_account_email,
+          naverAccountEmail: payload.naver_account_email,
           indexNow: indexNow
             ? { configured: true, key_location: indexNow.keyLocation }
             : { configured: false, key_location: null },
@@ -1564,6 +1718,37 @@ async function copyRequest(): Promise<void> {
 // 현재 화면의 폼과 탐색 동작을 연결합니다.
 function bindEvents(): void {
   bindErrorActions(app);
+  app.querySelectorAll<HTMLButtonElement>('[data-edit-accounts]').forEach((button): void => {
+    button.addEventListener('click', (): void => {
+      if (pending || demo) return;
+      const site = properties.find((item): boolean => item.id === button.dataset.editAccounts && item.clientId === state.clientId);
+      if (!site) return;
+      accountEditor = {
+        siteId: site.id, clientId: site.clientId, formId: `site-accounts-${crypto.randomUUID()}`,
+        original: {
+          google_account_email: site.googleAccountEmail ?? null,
+          bing_account_email: site.bingAccountEmail ?? null,
+          naver_account_email: site.naverAccountEmail ?? null,
+        },
+      };
+      accountEditorError = null;
+      render();
+      void loadAuthAccounts();
+    });
+  });
+  const accountForm = app.querySelector<HTMLFormElement>('[data-account-editor]');
+  accountForm?.addEventListener('submit', (event): void => { void saveSiteAccounts(event); });
+  accountForm?.addEventListener('input', (): void => { applyAvailability(); });
+  accountForm?.addEventListener('change', (): void => { applyAvailability(); });
+  app.querySelector<HTMLButtonElement>('#cancel-site-accounts')?.addEventListener('click', (): void => {
+    if (pending) return;
+    accountEditor = null;
+    accountEditorError = null;
+    render();
+  });
+  app.querySelector<HTMLButtonElement>('#refresh-auth-accounts')?.addEventListener('click', (): void => {
+    void loadAuthAccounts();
+  });
   app
     .querySelectorAll<HTMLButtonElement>('[data-view]')
     .forEach((button: HTMLButtonElement): void => {
@@ -1571,6 +1756,7 @@ function bindEvents(): void {
         capturePublicationDraft();
         update({ view: button.dataset.view as View, notice: '', mobileNav: false });
         if (state.view === 'dashboard') void loadDashboard();
+        if (state.view === 'register') void loadAuthAccounts();
       });
     });
   app.querySelector<HTMLButtonElement>('#menu-toggle')?.addEventListener('click', (): void => {

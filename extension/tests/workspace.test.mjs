@@ -46,7 +46,8 @@ async function workspace(override = () => undefined, query = '', chromeClient) {
     const path = new URL(url, 'http://localhost');
     let data;
 
-    if (path.pathname === '/api/clients') data = { items: clients };
+    if (path.pathname === '/api/auth-accounts') data = { items: [] };
+    else if (path.pathname === '/api/clients') data = { items: clients };
     else if (path.pathname === '/api/sites') data = { items: sites.filter((site) => site.client_id === path.searchParams.get('client_id')) };
     else if (path.pathname.endsWith('/dashboard')) {
       const id = path.pathname.split('/')[3];
@@ -76,6 +77,190 @@ async function workspace(override = () => undefined, query = '', chromeClient) {
 
   return { dom, window, document, calls, choose, navigate };
 }
+
+// 기존 계정이 있는 사이트와 등록 계정을 가짜 API로 준비합니다.
+async function accountWorkspace(patchHandler) {
+  return workspace((url, options) => {
+    if (url.startsWith('/api/auth-accounts')) return new Response(JSON.stringify({ items: [
+      { email: 'old@example.com', google_configured: true, bing_configured: false },
+      { email: 'new@example.com', google_configured: true, bing_configured: false },
+      { email: 'bing@example.com', google_configured: false, bing_configured: true },
+    ] }));
+    if (url.startsWith('/api/sites?')) {
+      const clientId = new URL(url, 'http://localhost').searchParams.get('client_id');
+      return new Response(JSON.stringify({ items: sites.filter((site) => site.client_id === clientId).map((site) => ({
+        ...site, google_account_email: 'old@example.com', bing_account_email: 'bing@example.com', naver_account_email: 'naver@example.com',
+      })) }));
+    }
+    if (options.method === 'PATCH') return patchHandler(url, options);
+    return undefined;
+  });
+}
+
+// 기본값·차이만 전송·연결 해제·성공 후 표 갱신과 중복 제출 방지를 확인합니다.
+test('기존 사이트 계정 변경은 차이만 PATCH로 저장하고 표를 갱신한다', async () => {
+  let complete;
+  const pending = new Promise((resolve) => { complete = resolve; });
+  const app = await accountWorkspace(() => pending);
+  try {
+    app.navigate('clients');
+    app.document.querySelector('[data-edit-accounts="a1"]').click();
+    await waitFor(() => app.document.querySelector('[name="googleAccountEmail"]')?.options.length === 4);
+    assert.equal(app.document.querySelector('[name="googleAccountEmail"]').value, 'old@example.com');
+    assert.equal(app.document.querySelector('[name="bingAccountEmail"]').value, 'bing@example.com');
+    assert.ok(app.document.querySelector('#save-site-accounts').disabled);
+    app.choose('[name="googleAccountEmail"]', 'new@example.com');
+    const naver = app.document.querySelector('[name="naverAccountEmail"]');
+    naver.value = '';
+    naver.dispatchEvent(new app.window.Event('input', { bubbles: true }));
+    assert.ok(!app.document.querySelector('#save-site-accounts').disabled);
+    const form = app.document.querySelector('[data-account-editor]');
+    form.dispatchEvent(new app.window.Event('submit', { bubbles: true, cancelable: true }));
+    form.dispatchEvent(new app.window.Event('submit', { bubbles: true, cancelable: true }));
+    const patches = app.calls.filter((call) => call.options.method === 'PATCH');
+    assert.equal(patches.length, 1);
+    assert.equal(patches[0].url, '/api/sites/a1/auth-accounts');
+    assert.deepEqual(JSON.parse(patches[0].options.body), { google_account_email: 'new@example.com', naver_account_email: null });
+    complete(new Response(JSON.stringify({ ...sites[0], google_account_email: 'new@example.com', bing_account_email: 'bing@example.com', naver_account_email: null })));
+    await waitFor(() => !app.document.querySelector('[data-account-editor]'));
+    const row = app.document.querySelector('[data-edit-accounts="a1"]').closest('tr').textContent;
+    assert.match(row, /new@example.com/);
+    assert.match(row, /bing@example.com/);
+    assert.ok(!row.includes('naver@example.com'));
+  } finally {
+    app.dom.window.close();
+  }
+});
+
+// 저장 오류는 초안을 보존하고 취소 후 재진입하면 저장된 값을 표시합니다.
+test('사이트 계정 변경 실패는 입력을 유지하고 취소는 초안을 버린다', async () => {
+  const app = await accountWorkspace(() => new Response(JSON.stringify({ detail: { code: 'AUTH_ACCOUNT_NOT_FOUND', message: '인증 계정을 찾을 수 없습니다.' } }), { status: 404 }));
+  try {
+    app.navigate('clients');
+    app.document.querySelector('[data-edit-accounts="a1"]').click();
+    await waitFor(() => app.document.querySelector('[name="googleAccountEmail"]')?.options.length === 4);
+    app.choose('[name="googleAccountEmail"]', 'new@example.com');
+    app.document.querySelector('[data-account-editor]').dispatchEvent(new app.window.Event('submit', { bubbles: true, cancelable: true }));
+    await waitFor(() => app.document.querySelector('#account-editor-error')?.textContent.includes('인증 계정을 찾을 수 없습니다.'));
+    assert.equal(app.document.querySelector('[name="googleAccountEmail"]').value, 'new@example.com');
+    app.document.querySelector('#cancel-site-accounts').click();
+    assert.ok(!app.document.querySelector('[data-account-editor]'));
+    app.document.querySelector('[data-edit-accounts="a1"]').click();
+    await waitFor(() => !app.document.querySelector('[name="googleAccountEmail"]').disabled);
+    assert.equal(app.document.querySelector('[name="googleAccountEmail"]').value, 'old@example.com');
+    assert.ok(app.document.querySelector('#save-site-accounts').disabled);
+    app.choose('#client-select', 'b');
+    assert.ok(!app.document.querySelector('[data-account-editor]'));
+  } finally {
+    app.dom.window.close();
+  }
+});
+
+// 이메일 선택과 미선택을 요청에 반영하고 등록 결과를 고객사 화면에서 확인합니다.
+test('사이트 등록에서 엔진별 계정을 선택하고 비밀값 없이 연결 정보를 표시한다', async () => {
+  const accounts = [
+    { email: 'google@example.com', google_configured: true, bing_configured: false },
+    { email: 'bing@example.com', google_configured: false, bing_configured: true },
+  ];
+  const app = await workspace((url, options) => {
+    if (url.startsWith('/api/auth-accounts')) return new Response(JSON.stringify({ items: accounts }));
+    if (url === '/api/sites' && options.method === 'POST') {
+      return new Response(JSON.stringify({ ...JSON.parse(options.body), id: 'new-site', is_active: true }), { status: 201 });
+    }
+  });
+  try {
+    app.navigate('register');
+    await waitFor(() => app.document.querySelector('[name="googleAccountEmail"]')?.options.length === 3);
+    assert.match(app.document.querySelector('[name="googleAccountEmail"]').textContent, /google@example.com · 참조 등록됨/);
+    assert.match(app.document.querySelector('[name="googleAccountEmail"]').textContent, /bing@example.com · 참조 미등록/);
+    app.document.querySelector('[name="siteName"]').value = '새 사이트';
+    app.document.querySelector('[name="origin"]').value = 'https://new.example/';
+    app.choose('[name="googleAccountEmail"]', 'google@example.com');
+    app.choose('[name="bingAccountEmail"]', 'bing@example.com');
+    app.document.querySelector('[name="naverAccountEmail"]').value = 'naver@example.com';
+    app.document.querySelector('#registration-form').dispatchEvent(new app.window.Event('submit', { bubbles: true, cancelable: true }));
+    await waitFor(() => app.document.querySelector('.success-notice')?.textContent.includes('새 사이트'));
+    const payload = JSON.parse(app.calls.find((call) => call.url === '/api/sites' && call.options.method === 'POST').options.body);
+    assert.equal(payload.google_account_email, 'google@example.com');
+    assert.equal(payload.bing_account_email, 'bing@example.com');
+    assert.equal(payload.naver_account_email, 'naver@example.com');
+    assert.ok(!('google_secret_ref' in payload));
+    app.navigate('clients');
+    const table = app.document.querySelector('.main-content').textContent;
+    for (const email of ['google@example.com', 'bing@example.com', 'naver@example.com']) assert.ok(table.includes(email));
+  } finally {
+    app.dom.window.close();
+  }
+});
+
+// 새로고침 중 삭제된 계정을 미연결로 바꾸지 않고 명시적인 재선택을 요구합니다.
+test('목록에서 사라진 선택 계정은 등록 전에 다시 선택해야 한다', async () => {
+  let accounts = [{ email: 'old@example.com', google_configured: true, bing_configured: false }];
+  const app = await workspace((url) => url.startsWith('/api/auth-accounts')
+    ? new Response(JSON.stringify({ items: accounts })) : undefined);
+  try {
+    app.navigate('register');
+    await waitFor(() => app.document.querySelector('[name="googleAccountEmail"]')?.options.length === 2);
+    app.choose('[name="googleAccountEmail"]', 'old@example.com');
+    app.document.querySelector('[name="siteName"]').value = '재선택 테스트';
+    app.document.querySelector('[name="origin"]').value = 'https://new.example/';
+    accounts = [];
+    app.document.querySelector('#refresh-auth-accounts').click();
+    await waitFor(() => app.document.querySelector('[name="googleAccountEmail"]').textContent.includes('목록에서 찾을 수 없음'));
+    assert.equal(app.document.querySelector('[name="googleAccountEmail"]').value, 'old@example.com');
+    app.document.querySelector('#registration-form').dispatchEvent(new app.window.Event('submit', { bubbles: true, cancelable: true }));
+    assert.match(app.document.querySelector('#registration-error').textContent, /다시 선택/);
+    assert.ok(app.calls.every((call) => call.options.method === 'GET'));
+  } finally {
+    app.dom.window.close();
+  }
+});
+
+// 계정이 없어도 미연결 등록을 허용하고 이메일 세 개를 명시적으로 null 전송합니다.
+test('계정 미선택 사이트 등록은 null을 전송한다', async () => {
+  const app = await workspace((url, options) => {
+    if (url === '/api/sites' && options.method === 'POST')
+      return new Response(JSON.stringify({ ...JSON.parse(options.body), id: 'new-site', is_active: true }), { status: 201 });
+  });
+  try {
+    app.navigate('register');
+    await waitFor(() => app.document.querySelector('#registration-form').textContent.includes('등록된 인증 계정이 없습니다.'));
+    app.document.querySelector('[name="siteName"]').value = '미연결 사이트';
+    app.document.querySelector('[name="origin"]').value = 'https://new.example/';
+    app.document.querySelector('#registration-form').dispatchEvent(new app.window.Event('submit', { bubbles: true, cancelable: true }));
+    await waitFor(() => app.calls.some((call) => call.options.method === 'POST'));
+    const payload = JSON.parse(app.calls.find((call) => call.options.method === 'POST').options.body);
+    assert.equal(payload.google_account_email, null);
+    assert.equal(payload.bing_account_email, null);
+    assert.equal(payload.naver_account_email, null);
+    await waitFor(() => app.document.querySelector('.success-notice'));
+  } finally {
+    app.dom.window.close();
+  }
+});
+
+// 목록 실패는 빈 목록으로 취급하지 않으며 재조회 후 기존 폼 입력을 유지합니다.
+test('계정 조회 실패 후 새로고침으로 복구하고 폼 입력을 보존한다', async () => {
+  let failed = true;
+  const app = await workspace((url) => {
+    if (url.startsWith('/api/auth-accounts')) return failed
+      ? new Response(JSON.stringify({ detail: '조회 실패' }), { status: 503 })
+      : new Response(JSON.stringify({ items: [] }));
+  });
+  try {
+    app.navigate('register');
+    await waitFor(() => app.document.querySelector('#registration-form').textContent.includes('인증 계정 목록을 불러오지 못했습니다'));
+    assert.ok(app.document.querySelector('#registration-form button[type="submit"]').disabled);
+    app.document.querySelector('[name="siteName"]').value = '보존할 이름';
+    failed = false;
+    app.document.querySelector('#refresh-auth-accounts').click();
+    await waitFor(() => !app.document.querySelector('#registration-form button[type="submit"]').disabled);
+    assert.equal(app.document.querySelector('[name="siteName"]').value, '보존할 이름');
+    assert.ok(app.calls.every((call) => call.options.method === 'GET'));
+  } finally {
+    app.dom.window.close();
+  }
+});
 
 test('첫 화면·고객사 전환·블로그 이동·빈 고객사 화면이 올바른 범위를 표시한다', async () => {
   const app = await workspace();
