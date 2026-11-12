@@ -16,6 +16,9 @@ from app.engines.inspection import Inspector, GoogleInspectionAuthError
 from app.models.site import Site
 from app.models.site_engine_status import SiteEngineStatus
 from app.schemas.inspection import InspectionEngine, InspectionRead
+from app.services.auth_account import (
+    AuthAccountNotFoundError, SecretReferenceNotFoundError, get_secret_reference,
+)
 
 
 class InspectionTargetNotFoundError(Exception):
@@ -41,7 +44,7 @@ class InspectionUpstreamError(Exception):
 # 저장된 URL과 부모 관계를 검사하며 외부 호출 전에 조회 트랜잭션을 닫습니다.
 async def _get_context(
     session: AsyncSession, site_id: UUID, engine: InspectionEngine,
-) -> tuple[str, str]:
+) -> tuple[str, str, str]:
     async with session.begin():
         target = await session.scalar(select(Site).where(Site.id == site_id).with_for_update(read=True))
         if target is None:
@@ -79,7 +82,24 @@ async def _get_context(
         except (ValidationError, ValueError):
             raise InspectionScopeError("검사할 URL 형식이 올바르지 않습니다.") from None
 
-        return parent.url, target.url
+        email = parent.google_account_email if engine == "google" else parent.bing_account_email
+        if not email:
+            raise InspectionUpstreamError(
+                "AUTH_ACCOUNT_NOT_LINKED", "메인 사이트에 해당 검색엔진의 인증 계정을 연결하세요.", 503,
+            )
+
+        try:
+            reference = await get_secret_reference(session, email=email, engine=engine)
+        except AuthAccountNotFoundError:
+            raise InspectionUpstreamError(
+                "AUTH_ACCOUNT_NOT_FOUND", "연결된 검색엔진 인증 계정을 찾을 수 없습니다.", 503,
+            ) from None
+        except SecretReferenceNotFoundError:
+            raise InspectionUpstreamError(
+                "SECRET_REFERENCE_NOT_FOUND", "인증 계정에 해당 검색엔진의 비밀파일 참조를 등록하세요.", 503,
+            ) from None
+
+        return parent.url, target.url, reference
 
 
 # 외부 오류는 고정 메시지로 변환해 원본 키·토큰·본문이 저장되지 않게 합니다.
@@ -104,12 +124,12 @@ def _public_error(error: GoogleEngineError | BingEngineError) -> InspectionUpstr
 async def run_inspection(
     session: AsyncSession, site_id: UUID, engine: InspectionEngine, *, inspector: Inspector,
 ) -> InspectionRead:
-    main_url, page_url = await _get_context(session, site_id, engine)
+    main_url, page_url, reference = await _get_context(session, site_id, engine)
 
     started_at = datetime.now(timezone.utc)
 
     try:
-        result = await inspector(engine, main_url, page_url)
+        result = await inspector(engine, main_url, page_url, reference)
     except (GoogleEngineError, BingEngineError) as error:
         public_error = _public_error(error)
 

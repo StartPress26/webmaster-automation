@@ -117,3 +117,48 @@ def test_auth_error_codes(token_file: Path, monkeypatch: pytest.MonkeyPatch) -> 
         load_credentials(token_file.parents[1])
 
     assert missing.value.code == "configuration_missing"
+
+
+# 명시한 계정의 파일은 전역 설정을 무시하며 갱신 후 해당 파일에만 저장합니다.
+def test_account_reference_refreshes_only_selected_file(token_file: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    root = token_file.parents[1]
+    selected = token_file.parent / "google" / "user@example.com.json"
+    selected.parent.mkdir()
+    original = token_file.read_text()
+    selected.write_text(json.dumps(json.loads(original) | {"expiry": "2000-01-01T00:00:00Z"}))
+    monkeypatch.setenv("GOOGLE_TOKEN_FILE", ".secrets/missing-global.json")
+
+    # 네트워크 요청 없이 선택한 토큰을 갱신합니다.
+    def refresh(credentials: Credentials, request: object) -> None:
+        credentials.token = "selected-account-token"
+        credentials.expiry = (datetime.now(timezone.utc) + timedelta(hours=1)).replace(tzinfo=None)
+
+    monkeypatch.setattr(Credentials, "refresh", refresh)
+    credentials = load_credentials(root, secret_reference="google/user@example.com.json")
+    assert credentials.token == "selected-account-token"
+    assert json.loads(selected.read_text())["token"] == "selected-account-token"
+    assert token_file.read_text() == original
+    assert stat.S_IMODE(selected.stat().st_mode) == 0o600
+
+
+# 계정 파일의 경로·누락·형식 오류는 공통 계정으로 대체하지 않습니다.
+@pytest.mark.parametrize("reference, contents, code", [
+    ("../outside.json", None, "invalid_token_path"),
+    ("google/missing.json", None, "token_unreadable"),
+    ("google/invalid.json", '{"token":"private-token"', "token_format"),
+    ("google/invalid.json", "[]", "token_format"),
+])
+def test_account_reference_failure(
+    token_file: Path, reference: str, contents: str | None, code: str,
+) -> None:
+    root = token_file.parents[1]
+    if contents is not None:
+        path = token_file.parent / reference
+        path.parent.mkdir(parents=True)
+        path.write_text(contents)
+
+    with pytest.raises(GoogleAuthError) as caught:
+        load_credentials(root, secret_reference=reference)
+    assert caught.value.code == code
+    assert reference not in str(caught.value)
+    assert "private-token" not in str(caught.value)
