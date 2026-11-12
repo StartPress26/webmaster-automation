@@ -2,14 +2,15 @@
 
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.auth_account import AuthAccount
 from app.models.client import Client
 from app.models.engine_registration import EngineRegistration
 from app.models.site import Site
-from app.schemas.site import SiteCreate, SiteRead
+from app.schemas.site import SiteAuthAccountsUpdate, SiteCreate, SiteRead
 
 
 class SiteClientNotFoundError(Exception):
@@ -18,6 +19,32 @@ class SiteClientNotFoundError(Exception):
 
 class DuplicateSiteError(Exception):
     """같은 고객사에 동일한 URL이 이미 등록돼 있습니다."""
+
+
+class SiteAuthAccountNotFoundError(Exception):
+    """사이트에 연결할 Google·Bing 인증 계정이 존재하지 않습니다."""
+
+
+class MainSiteNotFoundError(Exception):
+    """수정할 메인 사이트가 존재하지 않거나 개별 글입니다."""
+
+
+# 선택한 계정이 저장 완료 전에 삭제되거나 이메일이 변경되지 않게 보호합니다.
+async def _validate_auth_accounts(
+    session: AsyncSession, data: SiteCreate | SiteAuthAccountsUpdate,
+) -> None:
+    for engine, email in (
+        ("Google", data.google_account_email), ("Bing", data.bing_account_email),
+    ):
+        if email is None:
+            continue
+        account_email = await session.scalar(
+            select(AuthAccount.email)
+            .where(AuthAccount.email == email)
+            .with_for_update(read=True, key_share=True)
+        )
+        if account_email is None:
+            raise SiteAuthAccountNotFoundError(f"{engine} 인증 계정을 찾을 수 없습니다.")
 
 
 # 같은 IndexNow 설정으로 Naver·Bing 행을 생성하고 커밋은 호출자에게 맡깁니다.
@@ -48,6 +75,8 @@ async def create_site(session: AsyncSession, data: SiteCreate) -> SiteRead:
         if client_id is None:
             raise SiteClientNotFoundError("고객사를 찾을 수 없습니다.")
 
+        await _validate_auth_accounts(session, data)
+
         site = (
             await session.scalars(
                 insert(Site)
@@ -69,6 +98,29 @@ async def create_site(session: AsyncSession, data: SiteCreate) -> SiteRead:
                 key_location=data.indexnow_key_location,
             )
 
+        result = SiteRead.model_validate(site)
+
+    return result
+
+
+# 기존 메인 사이트의 지정한 계정만 변경하고 전체 작업을 한 번에 커밋합니다.
+async def update_auth_accounts(
+    session: AsyncSession, site_id: UUID, data: SiteAuthAccountsUpdate,
+) -> SiteRead:
+    async with session.begin():
+        site = await session.scalar(select(Site).where(
+            Site.id == site_id, Site.target_type == "site",
+        ).with_for_update())
+        if site is None:
+            raise MainSiteNotFoundError("메인 사이트를 찾을 수 없습니다.")
+
+        await _validate_auth_accounts(session, data)
+        changes = data.model_dump(exclude_unset=True)
+        if changes:
+            site = (await session.scalars(
+                update(Site).where(Site.id == site_id).values(**changes)
+                .returning(Site).execution_options(populate_existing=True)
+            )).one()
         result = SiteRead.model_validate(site)
 
     return result

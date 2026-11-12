@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlalchemy.pool import NullPool
 
 from app.models.site import Site
+from app.models.auth_account import AuthAccount
 from app.models.engine_registration import EngineRegistration
 from app.schemas.client import ClientCreate
 from app.schemas.site import SiteCreate, SiteRead
@@ -18,6 +19,7 @@ from app.services import site as site_service
 from app.services.site import (
     DuplicateSiteError,
     SiteClientNotFoundError,
+    SiteAuthAccountNotFoundError,
     create_site,
     list_sites,
 )
@@ -56,6 +58,54 @@ def site_request(client_id: UUID, **changes: object) -> SiteCreate:
         "url": "https://example.com/blog/",
         "owner_type": "client",
     } | changes)
+
+
+# 같은 계정과 서로 다른 계정을 연결하며 네이버는 인증 행 없이 저장합니다.
+@pytest.mark.parametrize("shared_account", [True, False])
+async def test_site_auth_accounts_are_committed(
+    site_sessions: async_sessionmaker[AsyncSession], site_client_id: UUID, shared_account: bool,
+) -> None:
+    google_email = f"google-{uuid4().hex}@example.com"
+    bing_email = google_email if shared_account else f"bing-{uuid4().hex}@example.com"
+    async with site_sessions() as session, session.begin():
+        await session.execute(insert(AuthAccount), tuple(
+            {"email": email} for email in sorted({google_email, bing_email})
+        ))
+
+    async with site_sessions() as session:
+        created = await create_site(session, site_request(
+            site_client_id, google_account_email=google_email, bing_account_email=bing_email,
+            naver_account_email="naver-not-registered@example.com",
+        ))
+
+    async with site_sessions() as session:
+        stored = await session.get(Site, created.id)
+        assert stored is not None
+        assert stored.google_account_email == google_email
+        assert stored.bing_account_email == bing_email
+        assert stored.naver_account_email == "naver-not-registered@example.com"
+        assert SiteRead.model_validate(stored) == created
+
+
+# 없는 계정은 사이트와 IndexNow 설정을 저장하지 않고 실패 후 세션을 재사용합니다.
+@pytest.mark.parametrize("field", ["google_account_email", "bing_account_email"])
+async def test_missing_auth_account_rolls_back(
+    site_sessions: async_sessionmaker[AsyncSession], site_client_id: UUID, field: str,
+) -> None:
+    async with site_sessions() as session:
+        with pytest.raises(SiteAuthAccountNotFoundError):
+            await create_site(session, site_request(
+                site_client_id, **{field: f"missing-{uuid4().hex}@example.com"},
+                indexnow_key="a1b2c3d4", indexnow_key_location="https://example.com/key.txt",
+            ))
+        assert not session.in_transaction()
+        # 같은 URL로 재등록할 수 있어야 실패한 사이트가 남지 않은 것입니다.
+        created = await create_site(session, site_request(site_client_id))
+        assert created.google_account_email is None
+        assert created.bing_account_email is None
+        assert (await session.scalars(select(EngineRegistration).where(
+            EngineRegistration.main_site_id == created.id,
+        ))).all() == []
 
 
 # 별도 연결에서 저장 결과와 서버 지정값 및 세 상태 보존을 확인합니다.

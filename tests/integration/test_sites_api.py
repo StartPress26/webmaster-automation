@@ -60,6 +60,122 @@ def site_payload(customer_id: str, **changes: object) -> dict[str, object]:
     } | changes
 
 
+# 인증 계정 등록 후 사이트에 연결한 이메일이 등록·목록 응답에 유지됩니다.
+async def test_site_account_connections(site_api: AsyncClient, api_client_id: str) -> None:
+    email = f"account-{uuid4().hex}@example.com"
+    assert (await site_api.post("/auth-accounts", json={"email": email})).status_code == 201
+    response = await site_api.post("/sites", json=site_payload(
+        api_client_id, google_account_email=email, bing_account_email=email,
+        naver_account_email="naver-reference@example.com",
+    ))
+    assert response.status_code == 201
+    created = response.json()
+    assert created["google_account_email"] == email
+    assert created["bing_account_email"] == email
+    assert created["naver_account_email"] == "naver-reference@example.com"
+    listing = await site_api.get("/sites", params={"client_id": api_client_id})
+    assert listing.status_code == 200
+    assert listing.json()["items"] == [created]
+
+
+# 미등록 Google·Bing 계정은 HTTP 404로 안내하고 사이트를 저장하지 않습니다.
+@pytest.mark.parametrize("field", ["google_account_email", "bing_account_email"])
+async def test_site_missing_auth_account(
+    site_api: AsyncClient, api_client_id: str, field: str,
+) -> None:
+    response = await site_api.post("/sites", json=site_payload(
+        api_client_id, **{field: f"missing-{uuid4().hex}@example.com"},
+    ))
+    assert response.status_code == 404
+    assert response.json()["detail"]["code"] == "AUTH_ACCOUNT_NOT_FOUND"
+    listing = await site_api.get("/sites", params={"client_id": api_client_id})
+    assert listing.json() == {"items": []}
+
+
+# 계정 연결·교체·부분 해제와 생략한 필드 유지 및 빈 요청의 무변경을 확인합니다.
+async def test_patch_site_auth_accounts(site_api: AsyncClient, api_client_id: str) -> None:
+    first = f"first-{uuid4().hex}@example.com"
+    second = f"second-{uuid4().hex}@example.com"
+    for email in (first, second):
+        assert (await site_api.post("/auth-accounts", json={"email": email})).status_code == 201
+    created = (await site_api.post("/sites", json=site_payload(api_client_id))).json()
+    path = f"/sites/{created['id']}/auth-accounts"
+
+    connected = await site_api.patch(path, json={
+        "google_account_email": first, "bing_account_email": first,
+        "naver_account_email": "naver@example.com",
+    })
+    assert connected.status_code == 200
+    assert connected.json()["google_account_email"] == first
+    assert connected.json()["bing_account_email"] == first
+    assert connected.json()["naver_account_email"] == "naver@example.com"
+    changed = await site_api.patch(path, json={"google_account_email": second})
+    assert changed.status_code == 200
+    assert changed.json()["google_account_email"] == second
+    assert changed.json()["bing_account_email"] == first
+    assert changed.json()["naver_account_email"] == "naver@example.com"
+    partial = await site_api.patch(path, json={"google_account_email": None})
+    assert partial.status_code == 200
+    assert partial.json()["google_account_email"] is None
+    assert partial.json()["bing_account_email"] == first
+    assert partial.json()["naver_account_email"] == "naver@example.com"
+    cleared = await site_api.patch(path, json={
+        "google_account_email": None, "bing_account_email": None, "naver_account_email": None,
+    })
+    assert cleared.status_code == 200
+    assert cleared.json() == created
+    assert (await site_api.patch(path, json={})).json() == created
+    listing = await site_api.get("/sites", params={"client_id": api_client_id})
+    assert listing.json()["items"] == [created]
+
+
+# 부분 변경 중 없는 계정이 발견되면 모든 항목을 원래 상태로 유지합니다.
+@pytest.mark.parametrize("field", ["google_account_email", "bing_account_email"])
+async def test_patch_missing_account_is_atomic(
+    site_api: AsyncClient, api_client_id: str, field: str,
+) -> None:
+    email = f"existing-{uuid4().hex}@example.com"
+    assert (await site_api.post("/auth-accounts", json={"email": email})).status_code == 201
+    created = (await site_api.post("/sites", json=site_payload(
+        api_client_id, google_account_email=email, bing_account_email=email,
+    ))).json()
+    response = await site_api.patch(f"/sites/{created['id']}/auth-accounts", json={
+        field: f"missing-{uuid4().hex}@example.com", "naver_account_email": "changed@example.com",
+    })
+    assert response.status_code == 404
+    assert response.json()["detail"]["code"] == "AUTH_ACCOUNT_NOT_FOUND"
+    listing = await site_api.get("/sites", params={"client_id": api_client_id})
+    assert listing.json()["items"] == [created]
+
+
+# 없는 사이트와 개별 글을 메인 사이트 수정 대상으로 지정할 수 없습니다.
+async def test_patch_requires_main_site(site_api: AsyncClient, api_client_id: str) -> None:
+    parent = (await site_api.post("/sites", json=site_payload(api_client_id))).json()
+    page = (await site_api.post(f"/sites/{parent['id']}/pages", json={
+        "name": "글", "url": "https://example.com/blog/post", "notify_search_engines": False,
+    })).json()["page"]
+    for target_id in (str(uuid4()), page["id"]):
+        response = await site_api.patch(f"/sites/{target_id}/auth-accounts", json={
+            "naver_account_email": "naver@example.com",
+        })
+        assert response.status_code == 404
+        assert response.json()["detail"]["code"] == "MAIN_SITE_NOT_FOUND"
+
+
+# 잘못된 형식과 수정 대상이 아닌 필드는 저장 전에 HTTP 422로 거부합니다.
+@pytest.mark.parametrize("payload", [
+    {"google_account_email": "invalid"}, {"bing_account_email": ""},
+    {"naver_account_email": "invalid"}, {"name": "変更不可"},
+])
+async def test_patch_invalid_input(
+    site_api: AsyncClient, api_client_id: str, payload: dict[str, str],
+) -> None:
+    created = (await site_api.post("/sites", json=site_payload(api_client_id))).json()
+    response = await site_api.patch(f"/sites/{created['id']}/auth-accounts", json=payload)
+    assert response.status_code == 422
+    assert (await site_api.get("/sites", params={"client_id": api_client_id})).json()["items"] == [created]
+
+
 # 등록 성공 응답과 별도 DB 연결에서 확인한 저장값이 일치해야 합니다.
 async def test_site_create_is_committed(
     site_api: AsyncClient, api_client_id: str, migrated_database_url: str,
