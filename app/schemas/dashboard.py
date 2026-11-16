@@ -1,4 +1,4 @@
-"""고객사별 등록 글과 저장된 검색엔진 상태의 통계 응답입니다."""
+"""고객사별 등록 글 통계와 메인 사이트의 저장 관측 응답입니다."""
 
 from datetime import datetime
 from uuid import UUID
@@ -6,6 +6,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict
 
 from app.schemas.client import ClientRead
+from app.schemas.inspection import InspectionRead
 
 
 class EngineSummary(BaseModel):
@@ -21,6 +22,14 @@ class EngineSummary(BaseModel):
     last_checked_at: datetime | None = None
 
 
+class MainPageInspection(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    google: InspectionRead | None = None
+    naver: InspectionRead | None = None
+    bing: InspectionRead | None = None
+
+
 class DashboardSite(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -32,6 +41,7 @@ class DashboardSite(BaseModel):
     google: EngineSummary
     naver: EngineSummary
     bing: EngineSummary
+    main_page: MainPageInspection
 
 
 class ClientDashboard(BaseModel):

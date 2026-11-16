@@ -270,7 +270,8 @@ test('첫 화면·고객사 전환·블로그 이동·빈 고객사 화면이 �
 
     assert.equal(document.querySelector('#client-select').value, 'a');
     assert.ok(document.querySelector('h1').textContent.includes('고객사 A'));
-    assert.equal(document.querySelectorAll('[data-dashboard-site]').length, 2);
+    assert.equal(document.querySelectorAll('[data-main-site]').length, 2);
+    assert.equal(document.querySelectorAll('[data-dashboard-site]').length, 4);
     document.querySelector('[data-dashboard-site="a2"]').click();
     await waitFor(() => !document.querySelector('#inspection-target-select').disabled);
     assert.equal(document.querySelector('#property-select').value, 'a2');
@@ -479,6 +480,54 @@ test('고객사 전체 조회는 모든 소속 사이트 API를 실행하고 탭
     assert.ok(app.document.querySelector('#client-inspection-progress [aria-label="GUI 관측 0건"]'));
     assert.equal(app.document.querySelector('#work-tab-form'), null);
     await waitFor(() => !app.document.querySelector('#refresh-index').disabled);
+  } finally { await delay(0); app.dom.window.close(); }
+});
+
+// 글이 없는 메인 사이트도 검사하고 종료 후 다시 받은 관측을 대시보드에 표시합니다.
+test('대시보드 전체 조회가 끝나면 메인 사이트 결과를 자동으로 다시 읽는다', async () => {
+  const stored = new Map();
+  let dashboardReads = 0;
+  const app = await workspace((url, options) => {
+    if (options.method === 'POST' && url.endsWith('/inspections')) {
+      const id = url.split('/')[3];
+      const engine = JSON.parse(options.body).engine;
+      const observation = {
+        site_id: id, engine, index_status: engine === 'bing' ? 'crawled' : 'indexed',
+        last_checked_at: '2026-11-16T01:00:00Z', next_check_at: null, error_message: null,
+      };
+      stored.set(`${id}:${engine}`, observation);
+      return new Response(JSON.stringify(observation));
+    }
+    if (url === '/api/clients/a/dashboard') {
+      dashboardReads += 1;
+      const selected = sites.filter((site) => site.client_id === 'a');
+      return new Response(JSON.stringify({
+        client: clients[0], site_count: selected.length, page_count: 0,
+        google: summary, naver: summary, bing: summary,
+        sites: selected.map((site) => ({
+          ...site, page_count: 0, google: summary, naver: summary, bing: summary,
+          main_page: { google: stored.get(`${site.id}:google`) ?? null, naver: null, bing: stored.get(`${site.id}:bing`) ?? null },
+        })),
+      }));
+    }
+  });
+  try {
+    assert.match(app.document.querySelector('[data-main-site="a1"]').textContent, /검사 기록 없음/);
+    await waitFor(() => !app.document.querySelector('#refresh-index').disabled);
+    app.document.querySelector('#refresh-index').click();
+    await waitFor(() => app.document.querySelector('#continue-api-only'));
+    app.document.querySelector('#continue-api-only').click();
+    await waitFor(() => app.document.querySelector('[data-main-site="a1"] .main-page-status')?.textContent === '색인 확인');
+    assert.equal(dashboardReads, 2);
+    assert.equal(stored.size, 4);
+    const row = app.document.querySelector('[data-main-site="a1"]');
+    assert.match(row.textContent, /크롤링 확인 · 색인 미확인/);
+    assert.match(row.textContent, /미확인 · 검사 기록 없음/);
+    assert.match(app.document.querySelector('.inspection-results-table').textContent, /메인 사이트/);
+    assert.equal(app.document.querySelectorAll('.dashboard-engine .report-header span')[0].textContent, '0개 글');
+    app.document.querySelector('#reload-dashboard').click();
+    await waitFor(() => dashboardReads === 3 && app.document.querySelector('[data-main-site="a1"] .main-page-status')?.textContent === '색인 확인');
+    assert.equal(app.calls.filter((call) => call.options.method === 'POST').length, 4);
   } finally { await delay(0); app.dom.window.close(); }
 });
 

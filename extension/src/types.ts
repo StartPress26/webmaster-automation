@@ -182,6 +182,12 @@ export interface EngineSummary {
   readonly last_checked_at: string | null;
 }
 
+export interface MainPageInspection {
+  readonly google: InspectionRead | null;
+  readonly naver: InspectionRead | null;
+  readonly bing: InspectionRead | null;
+}
+
 export interface DashboardSite {
   readonly id: string;
   readonly name: string;
@@ -191,6 +197,7 @@ export interface DashboardSite {
   readonly google: EngineSummary;
   readonly naver: EngineSummary;
   readonly bing: EngineSummary;
+  readonly main_page?: MainPageInspection;
 }
 
 export interface ClientDashboard {

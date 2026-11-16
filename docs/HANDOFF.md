@@ -1,6 +1,101 @@
 # 작업 인계 문서
 
-## 현재 인계 요약 — 2026-11-12 사이트별 인증 실검증·커밋 정리 / Asia/Seoul
+## 현재 인계 요약 — 2026-11-16 메인 사이트 대시보드·Bing 표시 통일·PR #9 / Asia/Seoul
+
+**이 절과 맨 아래 `마지막 상태 — 최신 / 2026-11-16 메인 사이트 대시보드 PR #9`를 우선한다. 아래 메인페이지 표시 미구현·Bing 라벨 미정리·통합 테스트 미실행·push/PR 미승인 설명은 과거 상태다.**
+
+- 브랜치는 `feat/main-page-inspection-dashboard`다. 기존 버전 0.1.1 커밋 `a92d0cf`와 인계 커밋 `858c1ec` 위에 기능·테스트·문서를 **`1616e68` — `[feat] 메인 사이트 검사 현황을 대시보드에 반영`**으로 커밋했다. 후속 사용자 요청으로 해당 기능 커밋을 같은 원격 브랜치에 push하고 main 대상 [PR #9](https://github.com/StartPress26/webmaster-automation/pull/9)를 생성했다. 이 인계 갱신은 별도 docs 커밋으로 정리해 같은 브랜치에 push한다. 병합·운영 배포는 하지 않는다.
+- `GET /clients/{id}/dashboard`의 블로그별 응답에 `main_page.google/naver/bing`을 추가했다. 메인 사이트 ID의 기존 최신 관측을 일괄 조회하며, 저장 행이 없으면 null이다. 등록 글 수·글 통계에는 합산하지 않고 비활성 사이트의 이전 상태도 표시한다. DB 테이블·마이그레이션 추가는 없다.
+- 대시보드에 메인 URL·엔진별 상태·성공 관측 시각·최근 오류를 별도 표로 표시한다. 성공 관측이 없으면 미확인으로 표시하며, 필드가 없는 이전 서버 응답은 서버 업데이트 안내로 구분한다. 예시 모드도 메인 관측과 글 통계를 분리한다.
+- 기존 전체 조회는 이미 활성 메인 사이트와 활성 글을 검사하므로 재사용했다. 실행 목록에 메인 사이트·개별 글 구분을 추가했고, 글 0개 사이트 검사와 종료 후 대시보드 자동 재조회·결과 반영을 DOM 회귀 테스트로 확인했다.
+- Bing 상세 상태 순서·문구를 Google·네이버와 통일했다. 상단 카드와 블로그별 표는 모두 `indexed`를 `Bing 색인 확인`으로 표시한다. `crawled`는 별도 상태로 유지하며 색인 완료로 변환하지 않는다. Bing API·GUI가 최신 상태 한 행을 공유하는 구조는 유지한다.
+- 이번 최종 검증: 백엔드 단위 **655 passed**, 임시 PostgreSQL의 대시보드 API 통합 **5 passed**, 프론트 **136 passed**, TypeScript·관리 화면/네이버/Bing 콘텐츠 스크립트 빌드·`git diff --check` 통과. 통합 테스트는 UUID 이름의 임시 DB를 생성·삭제했고 개발 DB를 마이그레이션 대상으로 삼지 않았다. 리뷰에서 커밋을 막는 문제는 발견하지 못했다.
+- 설치 확장의 API는 `127.0.0.1:18001`이다. 운영은 SSH 터널→Lightsail을 사용한다. 확장에서 로컬 API를 시험할 때는 같은 포트의 SSH 터널을 종료하고 API를 18001로 실행한다. 현재 Vite 개발 프록시는 로컬 8000이며 설치 확장에는 적용되지 않는다. 로컬 API는 `.env`의 DB를 사용하므로 Docker 로컬 DB·등록 데이터·인증파일을 운영과 구분한다.
+- 실제 Chrome GUI 전체 순회·Lightsail 배포·이번 변경의 스토어 업로드는 이번 검증에 포함하지 않았다. 버전은 **0.1.1**을 유지했고 기존 ZIP은 재생성하지 않았다. 다음 스토어 업데이트는 더 높은 버전과 새 ZIP이 필요하다.
+- 커밋 제외로 보존: `extension/vite.config.ts`, `extension/startpress-extension.zip`, `dist/`, `.env`, `.secrets`, 토큰·키·비공개 실행 기록. 최종 커밋은 `git log -1`과 `git status`로 확인한다.
+
+### 진행 중인 작업과 다음 순서
+
+1. PR #9 리뷰를 진행한다. 이번 요청은 PR 생성까지이며 자동 병합하지 않는다.
+2. 사용자 병합·배포 요청 후 Lightsail의 main을 갱신하고 API 이미지를 재빌드한다. 이번 기능은 DB 마이그레이션이 필요 없으며, 기존 운영 DB의 메인 사이트 관측을 새 응답에서 반환한다.
+3. 새 확장을 적용해 `main_page` 응답과 메인 사이트 표시·전체 조회 후 자동 갱신을 실제로 확인한다. 실제 브라우저 작업 전 `.cursor/rules/bot-execution-records.mdc`를 읽고 비공개 실행 기록을 남긴다.
+4. 스토어 배포 요청 시 버전을 0.1.1보다 높이고 재검증·빌드·ZIP 생성을 진행한다. 기존 ZIP이 이번 브랜치의 최신 소스와 일치한다고 설명하지 않는다.
+
+### 관련 파일
+
+- `app/services/dashboard.py`, `app/schemas/dashboard.py`: 등록 글 집계와 메인 사이트 관측 응답.
+- `extension/src/dashboard.ts`, `extension/src/types.ts`, `extension/src/styles.css`: 메인 사이트 표와 엔진별 표시 통일.
+- `extension/src/inspection/client-view.ts`: 실행 목록의 메인 사이트·개별 글 구분.
+- `tests/integration/test_dashboard_api.py`, `extension/tests/dashboard.test.mjs`, `extension/tests/client-inspection.test.mjs`, `extension/tests/workspace.test.mjs`: DB 분리·표시·자동 갱신 회귀 검증.
+- `docs/dashboard-api.md`: 응답 계약·집계 범위·서버 선반영 안내.
+
+## 이전 인계 요약 — 2026-11-16 운영 검증·확장 0.1.1·미커밋 정리 / Asia/Seoul
+
+**이 절과 맨 아래 `마지막 상태 — 최신 / 2026-11-16 운영 검증·확장 미커밋`를 우선한다. 아래 11월 12일 기록의 PR 미병합·운영 미검증·버전 0.1.0 등은 당시 상태다.**
+
+### 완료된 작업
+
+- [x] 사이트별 인증 연결은 PR #8로 main에 병합됐다. 병합 커밋은 `f98566f`다. 에이전트가 11월 16일 GitHub의 MERGED 상태와 로컬 main 이력을 확인했다. 관련 구현·설정·문서 커밋은 `103ce1d`, `d408424`, `c21efe5`, `b4b137c`다.
+- [x] 사용자가 Lightsail에서 main 갱신, API 이미지 빌드, 마이그레이션 실행, 새 Google 파일 설치, API 실행을 진행했다고 보고했다. Docker 소켓 권한 때문에 서버 명령에는 `sudo docker compose`를 사용했다. 현재 운영 Alembic 리비전과 서버 HEAD의 원문 출력은 에이전트가 직접 확인하지 않았다.
+- [x] 서버 비밀폴더는 `/home/ubuntu/webmaster-secrets`이며 컨테이너 `/srv/startpress/.secrets`에 마운트한다. 하위 `google/<이메일>.json`은 Google OAuth JSON, `bing/<이메일>.json`은 `{"api_key":"..."}`다. Google 폴더에 실제 계정 파일명이 잘못 저장돼 있던 것을 확인한 뒤, 사용자가 재인증된 로컬 토큰을 서버에 설치했다. 비밀값은 문서·Git에 보존하지 않는다.
+- [x] 사용자가 운영 계정 등록 201과 테스트 메인 사이트의 계정 PATCH 성공 응답을 제공했다. 이어 운영 Google `indexed`, Bing API `crawled` 응답을 제공해 계정별 인증·실조회·결과 저장 성공을 확인했다.
+- [x] 확장 최신 소스에서 테스트 **131 passed**, TypeScript 검사·관리 화면·네이버/Bing 콘텐츠 스크립트 빌드를 통과했다. 처음 만든 0.1.0 ZIP은 이미 게시된 버전과 같아 스토어에서 거절됐다. 이후 manifest·package·lockfile 루트 버전을 **0.1.1**로 일치시켜 재빌드하고 ZIP을 교체했다.
+- [x] 사용자가 0.1.1 업로드·심사 제출과 심사 통과를 보고했다. 에이전트가 스토어의 게시 상태·설치 버전을 직접 확인한 것은 아니다. 비공개 테스터 설치를 안내했고 스토어 설치본과 개발자 모드 로드본을 구분했다.
+
+### 현재 브랜치와 미커밋 변경
+
+- 현재 브랜치: **`feat/main-page-inspection-dashboard`**. 커밋 계획 작성 기준 HEAD **`c0e60ba` — `fix:dashboard에서 bing.crawld -> bing.indexed 세게 하기`**. 이 커밋은 사용자가 이미 만든 것으로 보존하며 이번 요청에서 amend·rebase·메시지 변경을 하지 않는다. 현재 브랜치의 원격·PR 상태는 이번 요청에서 조회하지 않았다.
+- `c0e60ba`는 `extension/src/dashboard.ts`의 상단 Bing 카드 값만 `data.bing.crawled`에서 `data.bing.indexed`로 바꿨다. 카드 이름은 여전히 `Bing 크롤링 확인`이며 블로그별 표는 `site.bing.crawled`를 사용한다. 이 커밋이 완전한 표시 수정이라고 설명하지 않는다.
+- 커밋 계획 보고 당시 미커밋 tracked 파일은 **4개**였다. `extension/package.json`, `extension/package-lock.json`, `extension/public/manifest.json`은 0.1.0 → 0.1.1 버전 변경이다. `extension/vite.config.ts`는 이전부터 사용자가 보존한 개발 프록시 18001 → 8000 변경과 설명 주석이다.
+- 미추적 파일은 **`extension/startpress-extension.zip`**이며 보존한다. 인계 작성 때는 문서만 수정했고 이후 사용자가 계획한 커밋·push 진행을 승인했다. 버전 파일 3개는 `a92d0cf`로 커밋했으며 이 문서를 두 번째 커밋으로 정리한다. 최종 HEAD와 원격 일치는 `git log -2 --oneline`, `git status`, `git ls-remote origin refs/heads/feat/main-page-inspection-dashboard`로 확인한다.
+- 최초 요청은 미커밋 확인·커밋 계획 보고·인계 문서 갱신이었다. **후속 요청으로 계획한 2개 커밋과 현재 브랜치 push를 승인했다.** 기존 `c0e60ba`도 새 원격 브랜치 이력에 포함된다. PR·추가 기능 수정·배포·새 검색엔진 검사는 이번 실행 범위가 아니다.
+
+### 승인된 커밋 분리
+
+1. **`[chore] 확장 프로그램 버전을 0.1.1로 갱신`**
+   - 대상: `extension/package.json`, `extension/package-lock.json`, `extension/public/manifest.json`.
+   - 이미 스토어에 제출한 패키지의 버전 정보를 Git 소스에도 기록한다. 의존성 내용은 바뀌지 않았다.
+2. **`[docs] 운영 인증 검증과 확장 배포 현황 인계`**
+   - 대상: `docs/HANDOFF.md`.
+   - 운영 검증 근거, 0.1.1 패키지·심사 통과 사용자 보고, 현재 브랜치·표시 문제·다음 작업을 기록한다.
+
+**커밋 제외:** `extension/vite.config.ts`, `extension/startpress-extension.zip`, `dist/`, `.env`, `.secrets`, 토큰·키·백업·비공개 실행 기록. 승인된 파일만 명시적으로 스테이징한다. 새 커밋은 한국어 `[타입] 제목`을 쓰고 공동 작성자 트레일러를 넣지 않는다.
+
+### 실제 대시보드 조사 결과
+
+- 사용자가 전체 조회 후 Google·네이버·Bing 확인 건수가 0인 화면을 제공했다. 에이전트는 SSH 터널 `127.0.0.1:18001`을 통해 운영 대시보드·등록 글·저장 검사 결과를 **GET만** 수행해 조사했다. 새 검사·GUI 자동화·DB 변경은 하지 않았다.
+- 조회 시점 메인 URL `https://otteru.vercel.app/`의 저장 상태는 Google·네이버·Bing 모두 `indexed`였다. 별도로 등록된 글은 1개이고 이름은 `메인 페이지`이나 URL은 **`https://otteru.vercel.app/ko/3f0210261e95801586aadebb742f4078`**이다. 이름만 보고 루트 메인페이지라고 판단하지 않는다.
+- 등록 글의 11월 16일 18:57~18:58 KST 저장 결과는 Google **`not_indexed`**, 네이버 **`unknown`**, Bing **`indexed`**이고 세 엔진의 `error_code`는 모두 NULL이었다. 이는 해당 시점 저장 관측이지 이후 외부 검색엔진 상태를 새로 검증한 결과가 아니다.
+- `app/services/dashboard.py`는 `target_type='page'`만 집계하므로 루트 메인페이지의 indexed 관측은 합산하지 않는다. 성공 관측 시각은 색인 성공 시각이 아니라 조회·관측 시각이다.
+- Bing API는 크롤링 관측을 반환하고 Bing GUI는 색인 여부를 판독한다. 두 경로는 `(site_id, engine)`의 같은 최신 상태 행을 사용한다. GUI의 indexed 저장 이후 crawled 건수가 0, indexed 건수가 1인 것은 데이터 구조상 정상이다. 상세 패널의 `저장된 색인 확인 1개`가 이 값이다.
+- 현재 요약 표시에는 문제가 남아 있다. 상단 카드는 커밋 `c0e60ba` 이후 indexed 값을 `크롤링 확인` 이름으로 표시하고, 블로그별 표는 여전히 crawled만 표시한다. 색인과 크롤링을 분리해 정확한 이름·값으로 일치시키는 수정과 테스트가 필요하다.
+- 브랜치 이름과 달리 **메인페이지 전용 집계·응답 필드·화면 구현은 현재 변경에서 확인되지 않았다.** 등록 글 집계와 분리해 보여줄 요구사항을 먼저 확정한다. 사용자 요청 없이 메인페이지를 등록 글 통계에 합산하지 않는다.
+
+### 검증·ZIP 상태와 주의사항
+
+- 이번 인계 요청에서 현재 HEAD의 프론트 테스트를 재실행해 **131 passed**를 확인했다. `git diff --check`도 통과했다. 이 테스트 통과는 위 카드 라벨·값 불일치를 검증한 것이 아니다. 해당 회귀 검증은 추가가 필요하다.
+- 현재 ZIP은 버전 **0.1.1**, 11파일이며 무결성이 정상이다. SHA-256: `c1ecd3ce2738b815438e254560a6b813244dda89a41ae1237e391e97601b5567`.
+- ZIP의 상단 카드 JS는 여전히 `Bing 크롤링 확인`과 `bing.crawled`를 사용한다. 따라서 **현재 ZIP에는 나중에 작성한 `c0e60ba` 변경이 없다.** 이번 요청에서 재빌드하지 않았다. 기존 0.1.1 스토어 업로드본과 현재 HEAD가 같다고 설명하지 않는다.
+- 다음 스토어 업데이트는 이미 제출한 0.1.1보다 높은 버전으로 올린 뒤 테스트·빌드·ZIP 검증을 다시 해야 한다. 업데이트용 산출물을 만들 때는 빌드 소스와 패키지의 일치를 확인하고 `icons/source.png`는 ZIP에서 제외한다.
+- 설치 확장의 API는 `127.0.0.1:18001`이며 SSH 터널을 유지해야 한다. Vite의 8000 프록시 변경은 개발 서버에만 적용된다. 브라우저 확장 새 버전 게시 여부와 로컬 소스 변경을 구분한다.
+- 과거 백엔드 자동 검증은 단위 655개·검사/사이트맵 API 임시 PostgreSQL 통합 81개였다. 이번 인계에서는 백엔드를 재실행하지 않았다. 실제 사이트맵 제출은 여전히 미검증이다.
+
+### 다음에 해야 할 작업
+
+1. 승인된 두 커밋·push의 완료 상태와 원격 HEAD 일치를 Git에서 확인한다. PR은 아직 요청하지 않았으므로 후속 요청 시 생성한다. Vite·ZIP·비밀파일은 제외한다.
+2. Bing 카드·블로그별 표의 색인/크롤링 표시를 일치시키고 이 차이를 잡는 회귀 테스트를 추가한다. 기존 `c0e60ba`는 그대로 두고 후속 커밋으로 보완한다.
+3. 메인페이지 상태를 등록 글과 별도로 어디에 보여줄지 확정한 뒤 해당 집계·API·화면을 구현한다. 이번 요청은 이 기능 구현 승인이 아니다.
+4. 새 화면을 배포할 때 버전 증가 → 테스트·빌드 → ZIP 재생성 → 실제 화면 검증 → 스토어 업데이트를 진행한다. 현재 0.1.1 심사 통과 사용자 보고와 후속 배포를 혼동하지 않는다.
+
+### 관련 파일
+
+- `extension/src/dashboard.ts`, `extension/tests/dashboard.test.mjs`: 요약 카드·상세 패널·블로그별 표와 집계 표시 검증.
+- `app/services/dashboard.py`, `app/schemas/dashboard.py`: 등록 글 집계와 응답 구조. 현재 메인페이지는 제외한다.
+- `extension/package.json`, `extension/package-lock.json`, `extension/public/manifest.json`: 미커밋 0.1.1 버전 정보.
+- `extension/vite.config.ts`: 커밋에서 제외할 기존 로컬 프록시 변경.
+- `extension/startpress-extension.zip`: 기존 0.1.1 패키지, 현재 Bing 카드 커밋 미포함, 커밋 제외.
+
+## 이전 인계 요약 — 2026-11-12 사이트별 인증 실검증·커밋 정리 / Asia/Seoul
 
 **이 절과 맨 아래 `마지막 상태 — 최신 / 2026-11-12 사이트별 인증 실검증·커밋 정리`를 우선한다. 같은 날짜의 계정 연결 저장까지만 완료됐다는 아래 기록은 과거 상태다.**
 
@@ -1258,7 +1353,7 @@ Notion은 요구사항·설계 자료다. 실제 구현·적용 여부는 이 �
 새 세션 시작 문구: **“docs/HANDOFF.md의 최상단과 맨 아래 사이트별 API 인증·재인증 인계를 읽고 이어서 진행해줘. 검사·사이트맵의 계정별 인증은 미커밋 상태로 구현됐고 단위 655개·통합 81개 통과했어. 로컬 Google refresh token이 invalid_grant로 거부돼 재인증이 필요해. 재인증은 아직 실행하지 않았으니 대상 계정 파일과 OAuth 클라이언트를 확인하고 사용자 로그인·동의를 받아 새 토큰 저장부터 진행해줘. 키·토큰은 출력하지 말고 Vite 프록시·ZIP·사용자 변경을 보존해줘. 서버 배포와 실제 API 성공은 아직 확인하지 않았어.”**
 
 
-## 마지막 상태 — 최신 / 2026-11-12 사이트별 인증 실검증·커밋 정리
+## 과거 마지막 상태 — 2026-11-12 사이트별 인증 실검증·커밋 정리
 
 - `feat/site-auth-profiles`에서 로더·참조 조회 `103ce1d`, 검사·사이트맵 인증 전달 `d408424`, 운영 환경변수 정리 `c21efe5`를 커밋했고 이 문서를 네 번째 커밋으로 정리한다. 사용자는 리뷰 후 해당 계획 실행을 승인했다. 최종 HEAD·커밋 목록은 `git log -4 --oneline`으로 확인한다. push·PR·main 병합·배포는 하지 않는다.
 - Google 사용자 동의로 새 계정 토큰을 발급·저장했고 기존 파일은 비공개 백업했다. 에이전트가 계정별 파일로 Search Console 사이트 목록 HTTP 200을 확인했고 사용자가 Google·Bing 실제 검사 모두 성공했다고 보고했다. 실제 사이트맵 제출·운영 반영은 미검증이다.
@@ -1266,3 +1361,22 @@ Notion은 요구사항·설계 자료다. 실제 구현·적용 여부는 이 �
 - Vite 프록시 8000 변경·미추적 ZIP·`.env`·`.secrets`·실제 토큰과 키·백업·비공개 기록은 커밋 제외다. 서버 비밀폴더는 `/home/ubuntu/webmaster-secrets`를 유지한다.
 
 새 세션 시작 문구: **“docs/HANDOFF.md의 최상단과 맨 아래 최신 요약을 읽고 이어서 진행해줘. 사이트별 인증 연결과 로컬 Google 재인증이 완료됐고 사용자가 Google·Bing 실제 검사를 확인했어. 승인된 4개 커밋의 완료 상태는 git log와 status로 확인해줘. push·PR·main 병합·Lightsail 배포는 아직 수행하지 않았어. 운영에서는 새 Google 파일과 DB 계정·참조·사이트 연결을 별도로 준비해야 해. Vite 프록시·ZIP·비밀파일은 커밋에서 제외해줘.”**
+
+
+## 과거 마지막 상태 — 2026-11-16 운영 검증·확장 미커밋
+
+- 브랜치 `feat/main-page-inspection-dashboard`. 기존 `c0e60ba`는 상단 Bing 카드 값만 indexed로 바꿨고 라벨·블로그별 표는 정리되지 않았다. 메인페이지 별도 집계 구현은 없다.
+- 후속 사용자 승인으로 버전 3파일을 `a92d0cf`로 커밋하고 이 인계를 별도 docs 커밋으로 정리해 브랜치에 push한다. 최종 문서 커밋과 원격 HEAD는 Git으로 확인한다. Vite 프록시·ZIP은 남겨두며 PR·병합·배포는 하지 않는다.
+- PR #8은 main 병합됐고 운영 Google·Bing 인증/조회는 사용자 응답으로 확인했다. 에이전트의 운영 GET 조사에서 루트 메인페이지는 세 엔진 indexed, 등록 글 1개는 Google not_indexed·네이버 unknown·Bing indexed였다.
+- 현재 프론트 테스트 131 passed. 기존 0.1.1 ZIP에는 `c0e60ba`가 포함되지 않았고 사용자가 0.1.1 스토어 심사 통과를 보고했다. 다음 화면 변경 배포는 새 버전·빌드·ZIP이 필요하다.
+- 다음 작업은 승인된 커밋·push 완료 확인, 사용자 요청 시 PR, Bing 라벨/표 정리, 메인페이지 별도 표시 요구 확정이다. Vite·ZIP·비밀파일은 커밋 제외로 보존한다.
+
+새 세션 시작 문구: **“docs/HANDOFF.md 최상단과 맨 아래 2026-11-16 요약부터 읽어줘. feat/main-page-inspection-dashboard에서 기존 c0e60ba의 Bing 카드 변경에 이어 버전 0.1.1 커밋 a92d0cf와 HANDOFF 커밋·push를 승인받아 진행했어. 최종 HEAD·원격 일치는 Git에서 확인해줘. Bing 라벨과 표는 아직이고 PR·배포는 하지 않았어. Vite 프록시·ZIP·비밀파일은 제외해줘. 운영 인증은 확인됐고 메인페이지와 등록 글 통계는 구분해야 해. 현재 ZIP은 c0e60ba 미포함이야.”**
+
+## 마지막 상태 — 최신 / 2026-11-16 메인 사이트 대시보드 PR #9
+
+- 메인 사이트 저장 관측의 대시보드 API·별도 표, 실행 목록의 메인/글 구분과 완료 후 자동 반영 회귀 검증, Bing 카드·표·상태 순서 통일을 완료했다. 글 통계와 메인 관측은 분리한다.
+- 백엔드 단위 655개·대시보드 PostgreSQL 통합 5개·프론트 136개·타입 검사·빌드·diff 검사 통과. 실제 외부 검색엔진 검사나 운영 배포를 새로 실행한 것은 아니다.
+- 기능 커밋 `1616e68`을 원격 브랜치에 push하고 main 대상 [PR #9](https://github.com/StartPress26/webmaster-automation/pull/9)를 생성했다. 후속 HANDOFF docs 커밋과 최종 원격 일치는 Git에서 확인한다. Vite 프록시와 기존 ZIP은 커밋하지 않는다. 병합·배포·버전 증가·ZIP 재생성은 수행하지 않는다.
+
+새 세션 시작 문구: **“docs/HANDOFF.md의 최상단과 맨 아래 최신 상태부터 읽어줘. feat/main-page-inspection-dashboard에서 메인 사이트 별도 표시와 Bing 표시 통일을 1616e68로 커밋·push하고 main 대상 PR #9를 생성했어. HANDOFF 갱신도 별도 docs 커밋·push 범위야. 백엔드 단위 655개·임시 PostgreSQL 통합 5개·프론트 136개와 빌드가 통과했어. 최종 커밋·원격 일치·PR 상태를 확인하고, 기존 Vite·ZIP 변경은 보존해줘. 병합·운영 배포·새 스토어 업데이트는 아직 수행하지 않았어.”**

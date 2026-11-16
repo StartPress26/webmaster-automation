@@ -120,6 +120,10 @@ async def test_dashboard_counts_pages_without_cross_client_or_engine_duplicates(
     }
     populated = next(row for row in result["sites"] if row["id"] == str(site))
     assert populated["naver"] == result["naver"]
+    assert populated["main_page"]["google"]["site_id"] == str(site)
+    assert populated["main_page"]["google"]["index_status"] == "indexed"
+    assert populated["main_page"]["naver"]["last_checked_at"] == "2026-11-04T02:00:00Z"
+    assert populated["main_page"]["bing"] is None
 
     empty = next(row for row in result["sites"] if row["id"] == str(empty_site))
 
@@ -129,6 +133,7 @@ async def test_dashboard_counts_pages_without_cross_client_or_engine_duplicates(
     assert empty["naver"]["unknown"] == 0
     assert empty["naver"]["last_checked_at"] is None
     assert not empty["is_active"]
+    assert empty["main_page"] == {"google": None, "naver": None, "bing": None}
     assert {row["id"] for row in result["sites"]} == {str(site), str(empty_site)}
 
 
@@ -148,7 +153,48 @@ async def test_uninspected_pages_and_read_only_repeated_requests(
     assert first.json()["bing"]["unknown"] == 1
     assert first.json()["naver"]["unknown"] == 1
     assert first.json()["naver"]["not_indexed"] == 0
+    assert first.json()["sites"][0]["main_page"] == {"google": None, "naver": None, "bing": None}
     assert await db_session.scalar(select(func.count()).select_from(SiteEngineStatus)) == before
+
+
+# 등록 글이 없어도 메인 관측·최근 오류를 반환하고 글 통계와 고객사 범위를 유지합니다.
+async def test_main_page_statuses_without_pages_and_latest_observation(
+    dashboard_api: AsyncClient, db_session: AsyncSession,
+) -> None:
+    client = await add_client(db_session)
+    other = await add_client(db_session, "다른 고객사")
+    site = await add_target(db_session, client, active=False)
+    foreign = await add_target(db_session, other)
+    checked = datetime(2026, 11, 16, 1, tzinfo=timezone.utc)
+    await add_status(db_session, site, "google", "indexed", checked, "최근 조회 실패")
+    await add_status(db_session, site, "naver", "unknown", None, "첫 조회 실패")
+    await add_status(db_session, site, "bing", "crawled", checked)
+    await add_status(db_session, site, "brave", "indexed", checked)
+    await add_status(db_session, foreign, "bing", "not_indexed", checked)
+
+    response = await dashboard_api.get(f"/clients/{client}/dashboard")
+    assert response.status_code == 200
+    result = response.json()
+    main_page = result["sites"][0]["main_page"]
+    assert set(main_page) == {"google", "naver", "bing"}
+    assert main_page["google"]["index_status"] == "indexed"
+    assert main_page["google"]["error_message"] == "최근 조회 실패"
+    assert main_page["naver"]["last_checked_at"] is None
+    assert main_page["naver"]["error_message"] == "첫 조회 실패"
+    assert main_page["bing"]["index_status"] == "crawled"
+    assert result["page_count"] == 0
+    assert result["google"]["indexed"] == result["bing"]["crawled"] == 0
+    assert result["google"]["last_checked_at"] is None
+    assert len(result["sites"]) == 1
+
+    await db_session.execute(
+        SiteEngineStatus.__table__.update().where(
+            SiteEngineStatus.site_id == site, SiteEngineStatus.engine == "bing",
+        ).values(index_status="indexed", last_checked_at=checked),
+    )
+    refreshed = (await dashboard_api.get(f"/clients/{client}/dashboard")).json()
+    assert refreshed["sites"][0]["main_page"]["bing"]["index_status"] == "indexed"
+    assert refreshed["bing"]["indexed"] == 0
 
 
 # 블로그가 없는 고객사도 빈 통계를 정상 응답합니다.
