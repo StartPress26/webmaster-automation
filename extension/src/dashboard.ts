@@ -62,7 +62,7 @@ export function dashboardContent(data: ClientDashboard): string {
     ['등록 글', data.page_count],
     ['Google 색인 확인', data.google.indexed],
     ['네이버 색인 확인', data.naver.indexed],
-    ['Bing 크롤링 확인', data.bing.crawled],
+    ['Bing 크롤링 확인', data.bing.indexed],
   ] as const;
 
   return `<div class="dashboard-cards">${cards.map(([label, count]): string => `<section class="dashboard-card"><h2>${label}</h2><p>${count}<span>개</span></p></section>`).join('')}</div>
