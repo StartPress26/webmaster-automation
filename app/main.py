@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from app.api.auth_accounts import router as auth_accounts_router
 from app.api.clients import router as clients_router
 from app.api.dashboard import router as dashboard_router
 from app.api.indexnow_settings import router as indexnow_settings_router
@@ -27,6 +28,8 @@ async def lifespan(_: FastAPI) -> AsyncGenerator[None, None]:
 
 
 app = FastAPI(title="StartPress Admin", lifespan=lifespan)
+# 인증 계정의 이메일·비밀파일 참조를 등록하고 공개 가능한 연결 정보만 조회합니다.
+app.include_router(auth_accounts_router)
 # 고객사를 등록하고 목록을 조회합니다.
 app.include_router(clients_router)
 # 선택한 고객사의 블로그·글·엔진별 저장 상태 통계를 조회합니다.

@@ -7,7 +7,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.models.site import Site
-from app.schemas.site import SiteCreate, SiteList, SiteRead
+from app.schemas.site import SiteAuthAccountsUpdate, SiteCreate, SiteList, SiteRead
 
 
 # 필수 입력에 원하는 변경값을 합쳐 등록 요청을 만듭니다.
@@ -20,6 +20,27 @@ def make_request(**changes: object) -> SiteCreate:
     } | changes)
 
 
+# PATCH에서 생략과 명시적인 NULL을 구분하고 변경할 항목만 추출합니다.
+def test_auth_accounts_patch_distinguishes_omitted_and_null() -> None:
+    assert SiteAuthAccountsUpdate().model_dump(exclude_unset=True) == {}
+    assert SiteAuthAccountsUpdate(google_account_email=None).model_dump(exclude_unset=True) == {
+        "google_account_email": None,
+    }
+    assert SiteAuthAccountsUpdate(bing_account_email=" user@EXAMPLE.COM ").model_dump(
+        exclude_unset=True,
+    ) == {"bing_account_email": "user@example.com"}
+
+
+# 계정 연결 외의 필드와 잘못된 이메일을 PATCH 입력에서 거부합니다.
+@pytest.mark.parametrize("payload", [
+    {"name": "수정 불가"}, {"google_account_email": "invalid"},
+    {"bing_account_email": ""}, {"naver_account_email": "invalid"},
+])
+def test_auth_accounts_patch_invalid_fields(payload: dict[str, object]) -> None:
+    with pytest.raises(ValidationError):
+        SiteAuthAccountsUpdate.model_validate(payload)
+
+
 # 이름 공백 제거와 선택 입력의 기본값을 확인합니다.
 def test_site_create_defaults_and_name() -> None:
     request = make_request(name="  유담 블로그  ")
@@ -29,6 +50,9 @@ def test_site_create_defaults_and_name() -> None:
     assert request.can_edit_site is None
     assert request.indexnow_key is None
     assert request.indexnow_key_location is None
+    assert request.google_account_email is None
+    assert request.bing_account_email is None
+    assert request.naver_account_email is None
     assert "target_type" not in request.model_dump()
     assert "parent_site_id" not in request.model_dump()
 
@@ -37,6 +61,21 @@ def test_site_create_defaults_and_name() -> None:
 @pytest.mark.parametrize("value", [True, False, None])
 def test_can_edit_site_preserves_three_states(value: bool | None) -> None:
     assert make_request(can_edit_site=value).can_edit_site is value
+
+
+# 엔진별 이메일의 공백·도메인을 정규화하고 미연결 상태를 허용합니다.
+@pytest.mark.parametrize("field", ["google_account_email", "bing_account_email", "naver_account_email"])
+@pytest.mark.parametrize(("value", "expected"), [(" user@EXAMPLE.COM ", "user@example.com"), (None, None)])
+def test_account_email_input(field: str, value: str | None, expected: str | None) -> None:
+    assert make_request(**{field: value}).model_dump()[field] == expected
+
+
+# 각 엔진에서 이메일 형식이 아닌 입력과 빈 문자열을 거부합니다.
+@pytest.mark.parametrize("field", ["google_account_email", "bing_account_email", "naver_account_email"])
+@pytest.mark.parametrize("value", ["invalid", "", "   "])
+def test_invalid_account_email_input(field: str, value: str) -> None:
+    with pytest.raises(ValidationError):
+        make_request(**{field: value})
 
 
 # 잘못된 필드와 서버가 결정할 필드의 입력을 거부합니다.
@@ -104,7 +143,25 @@ def test_site_read_from_orm_and_list_serialization() -> None:
     assert payload["items"][0]["id"] == str(row.id)
     assert payload["items"][0]["target_type"] == "site"
     assert payload["items"][0]["parent_site_id"] is None
+    assert payload["items"][0]["google_account_email"] is None
+    assert payload["items"][0]["bing_account_email"] is None
+    assert payload["items"][0]["naver_account_email"] is None
     assert SiteList(items=()).model_dump(mode="json") == {"items": []}
+
+
+# ORM에 저장한 엔진별 계정 이메일을 목록 응답에 포함합니다.
+def test_site_read_includes_account_emails() -> None:
+    row = Site(
+        id=uuid4(), client_id=uuid4(), parent_site_id=None, target_type="site",
+        name="계정 연결 사이트", url="https://example.com/", owner_type="client",
+        cms_type=None, can_edit_site=None, is_active=True,
+        created_at=datetime.now(timezone.utc), google_account_email="google@example.com",
+        bing_account_email="bing@example.com", naver_account_email="naver@example.com",
+    )
+    payload = SiteList(items=(SiteRead.model_validate(row),)).model_dump(mode="json")
+    assert payload["items"][0]["google_account_email"] == "google@example.com"
+    assert payload["items"][0]["bing_account_email"] == "bing@example.com"
+    assert payload["items"][0]["naver_account_email"] == "naver@example.com"
 
 
 # 키 설정은 두 값을 함께 받고 호스트와 디렉터리 적용 범위를 검사합니다.

@@ -9,6 +9,7 @@ from pydantic import (
     AnyHttpUrl,
     BaseModel,
     ConfigDict,
+    EmailStr,
     Field,
     StrictBool,
     field_validator,
@@ -31,6 +32,9 @@ class SiteCreate(BaseModel):
     owner_type: Literal["internal", "client"]
     cms_type: str | None = None
     can_edit_site: StrictBool | None = None
+    google_account_email: EmailStr | None = None
+    bing_account_email: EmailStr | None = None
+    naver_account_email: EmailStr | None = None
     indexnow_key: IndexNowKey | None = Field(default=None, repr=False)
     indexnow_key_location: IndexNowUrl | None = None
 
@@ -78,6 +82,18 @@ class SiteCreate(BaseModel):
         return self
 
 
+class SiteAuthAccountsUpdate(BaseModel):
+    """생략한 계정은 유지하고 명시적인 NULL은 연결 해제로 처리합니다."""
+
+    model_config = ConfigDict(
+        frozen=True, str_strip_whitespace=True, extra="forbid", hide_input_in_errors=True,
+    )
+
+    google_account_email: EmailStr | None = None
+    bing_account_email: EmailStr | None = None
+    naver_account_email: EmailStr | None = None
+
+
 class SiteRead(BaseModel):
     """DB에 저장된 메인 사이트 정보를 응답으로 변환합니다."""
 
@@ -92,6 +108,9 @@ class SiteRead(BaseModel):
     owner_type: Literal["internal", "client"]
     cms_type: str | None
     can_edit_site: bool | None
+    google_account_email: EmailStr | None = None
+    bing_account_email: EmailStr | None = None
+    naver_account_email: EmailStr | None = None
     is_active: bool
     created_at: datetime
 

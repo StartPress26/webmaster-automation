@@ -16,6 +16,7 @@ from app.engines.bing import BingEngineError
 from app.engines.google.google import GoogleEngineError
 from app.engines.sitemap import SitemapSubmitter
 from app.main import app
+from app.models.auth_account import AuthAccount
 from app.models.engine_registration import EngineRegistration
 from app.models.site import Site
 from app.models.site_engine_status import SiteEngineStatus
@@ -59,9 +60,14 @@ async def sitemap_api(migrated_database_url: str) -> AsyncIterator[tuple[AsyncCl
 # 기존 API로 서로 독립적인 고객사와 메인 사이트를 만듭니다.
 async def create_site(api: AsyncClient, root: str = "https://example.com/") -> str:
     client = (await api.post("/clients", json={"name": "사이트맵 테스트"})).json()
+    email = f"sitemap-{uuid4().hex}@example.com"
+    assert (await api.post("/auth-accounts", json={
+        "email": email, "google_secret_ref": "google/account.json", "bing_secret_ref": "bing/account.json",
+    })).status_code == 201
 
     response = await api.post("/sites", json={
         "client_id": client["id"], "name": "블로그", "url": root, "owner_type": "client",
+        "google_account_email": email, "bing_account_email": email,
     })
     assert response.status_code == 201
 
@@ -84,7 +90,9 @@ async def test_submit_success(
         "main_site_id": site_id, "engine": engine_name,
         "sitemap_url": "https://example.com/sitemap.xml", "status": "accepted",
     }
-    submitter.assert_awaited_once_with(engine_name, "https://example.com/", "https://example.com/sitemap.xml")
+    submitter.assert_awaited_once_with(
+        engine_name, "https://example.com/", "https://example.com/sitemap.xml", f"{engine_name}/account.json",
+    )
 
     db = create_async_engine(migrated_database_url, poolclass=NullPool)
 
@@ -203,3 +211,65 @@ async def test_upstream_errors(
     assert response.json()["detail"]["code"] == f"ENGINE_{code.upper()}"
     assert "secret-token" not in response.text
     submitter.assert_awaited_once()
+
+
+# 다른 엔진의 계정이 연결되어 있어도 선택한 엔진이 미연결이면 제출하지 않습니다.
+@pytest.mark.parametrize("engine_name", ["google", "bing"])
+async def test_unlinked_account(sitemap_api: tuple[AsyncClient, AsyncMock], engine_name: str) -> None:
+    api, submitter = sitemap_api
+    site_id = await create_site(api)
+    assert (await api.patch(f"/sites/{site_id}/auth-accounts", json={
+        f"{engine_name}_account_email": None,
+    })).status_code == 200
+    response = await api.post(f"/sites/{site_id}/sitemaps", json={
+        "engine": engine_name, "sitemap_url": "https://example.com/sitemap.xml",
+    })
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "AUTH_ACCOUNT_NOT_LINKED"
+    submitter.assert_not_awaited()
+
+
+# 선택한 엔진의 파일 참조가 없는 계정은 실제 제출 전에 거부합니다.
+@pytest.mark.parametrize("engine_name", ["google", "bing"])
+async def test_missing_reference(
+    sitemap_api: tuple[AsyncClient, AsyncMock], migrated_database_url: str, engine_name: str,
+) -> None:
+    api, submitter = sitemap_api
+    site_id = await create_site(api)
+    db = create_async_engine(migrated_database_url, poolclass=NullPool, hide_parameters=True)
+    try:
+        async with AsyncSession(db) as session, session.begin():
+            site = await session.get(Site, UUID(site_id))
+            email = getattr(site, f"{engine_name}_account_email")
+            await session.execute(update(AuthAccount).where(AuthAccount.email == email).values({
+                f"{engine_name}_secret_ref": None,
+            }))
+        response = await api.post(f"/sites/{site_id}/sitemaps", json={
+            "engine": engine_name, "sitemap_url": "https://example.com/sitemap.xml",
+        })
+        assert response.status_code == 503
+        assert response.json()["detail"]["code"] == "SECRET_REFERENCE_NOT_FOUND"
+        assert email not in response.text
+        submitter.assert_not_awaited()
+    finally:
+        await db.dispose()
+
+
+# 계정을 변경한 뒤 제출하면 이전 계정이 아닌 새 계정의 파일 참조를 사용합니다.
+@pytest.mark.parametrize("engine_name", ["google", "bing"])
+async def test_account_change(sitemap_api: tuple[AsyncClient, AsyncMock], engine_name: str) -> None:
+    api, submitter = sitemap_api
+    site_id = await create_site(api)
+    payload = {"engine": engine_name, "sitemap_url": "https://example.com/sitemap.xml"}
+    assert (await api.post(f"/sites/{site_id}/sitemaps", json=payload)).status_code == 200
+    email = f"changed-{uuid4().hex}@example.com"
+    assert (await api.post("/auth-accounts", json={
+        "email": email, f"{engine_name}_secret_ref": f"{engine_name}/changed.json",
+    })).status_code == 201
+    assert (await api.patch(f"/sites/{site_id}/auth-accounts", json={
+        f"{engine_name}_account_email": email,
+    })).status_code == 200
+    assert (await api.post(f"/sites/{site_id}/sitemaps", json=payload)).status_code == 200
+    assert [call.args[-1] for call in submitter.await_args_list] == [
+        f"{engine_name}/account.json", f"{engine_name}/changed.json",
+    ]

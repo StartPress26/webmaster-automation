@@ -13,6 +13,9 @@ from app.engines.indexnow.schemas import IndexNowUrl
 from app.engines.sitemap import SitemapSubmitter
 from app.models.site import Site
 from app.schemas.sitemap import SitemapCreate, SitemapRead
+from app.services.auth_account import (
+    AuthAccountNotFoundError, SecretReferenceNotFoundError, get_secret_reference,
+)
 
 
 class SitemapError(Exception):
@@ -54,7 +57,7 @@ async def submit_sitemap(
     async with session.begin():
         site = await session.scalar(select(Site).where(
             Site.id == main_site_id, Site.target_type == "site",
-        ))
+        ).with_for_update(read=True))
         if site is None:
             raise SitemapError("MAIN_SITE_NOT_FOUND", "메인 사이트를 찾을 수 없습니다.", 404)
         if not site.is_active:
@@ -64,8 +67,24 @@ async def submit_sitemap(
 
         validate_scope(site_url, data)
 
+        email = site.google_account_email if data.engine == "google" else site.bing_account_email
+        if not email:
+            raise SitemapError(
+                "AUTH_ACCOUNT_NOT_LINKED", "메인 사이트에 해당 검색엔진의 인증 계정을 연결하세요.", 503,
+            )
+        try:
+            reference = await get_secret_reference(session, email=email, engine=data.engine)
+        except AuthAccountNotFoundError:
+            raise SitemapError(
+                "AUTH_ACCOUNT_NOT_FOUND", "연결된 검색엔진 인증 계정을 찾을 수 없습니다.", 503,
+            ) from None
+        except SecretReferenceNotFoundError:
+            raise SitemapError(
+                "SECRET_REFERENCE_NOT_FOUND", "인증 계정에 해당 검색엔진의 비밀파일 참조를 등록하세요.", 503,
+            ) from None
+
     try:
-        accepted = await submitter(data.engine, site_url, data.sitemap_url)
+        accepted = await submitter(data.engine, site_url, data.sitemap_url, reference)
     except (GoogleEngineError, BingEngineError) as error:
         messages = {
             "authentication": (503, "검색엔진 인증 설정을 확인하세요."),

@@ -1,11 +1,13 @@
 import type {
   Article,
+  AuthAccountRead,
   ClientRead,
   IndexNowSettings,
   IndexNowSettingsRead,
   PageCreateResult,
   SiteRead,
   SiteWrite,
+  SiteAuthAccountsUpdate,
   PageRead,
   InspectionRead,
   GuiInspectionCreate,
@@ -18,11 +20,13 @@ import type { ClientDashboard, SitemapSubmission } from './types';
 export { ApiError, errorDetail } from './errors.ts';
 
 export interface ApiClient {
+  readonly listAuthAccounts: () => Promise<readonly AuthAccountRead[]>;
   readonly getDashboard: (clientId: string) => Promise<ClientDashboard>;
   readonly listClients: () => Promise<readonly ClientRead[]>;
   readonly listSites: (clientId: string) => Promise<readonly SiteRead[]>;
   readonly addClient: (name: string, manager: string) => Promise<ClientRead>;
   readonly addSite: (data: SiteWrite) => Promise<SiteRead>;
+  readonly updateSiteAuthAccounts: (id: string, data: SiteAuthAccountsUpdate) => Promise<SiteRead>;
   readonly getSettings: (id: string) => Promise<IndexNowSettingsRead>;
   readonly putSettings: (id: string, data: IndexNowSettings) => Promise<IndexNowSettingsRead>;
   readonly addPage: (id: string, article: Article, notify: boolean) => Promise<PageCreateResult>;
@@ -139,6 +143,21 @@ export function createApi(
   }
 
   return {
+    // 모든 인증 계정을 읽고 이메일·참조 등록 여부만 화면에 전달합니다.
+    listAuthAccounts: async (): Promise<readonly AuthAccountRead[]> => {
+      const accounts = await list<AuthAccountRead>('/auth-accounts');
+      if (accounts.some((item): boolean => !item || typeof item.email !== 'string' ||
+          !item.email || typeof item.google_configured !== 'boolean' ||
+          typeof item.bing_configured !== 'boolean')) {
+        throw new ApiError(0, '인증 계정 목록의 형식을 확인하지 못했습니다.', {
+          code: 'INVALID_RESPONSE',
+        });
+      }
+      return accounts.map((item): AuthAccountRead => ({
+        email: item.email, google_configured: item.google_configured,
+        bing_configured: item.bing_configured,
+      }));
+    },
     // 선택한 메인 사이트의 사이트맵을 한 번 제출하고 접수 응답을 검증합니다.
     submitSitemap: async (
       id: string,
@@ -232,6 +251,16 @@ export function createApi(
       request('/clients', 'POST', { name, manager_name: manager || null }),
     // 사이트 정보를 저장하며 실제 검색엔진 등록은 실행하지 않습니다.
     addSite: (data: SiteWrite): Promise<SiteRead> => request('/sites', 'POST', data),
+    // 변경한 필드만 보내 생략에 의한 유지와 null에 의한 연결 해제를 구분합니다.
+    updateSiteAuthAccounts: async (id: string, data: SiteAuthAccountsUpdate): Promise<SiteRead> => {
+      const result = await request<SiteRead>(`/sites/${encodeURIComponent(id)}/auth-accounts`, 'PATCH', data);
+      if (result.id !== id || !['google_account_email', 'bing_account_email', 'naver_account_email'].every(
+        (key): boolean => result[key as keyof SiteRead] === null || typeof result[key as keyof SiteRead] === 'string',
+      )) throw new ApiError(0, '계정 변경 응답의 사이트·이메일 정보를 확인하지 못했습니다.', {
+        code: 'INVALID_RESPONSE', operation: 'save',
+      });
+      return result;
+    },
     // 키 원문 없이 설정 여부와 공개 파일 주소를 조회합니다.
     getSettings: (id: string): Promise<IndexNowSettingsRead> =>
       request(`/sites/${encodeURIComponent(id)}/indexnow-settings`),

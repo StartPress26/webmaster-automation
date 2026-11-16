@@ -17,6 +17,7 @@ from app.engines.bing import BingEngineError, BingUrlInspection
 from app.engines.google.google import GoogleEngineError, GoogleUrlInspection
 from app.engines.inspection import Inspector
 from app.main import app
+from app.models.auth_account import AuthAccount
 from app.models.site import Site
 from app.models.site_engine_status import SiteEngineStatus
 
@@ -57,8 +58,14 @@ async def inspection_api(migrated_database_url: str) -> AsyncIterator[AsyncClien
 # 기존 API로 메인 사이트와 저장 전용 글을 준비합니다.
 async def create_target(api: AsyncClient, kind: str = "page", root: str = "https://example.com/") -> tuple[str, str, str]:
     customer = (await api.post("/clients", json={"name": "검사 테스트"})).json()
+    email = f"account-{uuid4().hex}@example.com"
+    account = await api.post("/auth-accounts", json={
+        "email": email, "google_secret_ref": "google/account.json", "bing_secret_ref": "bing/account.json",
+    })
+    assert account.status_code == 201
     parent = (await api.post("/sites", json={
         "client_id": customer["id"], "name": "블로그", "url": root, "owner_type": "internal",
+        "google_account_email": email, "bing_account_email": email,
     })).json()
     if kind == "site":
         return parent["id"], parent["id"], root
@@ -118,7 +125,7 @@ async def test_inspection_roundtrip(
     assert body["index_status"] == result.index_status
     assert body["last_checked_at"] is not None
     assert body["error_message"] is None
-    inspector.assert_awaited_once_with(engine_name, "https://example.com/", url)
+    inspector.assert_awaited_once_with(engine_name, "https://example.com/", url, f"{engine_name}/account.json")
     assert (await inspection_api.get(path)).json() == {"items": [body]}
     inspector.assert_awaited_once()
 
@@ -140,6 +147,71 @@ async def test_inspection_roundtrip(
                 ))) == ()
     finally:
         await engine.dispose()
+
+
+# 사이트와 글 모두 부모의 엔진별 연결 누락을 거부하며 다른 계정을 사용하지 않습니다.
+@pytest.mark.parametrize("kind", ["site", "page"])
+@pytest.mark.parametrize("engine_name", ["google", "bing"])
+async def test_unlinked_account_is_rejected(
+    inspection_api: AsyncClient, kind: str, engine_name: str,
+) -> None:
+    parent_id, target_id, _ = await create_target(inspection_api, kind)
+    patched = await inspection_api.patch(f"/sites/{parent_id}/auth-accounts", json={
+        f"{engine_name}_account_email": None,
+    })
+    assert patched.status_code == 200
+    response = await inspection_api.post(f"/sites/{target_id}/inspections", json={"engine": engine_name})
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "AUTH_ACCOUNT_NOT_LINKED"
+    assert (await inspection_api.get(f"/sites/{target_id}/inspections")).json() == {"items": []}
+
+
+# 인증 행은 있어도 선택한 엔진의 파일 참조가 없으면 검사 함수를 호출하지 않습니다.
+@pytest.mark.parametrize("engine_name", ["google", "bing"])
+async def test_missing_secret_reference_is_rejected(
+    inspection_api: AsyncClient, migrated_database_url: str, engine_name: str,
+) -> None:
+    parent_id, target_id, _ = await create_target(inspection_api)
+    engine = create_async_engine(migrated_database_url, poolclass=NullPool, hide_parameters=True)
+    try:
+        async with AsyncSession(engine) as session, session.begin():
+            parent = await session.get(Site, UUID(parent_id))
+            email = getattr(parent, f"{engine_name}_account_email")
+            await session.execute(update(AuthAccount).where(AuthAccount.email == email).values({
+                f"{engine_name}_secret_ref": None,
+            }))
+        response = await inspection_api.post(f"/sites/{target_id}/inspections", json={"engine": engine_name})
+        assert response.status_code == 503
+        assert response.json()["detail"]["code"] == "SECRET_REFERENCE_NOT_FOUND"
+        assert email not in response.text
+    finally:
+        await engine.dispose()
+
+
+# 부모의 연결 계정을 변경하면 다음 글 검사부터 새 계정의 참조가 전달됩니다.
+@pytest.mark.parametrize("engine_name", ["google", "bing"])
+async def test_parent_account_change_is_used(inspection_api: AsyncClient, engine_name: str) -> None:
+    parent_id, target_id, url = await create_target(inspection_api)
+    inspector = AsyncMock(return_value=observation(engine_name, "https://example.com/", url))
+
+    # 인증 참조 전달만 확인하고 실제 파일과 외부 검색엔진은 사용하지 않습니다.
+    def dependency() -> Inspector:
+        return inspector
+
+    app.dependency_overrides[get_inspector] = dependency
+    path = f"/sites/{target_id}/inspections"
+    assert (await inspection_api.post(path, json={"engine": engine_name})).status_code == 200
+    email = f"changed-{uuid4().hex}@example.com"
+    assert (await inspection_api.post("/auth-accounts", json={
+        "email": email, f"{engine_name}_secret_ref": f"{engine_name}/changed.json",
+    })).status_code == 201
+    assert (await inspection_api.patch(f"/sites/{parent_id}/auth-accounts", json={
+        f"{engine_name}_account_email": email,
+    })).status_code == 200
+    assert (await inspection_api.post(path, json={"engine": engine_name})).status_code == 200
+    assert [call.args[-1] for call in inspector.await_args_list] == [
+        f"{engine_name}/account.json", f"{engine_name}/changed.json",
+    ]
 
 
 # 오류 원문은 노출하지 않고 기존 성공 관측을 보존하며 성공 재조회 시 오류를 지웁니다.

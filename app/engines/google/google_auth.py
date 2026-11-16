@@ -12,6 +12,8 @@ from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from requests import Session
 
+from app.core.secret_loader import SecretFileError, load_secret_json, resolve_secret_path
+
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token"
 SCOPES = (
@@ -81,13 +83,25 @@ def save_credentials(path: Path, credentials: Credentials) -> None:
 
 
 # 토큰과 권한을 검증하고, 만료된 토큰은 갱신·저장한 뒤 인증 객체를 반환합니다.
-def load_credentials(root: Path = PROJECT_ROOT) -> Credentials:
-    path = get_token_path(root)
-
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        raise GoogleAuthError("Google 토큰 파일을 읽을 수 없습니다. 최초 인증을 확인하세요.", code="token_unreadable") from None
+def load_credentials(root: Path = PROJECT_ROOT, *, secret_reference: str | None = None) -> Credentials:
+    if secret_reference is None:
+        # 명시적인 파일 참조 없이 호출하면 기존 서버 설정을 사용합니다.
+        path = get_token_path(root)
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            raise GoogleAuthError("Google 토큰 파일을 읽을 수 없습니다. 최초 인증을 확인하세요.", code="token_unreadable") from None
+    else:
+        try:
+            path = resolve_secret_path(secret_reference, secrets_root=root / ".secrets")
+            data = load_secret_json(secret_reference, secrets_root=root / ".secrets")
+        except SecretFileError as error:
+            codes: dict[str, GoogleAuthCode] = {
+                "invalid_path": "invalid_token_path", "file_unreadable": "token_unreadable",
+                "invalid_json": "token_format",
+            }
+            code = codes[error.code]
+            raise GoogleAuthError(AUTH_MESSAGES[code], code=code) from None
 
     if not isinstance(data, dict) or data.get("token_uri") != TOKEN_ENDPOINT:
         raise GoogleAuthError("Google 공식 토큰 엔드포인트가 필요합니다.", code="token_format")
