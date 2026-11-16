@@ -1,4 +1,4 @@
-"""외부 검색엔진 호출 없이 고객사별 글 통계를 집계합니다."""
+"""외부 검색엔진 호출 없이 고객사별 글 통계와 메인 사이트 관측을 읽습니다."""
 
 from collections.abc import Mapping
 from typing import Any
@@ -14,7 +14,8 @@ from app.models.client import Client
 from app.models.site import Site
 from app.models.site_engine_status import SiteEngineStatus
 from app.schemas.client import ClientRead
-from app.schemas.dashboard import ClientDashboard, DashboardSite, EngineSummary
+from app.schemas.dashboard import ClientDashboard, DashboardSite, EngineSummary, MainPageInspection
+from app.schemas.inspection import InspectionRead
 
 STATUSES = ("indexed", "not_indexed", "crawled", "submitted", "failed", "unknown")
 
@@ -87,12 +88,29 @@ async def get_dashboard(session: AsyncSession, client_id: UUID) -> ClientDashboa
         .group_by(Site.id)
         .order_by(Site.created_at, Site.id)
     )).mappings().all()
+    # 메인 관측은 별도 일괄 조회해 글 집계의 행 수와 건수에 영향을 주지 않습니다.
+    main_observations = await session.scalars(
+        select(SiteEngineStatus)
+        .join(Site, Site.id == SiteEngineStatus.site_id)
+        .where(
+            Site.client_id == client_id, Site.target_type == "site",
+            SiteEngineStatus.engine.in_(("google", "naver", "bing")),
+        )
+    )
+    main_statuses = {
+        (observation.site_id, observation.engine): InspectionRead.model_validate(observation)
+        for observation in main_observations
+    }
     sites = tuple(
         DashboardSite(
             id=row["id"], name=row["name"], url=row["url"], is_active=row["is_active"],
             page_count=row["page_count"], google=engine_summary(row, "google"),
             naver=engine_summary(row, "naver"),
             bing=engine_summary(row, "bing"),
+            main_page=MainPageInspection(**{
+                engine: main_statuses.get((row["id"], engine))
+                for engine in ("google", "naver", "bing")
+            }),
         ) for row in rows
     )
 

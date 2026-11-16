@@ -76,6 +76,12 @@ h3 { font-size: 14px; font-weight: 600; }
 .dashboard-table th, .dashboard-table td { padding: 17px 22px; text-align: left; border-bottom: 1px solid var(--border); }
 .dashboard-table th { font-size: 12px; color: #526170; background: #fafbfd; font-weight: 500; }
 .dashboard-table .url-button { max-width: 280px; overflow-wrap: anywhere; }
+.main-page-report { margin-bottom: 24px; }
+.main-page-table td, .main-page-table tbody th { vertical-align: top; }
+.main-page-table tbody th { background: #fff; }
+.main-page-observation { display: grid; gap: 7px; min-width: 150px; overflow-wrap: anywhere; }
+.main-page-status { font-size: 13px; font-weight: 500; }
+.main-page-error { color: #b3261e; }
 @media (max-width: 1050px) { .dashboard-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); } .dashboard-engines { grid-template-columns: minmax(0, 1fr); } }
 @media (max-width: 600px) { .dashboard-engines { grid-template-columns: minmax(0, 1fr); gap: 0; } .dashboard-card { padding: 16px; } .site-context { align-items: stretch; flex-direction: column; } }
 .nav-section-label { color: #7a8491; font-size: 11px; margin: 0 0 9px 29px; }

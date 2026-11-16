@@ -251,6 +251,12 @@ test('활성 사이트와 글을 스냅샷으로 수집하고 각 URL에 API와 
   assert.equal(tasks.length, 12);
   assert.equal(tasks.filter((task) => task.status === 'queued').length, 12);
   assert.equal(tasks.filter((task) => task.status === 'gui_required').length, 0);
+  const html = renderClientInspection({
+    clientId: 'a', clientName: 'A', phase: 'finished', scope: 'a:1', tabs: {},
+    cancelRequested: false, targetCount: targets.length, tasks, message: '',
+  }, 'a', 'A', false);
+  assert.match(html, /사이트 1 · 메인 사이트/);
+  assert.match(html, /사이트 1 · 개별 글/);
 
   const scoped = buildClientInspectionTasks([{ ...targets[0], siteUrl: 'https://one.example/blog' }]);
 

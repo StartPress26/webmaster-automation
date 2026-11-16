@@ -61,7 +61,7 @@ function observationDetails(task: ClientInspectionTask): string {
 
 // 작업 결과는 저장 성공과 실제 색인 확인 여부가 구분되도록 표시합니다.
 function taskRow(task: ClientInspectionTask): string {
-  return `<tr><td><span class="inspection-result-site">${escape(task.target.siteName)}</span><span class="inspection-result-url">${escape(task.target.url)}</span></td>
+  return `<tr><td><span class="inspection-result-site">${escape(task.target.siteName)} · ${task.target.id === task.target.siteId ? '메인 사이트' : '개별 글'}</span><span class="inspection-result-url">${escape(task.target.url)}</span></td>
     <td><span class="inspection-engine-name"><span class="engine-symbol ${task.engine}" aria-hidden="true">${task.engine === 'naver' ? 'N' : task.engine === 'google' ? 'G' : 'b'}</span>${engineNames[task.engine]}${task.engine === 'bing' ? ` ${task.route.toUpperCase()}` : ''}</span></td>
     <td><span class="inspection-result-status ${task.status}">${statusNames[task.status]}</span></td><td class="inspection-result-message">${escape(task.message)}${observationDetails(task)}</td></tr>`;
 }
