@@ -1,10 +1,10 @@
 # 작업 인계 문서
 
-## 현재 인계 요약 — 2026-11-16 메인 사이트 대시보드·Bing 표시 통일 / Asia/Seoul
+## 현재 인계 요약 — 2026-11-16 메인 사이트 대시보드·Bing 표시 통일·PR #9 / Asia/Seoul
 
-**이 절과 맨 아래 `마지막 상태 — 최신 / 2026-11-16 메인 사이트 대시보드 검토·커밋`를 우선한다. 아래 메인페이지 표시 미구현·Bing 라벨 미정리·통합 테스트 미실행 설명은 과거 상태다.**
+**이 절과 맨 아래 `마지막 상태 — 최신 / 2026-11-16 메인 사이트 대시보드 PR #9`를 우선한다. 아래 메인페이지 표시 미구현·Bing 라벨 미정리·통합 테스트 미실행·push/PR 미승인 설명은 과거 상태다.**
 
-- 브랜치는 `feat/main-page-inspection-dashboard`다. 기존 버전 0.1.1 커밋 `a92d0cf`와 인계 커밋 `858c1ec` 위에 이번 기능을 정리한다. 사용자가 리뷰 후 문제가 없으면 로컬 커밋까지 진행하도록 요청했다. push·PR·병합·운영 배포는 이번 요청 범위가 아니다.
+- 브랜치는 `feat/main-page-inspection-dashboard`다. 기존 버전 0.1.1 커밋 `a92d0cf`와 인계 커밋 `858c1ec` 위에 기능·테스트·문서를 **`1616e68` — `[feat] 메인 사이트 검사 현황을 대시보드에 반영`**으로 커밋했다. 후속 사용자 요청으로 해당 기능 커밋을 같은 원격 브랜치에 push하고 main 대상 [PR #9](https://github.com/StartPress26/webmaster-automation/pull/9)를 생성했다. 이 인계 갱신은 별도 docs 커밋으로 정리해 같은 브랜치에 push한다. 병합·운영 배포는 하지 않는다.
 - `GET /clients/{id}/dashboard`의 블로그별 응답에 `main_page.google/naver/bing`을 추가했다. 메인 사이트 ID의 기존 최신 관측을 일괄 조회하며, 저장 행이 없으면 null이다. 등록 글 수·글 통계에는 합산하지 않고 비활성 사이트의 이전 상태도 표시한다. DB 테이블·마이그레이션 추가는 없다.
 - 대시보드에 메인 URL·엔진별 상태·성공 관측 시각·최근 오류를 별도 표로 표시한다. 성공 관측이 없으면 미확인으로 표시하며, 필드가 없는 이전 서버 응답은 서버 업데이트 안내로 구분한다. 예시 모드도 메인 관측과 글 통계를 분리한다.
 - 기존 전체 조회는 이미 활성 메인 사이트와 활성 글을 검사하므로 재사용했다. 실행 목록에 메인 사이트·개별 글 구분을 추가했고, 글 0개 사이트 검사와 종료 후 대시보드 자동 재조회·결과 반영을 DOM 회귀 테스트로 확인했다.
@@ -13,6 +13,21 @@
 - 설치 확장의 API는 `127.0.0.1:18001`이다. 운영은 SSH 터널→Lightsail을 사용한다. 확장에서 로컬 API를 시험할 때는 같은 포트의 SSH 터널을 종료하고 API를 18001로 실행한다. 현재 Vite 개발 프록시는 로컬 8000이며 설치 확장에는 적용되지 않는다. 로컬 API는 `.env`의 DB를 사용하므로 Docker 로컬 DB·등록 데이터·인증파일을 운영과 구분한다.
 - 실제 Chrome GUI 전체 순회·Lightsail 배포·이번 변경의 스토어 업로드는 이번 검증에 포함하지 않았다. 버전은 **0.1.1**을 유지했고 기존 ZIP은 재생성하지 않았다. 다음 스토어 업데이트는 더 높은 버전과 새 ZIP이 필요하다.
 - 커밋 제외로 보존: `extension/vite.config.ts`, `extension/startpress-extension.zip`, `dist/`, `.env`, `.secrets`, 토큰·키·비공개 실행 기록. 최종 커밋은 `git log -1`과 `git status`로 확인한다.
+
+### 진행 중인 작업과 다음 순서
+
+1. PR #9 리뷰를 진행한다. 이번 요청은 PR 생성까지이며 자동 병합하지 않는다.
+2. 사용자 병합·배포 요청 후 Lightsail의 main을 갱신하고 API 이미지를 재빌드한다. 이번 기능은 DB 마이그레이션이 필요 없으며, 기존 운영 DB의 메인 사이트 관측을 새 응답에서 반환한다.
+3. 새 확장을 적용해 `main_page` 응답과 메인 사이트 표시·전체 조회 후 자동 갱신을 실제로 확인한다. 실제 브라우저 작업 전 `.cursor/rules/bot-execution-records.mdc`를 읽고 비공개 실행 기록을 남긴다.
+4. 스토어 배포 요청 시 버전을 0.1.1보다 높이고 재검증·빌드·ZIP 생성을 진행한다. 기존 ZIP이 이번 브랜치의 최신 소스와 일치한다고 설명하지 않는다.
+
+### 관련 파일
+
+- `app/services/dashboard.py`, `app/schemas/dashboard.py`: 등록 글 집계와 메인 사이트 관측 응답.
+- `extension/src/dashboard.ts`, `extension/src/types.ts`, `extension/src/styles.css`: 메인 사이트 표와 엔진별 표시 통일.
+- `extension/src/inspection/client-view.ts`: 실행 목록의 메인 사이트·개별 글 구분.
+- `tests/integration/test_dashboard_api.py`, `extension/tests/dashboard.test.mjs`, `extension/tests/client-inspection.test.mjs`, `extension/tests/workspace.test.mjs`: DB 분리·표시·자동 갱신 회귀 검증.
+- `docs/dashboard-api.md`: 응답 계약·집계 범위·서버 선반영 안내.
 
 ## 이전 인계 요약 — 2026-11-16 운영 검증·확장 0.1.1·미커밋 정리 / Asia/Seoul
 
@@ -1358,10 +1373,10 @@ Notion은 요구사항·설계 자료다. 실제 구현·적용 여부는 이 �
 
 새 세션 시작 문구: **“docs/HANDOFF.md 최상단과 맨 아래 2026-11-16 요약부터 읽어줘. feat/main-page-inspection-dashboard에서 기존 c0e60ba의 Bing 카드 변경에 이어 버전 0.1.1 커밋 a92d0cf와 HANDOFF 커밋·push를 승인받아 진행했어. 최종 HEAD·원격 일치는 Git에서 확인해줘. Bing 라벨과 표는 아직이고 PR·배포는 하지 않았어. Vite 프록시·ZIP·비밀파일은 제외해줘. 운영 인증은 확인됐고 메인페이지와 등록 글 통계는 구분해야 해. 현재 ZIP은 c0e60ba 미포함이야.”**
 
-## 마지막 상태 — 최신 / 2026-11-16 메인 사이트 대시보드 검토·커밋
+## 마지막 상태 — 최신 / 2026-11-16 메인 사이트 대시보드 PR #9
 
 - 메인 사이트 저장 관측의 대시보드 API·별도 표, 실행 목록의 메인/글 구분과 완료 후 자동 반영 회귀 검증, Bing 카드·표·상태 순서 통일을 완료했다. 글 통계와 메인 관측은 분리한다.
 - 백엔드 단위 655개·대시보드 PostgreSQL 통합 5개·프론트 136개·타입 검사·빌드·diff 검사 통과. 실제 외부 검색엔진 검사나 운영 배포를 새로 실행한 것은 아니다.
-- 사용자가 리뷰 후 로컬 커밋까지 승인했다. 최종 커밋은 Git에서 확인한다. Vite 프록시와 기존 ZIP은 커밋하지 않는다. 이번 변경의 push·PR·병합·배포·버전 증가·ZIP 재생성은 수행하지 않는다.
+- 기능 커밋 `1616e68`을 원격 브랜치에 push하고 main 대상 [PR #9](https://github.com/StartPress26/webmaster-automation/pull/9)를 생성했다. 후속 HANDOFF docs 커밋과 최종 원격 일치는 Git에서 확인한다. Vite 프록시와 기존 ZIP은 커밋하지 않는다. 병합·배포·버전 증가·ZIP 재생성은 수행하지 않는다.
 
-새 세션 시작 문구: **“docs/HANDOFF.md의 최상단과 맨 아래 최신 상태부터 읽어줘. 메인 사이트를 글 통계와 분리해 대시보드에 표시하고 Bing 표시도 Google·네이버와 통일했어. 백엔드 단위 655개·임시 PostgreSQL 통합 5개·프론트 136개와 빌드가 통과했고 리뷰 후 로컬 커밋까지 요청했어. 최종 커밋과 남은 Vite·ZIP 변경을 확인해줘. push·PR·배포는 아직 요청하지 않았고 스토어 업데이트는 별도야.”**
+새 세션 시작 문구: **“docs/HANDOFF.md의 최상단과 맨 아래 최신 상태부터 읽어줘. feat/main-page-inspection-dashboard에서 메인 사이트 별도 표시와 Bing 표시 통일을 1616e68로 커밋·push하고 main 대상 PR #9를 생성했어. HANDOFF 갱신도 별도 docs 커밋·push 범위야. 백엔드 단위 655개·임시 PostgreSQL 통합 5개·프론트 136개와 빌드가 통과했어. 최종 커밋·원격 일치·PR 상태를 확인하고, 기존 Vite·ZIP 변경은 보존해줘. 병합·운영 배포·새 스토어 업데이트는 아직 수행하지 않았어.”**
