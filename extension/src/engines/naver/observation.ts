@@ -1,12 +1,66 @@
 import { canonicalHttpUrl } from '../../url.ts';
 
+// 이 파일은 네이버 서치어드바이저 페이지 안(콘텐츠 스크립트)과 관리 화면 양쪽에서 쓰입니다.
+// DOM을 읽고 조작하는 함수는 모두 호출자가 넘긴 document만 사용합니다.
+
+// ─────────────────────────────────────────────────────────────
+// 상수
+// ─────────────────────────────────────────────────────────────
+
+// 확장 관리 화면 ↔ 콘텐츠 스크립트 사이의 메시지 종류
 export const NAVER_READ_MESSAGE = 'STARTPRESS_READ_NAVER_OBSERVATION';
+export const NAVER_AUTOMATION_MESSAGE = 'STARTPRESS_NAVER_AUTOMATION';
+
+// 네이버 서치어드바이저의 출처와 화면 경로
+export const NAVER_ORIGIN = 'https://searchadvisor.naver.com';
+export const NAVER_BOARD_PATH = '/console/board';
+export const NAVER_SUMMARY_PATH = '/console/site/summary';
+export const NAVER_INSPECTION_PATH = '/console/site/check/inspection';
+export const NAVER_COLLECTION_PATH = '/console/site/request/crawl';
+export const NAVER_BOARD_URL = `${NAVER_ORIGIN}${NAVER_BOARD_PATH}`;
+
+// 네이버가 색인 상태 확인 화면에 표시하는 판정 문구 (글자 그대로 비교)
 export const NAVER_INDEXED_MESSAGE =
   '문서가 성공적으로 색인됐습니다. 해당 문서를 검색할 수 있습니다.';
-export const NAVER_AUTOMATION_MESSAGE = 'STARTPRESS_NAVER_AUTOMATION';
-export const NAVER_BOARD_URL = 'https://searchadvisor.naver.com/console/board';
 export const NAVER_NO_RESULT_MESSAGE = 'URL 검사 결과가 없습니다.';
 
+// 사이트 목록에서 사이트 링크가 가리킬 수 있는 경로
+const SITE_LINK_PATHS: readonly string[] = [NAVER_BOARD_PATH, NAVER_SUMMARY_PATH];
+
+// 입력칸으로 인정하는 input 종류. 미리보기 읽기는 검색(search) 칸도 허용합니다.
+const INSPECTION_INPUT_TYPES: readonly string[] = ['text', 'url'];
+const PREVIEW_INPUT_TYPES: readonly string[] = ['text', 'url', 'search'];
+
+// 숨겨진 것으로 보는 조상 요소
+const HIDDEN_ANCESTOR_SELECTOR = '[hidden], [aria-hidden="true"], script, style, noscript';
+// 판정 문구를 모을 때 제외하는 아이콘·장식 요소
+const JUDGEMENT_DECORATION_SELECTOR =
+  'i, svg, [role="img"], [aria-hidden="true"], [hidden], .v-icon, .material-icons';
+// 판정 문구가 들어 있을 수 있는 요소
+const RESULT_CONTAINER_SELECTOR = 'div, p, span';
+const BUTTON_SELECTOR = 'button, [role="button"]';
+const CONFIRM_BUTTON_LABEL = '확인';
+
+// "색인 완료 아니오" 배지와 "최종 업데이트 YYYY. M. D." 문구
+const NOT_INDEXED_BADGE = /^색인\s*완료\s*(아니오|아니요)$/;
+const LAST_UPDATED_TEXT = /^최종\s*업데이트\s*\d{2,4}\.\s*\d{1,2}\.\s*\d{1,2}\.?$/;
+
+// 수집 요청 내역 표의 헤더(열 이름을 |로 이어 비교)
+const HISTORY_TABLE_HEADERS = 'No|URL|등록일';
+
+// URL 검사 자동화: 새 결과를 기다리는 최대 시간과 확인 주기
+const DEFAULT_INSPECTION_TIMEOUT_MS = 15000;
+const INSPECTION_POLL_MS = 150;
+
+// DOM 노드 종류
+const TEXT_NODE = 3;
+const ELEMENT_NODE = 1;
+
+// ─────────────────────────────────────────────────────────────
+// 타입 정의
+// ─────────────────────────────────────────────────────────────
+
+// 콘텐츠 스크립트가 알려주는 현재 화면 상태
 export interface NaverPageState {
   readonly route: 'board' | 'summary' | 'inspection' | 'collection' | 'auth' | 'other';
   readonly siteUrl: string | null;
@@ -14,6 +68,7 @@ export interface NaverPageState {
   readonly documentToken: string;
 }
 
+// URL 검사 자동화로 확인한 결과. 입력한 URL과 화면의 사이트가 일치함을 검증했습니다.
 export interface NaverAutomationObservation {
   readonly kind: 'verified_gui';
   readonly siteUrl: string;
@@ -25,6 +80,7 @@ export interface NaverAutomationObservation {
   readonly targetVerified: true;
 }
 
+// 자동화가 중단된 이유
 export type NaverAutomationCode =
   | 'wrong_page'
   | 'auth_required'
@@ -38,32 +94,7 @@ export type NaverAutomationCode =
   | 'script_unavailable'
   | 'invalid_response';
 
-export class NaverAutomationError extends Error {
-  readonly code: NaverAutomationCode;
-  // 원본 페이지·요청·예외 대신 고정된 원인만 보관합니다.
-  constructor(code: NaverAutomationCode) {
-    const messages: Readonly<Record<NaverAutomationCode, string>> = {
-      wrong_page: '네이버 작업 탭이 예상한 콘솔 화면에 있지 않습니다.',
-      auth_required: '네이버 인증이 필요합니다. 작업 탭에서 직접 확인한 뒤 다시 실행하세요.',
-      site_missing:
-        '네이버 사이트 목록에서 해당 메인 사이트를 찾지 못했습니다. 등록·접근 권한을 확인하세요.',
-      ambiguous_control: '네이버의 입력칸·확인 버튼·사이트 항목을 하나로 식별하지 못했습니다.',
-      page_changed: '작업 중 사이트·URL·문서가 바뀌어 네이버 조회를 중단했습니다.',
-      busy: '네이버 탭에서 다른 조회가 진행 중입니다.',
-      timeout: '새 네이버 결과나 화면 전환을 확인하지 못해 중단했습니다. 자동 재조회하지 않습니다.',
-      cancelled: '네이버 자동 조회를 취소했습니다.',
-      receipt_unconfirmed:
-        '수집 요청이 전송됐을 수 있으나 접수 여부를 확인하지 못했습니다. 요청 내역을 직접 확인하세요. 자동 재요청하지 않습니다.',
-      script_unavailable:
-        '네이버 작업 스크립트와 연결되지 않아 수집 요청을 시작하지 못했습니다. 확장을 새로고침했다면 네이버 탭도 새로고침한 뒤 실행하세요.',
-      invalid_response: '네이버 자동 조회 응답의 대상·판정·작업 ID를 확인하지 못했습니다.',
-    };
-
-    super(messages[code]);
-    this.code = code;
-  }
-}
-
+// 화면에 보이는 결과를 그대로 읽은 미리보기. 입력 URL과의 연결은 검증하지 않았습니다.
 export interface NaverVisibleObservation {
   readonly kind: 'visible_preview';
   readonly siteUrl: string;
@@ -75,6 +106,7 @@ export interface NaverVisibleObservation {
   readonly targetVerified: false;
 }
 
+// 미리보기 읽기 결과
 export type NaverReadResult =
   | { readonly ok: true; readonly observation: NaverVisibleObservation }
   | {
@@ -88,43 +120,245 @@ export type NaverReadResult =
         | 'result_conflict';
     };
 
+// 검사 전에 화면에 있던 판정 요소와 그 문구
+interface PreviousMarker {
+  readonly node: Element;
+  readonly text: string;
+}
+
+// ─────────────────────────────────────────────────────────────
+// 오류
+// ─────────────────────────────────────────────────────────────
+
+const AUTOMATION_MESSAGES: Readonly<Record<NaverAutomationCode, string>> = {
+  wrong_page: '네이버 작업 탭이 예상한 콘솔 화면에 있지 않습니다.',
+  auth_required: '네이버 인증이 필요합니다. 작업 탭에서 직접 확인한 뒤 다시 실행하세요.',
+  site_missing:
+    '네이버 사이트 목록에서 해당 메인 사이트를 찾지 못했습니다. 등록·접근 권한을 확인하세요.',
+  ambiguous_control: '네이버의 입력칸·확인 버튼·사이트 항목을 하나로 식별하지 못했습니다.',
+  page_changed: '작업 중 사이트·URL·문서가 바뀌어 네이버 조회를 중단했습니다.',
+  busy: '네이버 탭에서 다른 조회가 진행 중입니다.',
+  timeout: '새 네이버 결과나 화면 전환을 확인하지 못해 중단했습니다. 자동 재조회하지 않습니다.',
+  cancelled: '네이버 자동 조회를 취소했습니다.',
+  receipt_unconfirmed:
+    '수집 요청이 전송됐을 수 있으나 접수 여부를 확인하지 못했습니다. 요청 내역을 직접 확인하세요. 자동 재요청하지 않습니다.',
+  script_unavailable:
+    '네이버 작업 스크립트와 연결되지 않아 수집 요청을 시작하지 못했습니다. 확장을 새로고침했다면 네이버 탭도 새로고침한 뒤 실행하세요.',
+  invalid_response: '네이버 자동 조회 응답의 대상·판정·작업 ID를 확인하지 못했습니다.',
+};
+
+// 네이버 자동화가 중단됐을 때 던지는 예외. 코드마다 고정된 안내 문구를 가집니다.
+export class NaverAutomationError extends Error {
+  readonly code: NaverAutomationCode;
+
+  // 원본 페이지·요청·예외 대신 고정된 원인만 보관합니다.
+  constructor(code: NaverAutomationCode) {
+    super(AUTOMATION_MESSAGES[code]);
+    this.code = code;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+// URL·화면 판별
+// ─────────────────────────────────────────────────────────────
+
 // 인증정보나 프래그먼트가 있는 URL, HTTP가 아닌 값은 읽기 대상에서 제외하고 나머지는 정규화합니다.
 export function canonicalNaverTarget(value: string): string | null {
   return canonicalHttpUrl(value);
 }
 
-// 実画面で確認した色イン状態確認ルートだけを許可します。
-export function isNaverInspectionPage(value: string): boolean {
+// 아이디·비밀번호 없이 네이버 서치어드바이저의 특정 경로를 가리키는 주소인지 확인합니다.
+function isNaverPath(value: string, pathname: string): boolean {
   try {
     const url = new URL(value);
-    return (
-      url.origin === 'https://searchadvisor.naver.com' &&
-      url.pathname === '/console/site/check/inspection' &&
-      !url.username &&
-      !url.password
-    );
+    return url.origin === NAVER_ORIGIN && url.pathname === pathname && !url.username && !url.password;
   } catch {
     return false;
   }
 }
 
+// 실제 화면에서 확인한 색인 상태 확인 경로만 허용합니다.
+export function isNaverInspectionPage(value: string): boolean {
+  return isNaverPath(value, NAVER_INSPECTION_PATH);
+}
+
+// 실제 확인한 네이버 웹 페이지 수집 경로만 허용합니다.
+export function isNaverCollectionPage(value: string): boolean {
+  return isNaverPath(value, NAVER_COLLECTION_PATH);
+}
+
+// 주소가 네이버 사이트 목록(board) 화면인지 확인합니다. 해석할 수 없는 주소는 예외를 던집니다.
+function isBoardPage(pageUrl: string): boolean {
+  const url = new URL(pageUrl);
+  return url.origin === NAVER_ORIGIN && url.pathname === NAVER_BOARD_PATH;
+}
+
+// 경로로 현재 화면 종류를 정합니다.
+function routeOf(pathname: string): NaverPageState['route'] {
+  if (pathname === NAVER_BOARD_PATH) return 'board';
+  if (pathname === NAVER_SUMMARY_PATH) return 'summary';
+  if (pathname === NAVER_INSPECTION_PATH) return 'inspection';
+  if (pathname === NAVER_COLLECTION_PATH) return 'collection';
+  return 'other';
+}
+
+// 인증(로그인) 화면이거나 네이버가 아닌 주소인지 확인합니다.
+function isAuthRoute(url: URL): boolean {
+  if (url.origin !== NAVER_ORIGIN) return true;
+  return url.pathname.startsWith('/auth') || url.pathname.includes('login');
+}
+
+// 공개 HTTP URL만 같은 사이트 범위에 있는지 검사합니다.
+export function naverTargetInSite(site: string, target: string): boolean {
+  const siteUrl = canonicalNaverTarget(site);
+  const targetUrl = canonicalNaverTarget(target);
+  if (!siteUrl || !targetUrl) return false;
+
+  const parent = new URL(siteUrl);
+  const child = new URL(targetUrl);
+  if (parent.origin !== child.origin) return false;
+
+  const samePath = child.pathname === parent.pathname;
+  const underParent = child.pathname.startsWith(parent.pathname.replace(/\/$/, '') + '/');
+  return samePath || underParent;
+}
+
+// ─────────────────────────────────────────────────────────────
+// DOM 읽기 도우미
+// ─────────────────────────────────────────────────────────────
+
+// 연속 공백을 하나로 줄이고 양끝 공백을 없앱니다.
+function normalizeText(value: string): string {
+  return value.replace(/\s+/g, ' ').trim();
+}
+
+// 요소의 textContent를 정규화해 돌려줍니다.
+function elementText(element: Element): string {
+  return normalizeText(element.textContent ?? '');
+}
+
+// 계산된 스타일상 보이지 않는 요소인지 확인합니다.
+function isHiddenByStyle(element: Element, view: Window | null): boolean {
+  const style = view?.getComputedStyle(element);
+  if (!style) return false;
+  return style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse';
+}
+
 // 숨김 요소와 문서 밖 요소를 배제하고 실제 표시된 입력·결과만 읽습니다.
 export function isNaverElementVisible(element: Element, document: Document): boolean {
-  if (element.closest('[hidden], [aria-hidden="true"], script, style, noscript')) return false;
+  if (element.closest(HIDDEN_ANCESTOR_SELECTOR)) return false;
 
   const view = document.defaultView;
-
   for (let parent: Element | null = element; parent; parent = parent.parentElement) {
-    const style = view?.getComputedStyle(parent);
-    if (
-      style?.display === 'none' ||
-      style?.visibility === 'hidden' ||
-      style?.visibility === 'collapse'
-    )
-      return false;
+    if (isHiddenByStyle(parent, view)) return false;
   }
 
   return element.getClientRects().length > 0;
+}
+
+// 아이콘·장식·숨김 노드의 텍스트를 제외하고 요소 안의 표시 텍스트를 모읍니다.
+// 자식 텍스트는 원래 공백을 보존해 모은 뒤 마지막에만 정규화합니다.
+export function collectVisibleText(element: Element, excludeSelector: string): string {
+  function collect(node: Node): string {
+    if (node.nodeType === TEXT_NODE) return node.textContent ?? '';
+    if (node.nodeType !== ELEMENT_NODE) return '';
+
+    const child = node as Element;
+    if (child.matches(excludeSelector)) return '';
+
+    return Array.from(child.childNodes).map(collect).join('');
+  }
+
+  return normalizeText(collect(element));
+}
+
+// 판정 문구의 인라인 서식은 보존하고 아이콘·장식만 제외한 텍스트
+function judgementText(element: Element): string {
+  return collectVisibleText(element, JUDGEMENT_DECORATION_SELECTOR);
+}
+
+// 요소 안에 자식이 같은 문구를 갖고 있으면(부모·자식 중복) 바깥 요소는 판정 영역으로 보지 않습니다.
+function hasChildWithSameText(element: Element, text: string): boolean {
+  return Array.from(element.children).some((child): boolean => judgementText(child) === text);
+}
+
+// 판정 텍스트가 정확한 결과 영역 하나만 선택하고 부모·자식의 중복은 제외합니다.
+function resultMarkers(document: Document): readonly Element[] {
+  return Array.from(document.querySelectorAll(RESULT_CONTAINER_SELECTOR)).filter((element): boolean => {
+    const text = judgementText(element);
+    if (![NAVER_INDEXED_MESSAGE, NAVER_NO_RESULT_MESSAGE].includes(text)) return false;
+    if (hasChildWithSameText(element, text)) return false;
+    return isNaverElementVisible(element, document);
+  });
+}
+
+// 확인 버튼은 표시된 정확한 이름으로만 찾고 수집 요청 버튼은 선택하지 않습니다.
+export function confirmationButtons(document: Document): readonly HTMLButtonElement[] {
+  return Array.from(document.querySelectorAll<HTMLButtonElement>('button')).filter(
+    (button): boolean =>
+      button.textContent?.trim() === CONFIRM_BUTTON_LABEL &&
+      !button.disabled &&
+      isNaverElementVisible(button, document),
+  );
+}
+
+// 검사 화면의 편집 가능한 URL 입력칸만 찾습니다.
+export function inspectionInputs(document: Document): readonly HTMLInputElement[] {
+  return Array.from(document.querySelectorAll<HTMLInputElement>('input')).filter(
+    (input): boolean =>
+      INSPECTION_INPUT_TYPES.includes(input.type) &&
+      !input.disabled &&
+      !input.readOnly &&
+      isNaverElementVisible(input, document),
+  );
+}
+
+// 표의 헤더 열 이름을 |로 이어 붙입니다.
+function tableHeaderSignature(table: HTMLTableElement): string {
+  return Array.from(table.querySelectorAll('thead th')).map(elementText).join('|');
+}
+
+// 실제 확인한 헤더를 가진 표시 중인 수집 요청 내역 표 하나만 반환합니다.
+export function naverCollectionHistoryTable(document: Document): HTMLTableElement | null {
+  const tables = Array.from(document.querySelectorAll<HTMLTableElement>('table')).filter(
+    (table): boolean =>
+      isNaverElementVisible(table, document) && tableHeaderSignature(table) === HISTORY_TABLE_HEADERS,
+  );
+  if (tables.length !== 1) return null;
+  return tables[0] ?? null;
+}
+
+// 화면이 이전 내역을 불러오는 중이면 접수 비교의 기준 상태로 사용하지 않습니다.
+export function isNaverCollectionHistoryLoading(document: Document): boolean {
+  return Array.from(document.querySelectorAll('[aria-busy="true"], [role="progressbar"]')).some(
+    (element): boolean => isNaverElementVisible(element, document),
+  );
+}
+
+// 판정 문구가 "색인됨" 문구와 같으면 indexed, 아니면 unknown입니다.
+function indexStatusOf(message: string): 'indexed' | 'unknown' {
+  return message === NAVER_INDEXED_MESSAGE ? 'indexed' : 'unknown';
+}
+
+// ─────────────────────────────────────────────────────────────
+// 화면 관측 미리보기 (입력 URL과의 연결은 검증하지 않음)
+// ─────────────────────────────────────────────────────────────
+
+// 미리보기용 입력칸: 보이는 텍스트·URL·검색 칸 중 올바른 URL이 들어 있는 것
+function previewInputs(document: Document): readonly HTMLInputElement[] {
+  return Array.from(document.querySelectorAll<HTMLInputElement>('input')).filter(
+    (input): boolean =>
+      PREVIEW_INPUT_TYPES.includes(input.type) &&
+      isNaverElementVisible(input, document) &&
+      canonicalNaverTarget(input.value) !== null,
+  );
+}
+
+// 화면에 보이는 버튼들의 문구
+function visibleButtonTexts(document: Document): readonly string[] {
+  return Array.from(document.querySelectorAll(BUTTON_SELECTOR))
+    .filter((element): boolean => isNaverElementVisible(element, document))
+    .map(elementText);
 }
 
 // 문서 본문 원문 대신 화면에서 검증한 고정 판정 문구와 제한된 메타 정보만 반환합니다.
@@ -139,37 +373,27 @@ export function readNaverVisibleObservation(
   const siteUrl = canonicalNaverTarget(new URL(pageUrl).searchParams.get('site') ?? '');
   if (!siteUrl) return { ok: false, code: 'site_missing' };
 
-  const inputs = Array.from(document.querySelectorAll<HTMLInputElement>('input')).filter(
-    (input): boolean =>
-      ['text', 'url', 'search'].includes(input.type) &&
-      isNaverElementVisible(input, document) &&
-      canonicalNaverTarget(input.value) !== null,
-  );
+  const inputs = previewInputs(document);
   const input = inputs[0];
   if (inputs.length !== 1 || !input) return { ok: false, code: 'target_ambiguous' };
 
   const inputUrl = canonicalNaverTarget(input.value);
   if (!inputUrl) return { ok: false, code: 'target_ambiguous' };
 
-  const messages = resultMarkers(document);
-  if (messages.length !== 1) return { ok: false, code: 'result_unrecognized' };
-
-  const marker = messages[0];
-  if (!marker) return { ok: false, code: 'result_unrecognized' };
+  const markers = resultMarkers(document);
+  const marker = markers[0];
+  if (markers.length !== 1 || !marker) return { ok: false, code: 'result_unrecognized' };
 
   const message = judgementText(marker);
-  const fields = Array.from(document.querySelectorAll('button, [role="button"]'))
-    .filter((element): boolean => isNaverElementVisible(element, document))
-    .map((element): string => element.textContent?.replace(/\s+/g, ' ').trim() ?? '');
-  if (
-    message === NAVER_INDEXED_MESSAGE &&
-    fields.some((text): boolean => /^색인\s*완료\s*(아니오|아니요)$/.test(text))
-  )
-    return { ok: false, code: 'result_conflict' };
+  const buttonTexts = visibleButtonTexts(document);
 
-  const updated = fields.find((text): boolean =>
-    /^최종\s*업데이트\s*\d{2,4}\.\s*\d{1,2}\.\s*\d{1,2}\.?$/.test(text),
-  );
+  // "색인됨" 문구와 "색인 완료 아니오" 배지가 함께 보이면 서로 모순이므로 읽지 않습니다.
+  const hasNotIndexedBadge = buttonTexts.some((text): boolean => NOT_INDEXED_BADGE.test(text));
+  if (message === NAVER_INDEXED_MESSAGE && hasNotIndexedBadge) {
+    return { ok: false, code: 'result_conflict' };
+  }
+
+  const updated = buttonTexts.find((text): boolean => LAST_UPDATED_TEXT.test(text));
 
   return {
     ok: true,
@@ -177,7 +401,7 @@ export function readNaverVisibleObservation(
       kind: 'visible_preview',
       siteUrl,
       inputUrl,
-      indexStatus: message === NAVER_INDEXED_MESSAGE ? 'indexed' : 'unknown',
+      indexStatus: indexStatusOf(message),
       message,
       engineUpdatedText: updated ?? null,
       readAt,
@@ -186,60 +410,22 @@ export function readNaverVisibleObservation(
   };
 }
 
-// 공개 HTTP URL만 같은 사이트 범위에 있는지 검사합니다.
-export function naverTargetInSite(site: string, target: string): boolean {
-  const siteUrl = canonicalNaverTarget(site);
-  const targetUrl = canonicalNaverTarget(target);
-  if (!siteUrl || !targetUrl) return false;
+// ─────────────────────────────────────────────────────────────
+// 화면 상태와 사이트 선택
+// ─────────────────────────────────────────────────────────────
 
-  const parent = new URL(siteUrl);
-  const child = new URL(targetUrl);
-
-  return (
-    parent.origin === child.origin &&
-    (child.pathname === parent.pathname ||
-      child.pathname.startsWith(parent.pathname.replace(/\/$/, '') + '/'))
-  );
-}
-
-// 확인 버튼은 표시된 정확한 이름으로만 찾고 수집 요청 버튼은 선택하지 않습니다.
-function confirmationButtons(document: Document): readonly HTMLButtonElement[] {
-  return Array.from(document.querySelectorAll<HTMLButtonElement>('button')).filter(
-    (button): boolean =>
-      button.textContent?.trim() === '확인' &&
-      !button.disabled &&
-      isNaverElementVisible(button, document),
-  );
-}
-
-// 검사 화면의 편집 가능한 URL 입력칸만 찾습니다.
-function inspectionInputs(document: Document): readonly HTMLInputElement[] {
-  return Array.from(document.querySelectorAll<HTMLInputElement>('input')).filter(
-    (input): boolean =>
-      ['text', 'url'].includes(input.type) &&
-      !input.disabled &&
-      !input.readOnly &&
-      isNaverElementVisible(input, document),
-  );
-}
-
-// 실제 확인한 헤더를 가진 표시 중인 수집 요청 내역 표 하나만 반환합니다.
-export function naverCollectionHistoryTable(document: Document): HTMLTableElement | null {
-  const tables = Array.from(document.querySelectorAll<HTMLTableElement>('table')).filter(
-    (table): boolean =>
-      isNaverElementVisible(table, document) &&
-      Array.from(table.querySelectorAll('thead th'))
-        .map((cell): string => cell.textContent?.replace(/\s+/g, ' ').trim() ?? '')
-        .join('|') === 'No|URL|등록일',
-  );
-  return tables.length === 1 ? tables[0] ?? null : null;
-}
-
-// 화면이 이전 내역을 불러오는 중이면 접수 비교의 기준 상태로 사용하지 않습니다.
-export function isNaverCollectionHistoryLoading(document: Document): boolean {
-  return Array.from(document.querySelectorAll('[aria-busy="true"], [role="progressbar"]')).some(
-    (element): boolean => isNaverElementVisible(element, document),
-  );
+// 화면 종류별로 자동화를 시작할 준비가 됐는지 확인합니다.
+function isRouteReady(document: Document, route: NaverPageState['route'], siteUrl: string | null): boolean {
+  if (route === 'board') {
+    return Boolean(document.querySelector('table, [role="table"]'));
+  }
+  if (route === 'inspection' || route === 'collection') {
+    if (inspectionInputs(document).length !== 1) return false;
+    if (confirmationButtons(document).length !== 1) return false;
+    if (route !== 'collection') return true;
+    return Boolean(naverCollectionHistoryTable(document)) && !isNaverCollectionHistoryLoading(document);
+  }
+  return route === 'summary' && Boolean(siteUrl);
 }
 
 // 인증 화면의 DOM은 읽지 않고 경로로 먼저 중단합니다.
@@ -249,97 +435,100 @@ export function naverPageState(
   documentToken: string,
 ): NaverPageState {
   const url = new URL(pageUrl);
-  if (
-    url.origin !== 'https://searchadvisor.naver.com' ||
-    url.pathname.startsWith('/auth') ||
-    url.pathname.includes('login')
-  ) {
+  if (isAuthRoute(url)) {
     return { route: 'auth', siteUrl: null, ready: false, documentToken };
   }
 
-  const route =
-    url.pathname === '/console/board'
-      ? 'board'
-      : url.pathname === '/console/site/summary'
-        ? 'summary'
-        : url.pathname === '/console/site/check/inspection'
-          ? 'inspection'
-          : url.pathname === '/console/site/request/crawl'
-            ? 'collection'
-            : 'other';
+  const route = routeOf(url.pathname);
   const siteUrl = canonicalNaverTarget(url.searchParams.get('site') ?? '');
-  const ready =
-    document.readyState !== 'loading' &&
-    (route === 'board'
-      ? !!document.querySelector('table, [role="table"]')
-      : route === 'inspection' || route === 'collection'
-        ? inspectionInputs(document).length === 1 &&
-          confirmationButtons(document).length === 1 &&
-          (route !== 'collection' ||
-            (!!naverCollectionHistoryTable(document) && !isNaverCollectionHistoryLoading(document)))
-        : route === 'summary' && !!siteUrl);
+  const ready = document.readyState !== 'loading' && isRouteReady(document, route, siteUrl);
 
   return { route, siteUrl, ready, documentToken };
 }
 
+// 사이트 목록의 링크가 목표 사이트를 가리키는 안전한 네이버 내부 링크인지 확인합니다.
+function isSiteLink(link: HTMLAnchorElement, pageUrl: string, expected: string, document: Document): boolean {
+  const destination = new URL(link.href, pageUrl);
+  if (canonicalNaverTarget(link.textContent?.trim() ?? '') !== expected) return false;
+  if (!isNaverElementVisible(link, document)) return false;
+  if (destination.origin !== NAVER_ORIGIN) return false;
+  return SITE_LINK_PATHS.includes(destination.pathname);
+}
+
 // 사이트 목록의 URL과 링크 출처가 모두 맞는 항목 하나만 클릭합니다.
 export function selectNaverSite(document: Document, pageUrl: string, siteUrl: string): void {
-  if (
-    new URL(pageUrl).origin !== 'https://searchadvisor.naver.com' ||
-    new URL(pageUrl).pathname !== '/console/board'
-  )
-    throw new NaverAutomationError('wrong_page');
+  if (!isBoardPage(pageUrl)) throw new NaverAutomationError('wrong_page');
 
   const expected = canonicalNaverTarget(siteUrl);
   if (!expected) throw new NaverAutomationError('invalid_response');
 
   const links = Array.from(
     document.querySelectorAll<HTMLAnchorElement>('table a, [role="table"] a'),
-  ).filter((link): boolean => {
-    const destination = new URL(link.href, pageUrl);
-    return (
-      canonicalNaverTarget(link.textContent?.trim() ?? '') === expected &&
-      isNaverElementVisible(link, document) &&
-      destination.origin === 'https://searchadvisor.naver.com' &&
-      ['/console/board', '/console/site/summary'].includes(destination.pathname)
-    );
-  });
+  ).filter((link): boolean => isSiteLink(link, pageUrl, expected, document));
+
   if (!links.length) throw new NaverAutomationError('site_missing');
   if (links.length !== 1) throw new NaverAutomationError('ambiguous_control');
 
   links[0]?.click();
 }
 
-// 아이콘·장식·숨김 노드의 텍스트를 제외하되 판정 문구의 인라인 서식은 보존합니다.
-function judgementText(element: Element): string {
-  // 자식 텍스트는 원래 공백을 보존해 모은 뒤 마지막에만 정규화합니다.
-  function collect(node: Node): string {
-    if (node.nodeType === 3) return node.textContent ?? '';
-    if (node.nodeType !== 1) return '';
+// ─────────────────────────────────────────────────────────────
+// URL 검사 자동화
+// ─────────────────────────────────────────────────────────────
 
-    const child = node as Element;
-    if (
-      child.matches(
-        'i, svg, [role="img"], [aria-hidden="true"], [hidden], .v-icon, .material-icons',
-      )
-    )
-      return '';
-
-    return Array.from(child.childNodes).map(collect).join('');
-  }
-
-  return collect(element).replace(/\s+/g, ' ').trim();
+// 검사 전에 있던 판정 요소가 모두 사라졌거나 숨겨졋는지 확인합니다. 이전 요소가 없으면 거짓입니다.
+function allPreviousHidden(previous: readonly PreviousMarker[], document: Document): boolean {
+  if (!previous.length) return false;
+  return previous.every(
+    (old): boolean => !old.node.isConnected || !isNaverElementVisible(old.node, document),
+  );
 }
 
-// 판정 텍스트가 정확한 결과 영역 하나만 선택하고 부모·자식의 중복은 제외합니다.
-function resultMarkers(document: Document): readonly Element[] {
-  return Array.from(document.querySelectorAll('div, p, span')).filter((element): boolean => {
-    const text = judgementText(element);
-    return (
-      [NAVER_INDEXED_MESSAGE, NAVER_NO_RESULT_MESSAGE].includes(text) &&
-      !Array.from(element.children).some((child): boolean => judgementText(child) === text) &&
-      isNaverElementVisible(element, document)
-    );
+// 지금 보이는 판정 요소가 이전 결과가 아닌 새 결과라고 볼 수 있는지 판단합니다.
+function isFreshMarker(
+  previous: readonly PreviousMarker[],
+  marker: Element,
+  cleared: boolean,
+  document: Document,
+): boolean {
+  if (cleared) return true;
+  if (previous.length === 0) return true;
+
+  const allPreviousChanged = previous.every(
+    (old): boolean =>
+      !old.node.isConnected ||
+      !isNaverElementVisible(old.node, document) ||
+      judgementText(old.node) !== old.text,
+  );
+  if (allPreviousChanged) return true;
+
+  // 이전 요소 중 하나가 아니라면 새로 생긴 요소입니다.
+  return !previous.some((old): boolean => old.node === marker);
+}
+
+// 검증을 마친 결과 객체를 만듭니다.
+function verifiedObservation(
+  siteUrl: string,
+  targetUrl: string,
+  message: string,
+  queriedAt: string,
+): NaverAutomationObservation {
+  return {
+    kind: 'verified_gui',
+    siteUrl,
+    targetUrl,
+    indexStatus: indexStatusOf(message),
+    message,
+    queriedAt,
+    readAt: new Date().toISOString(),
+    targetVerified: true,
+  };
+}
+
+// 한 틱 양보해 앞선 DOM 변경이 반영될 시간을 줍니다.
+function yieldMicrotask(): Promise<void> {
+  return new Promise<void>((resolve): void => {
+    queueMicrotask(resolve);
   });
 }
 
@@ -349,36 +538,41 @@ export async function inspectNaverUrl(
   site: string,
   target: string,
   signal: AbortSignal,
-  timeoutMs = 15000,
+  timeoutMs = DEFAULT_INSPECTION_TIMEOUT_MS,
 ): Promise<NaverAutomationObservation> {
   const view = document.defaultView;
   const siteUrl = canonicalNaverTarget(site);
   const targetUrl = canonicalNaverTarget(target);
-  if (!view || !siteUrl || !targetUrl || !naverTargetInSite(siteUrl, targetUrl))
+  if (!view || !siteUrl || !targetUrl || !naverTargetInSite(siteUrl, targetUrl)) {
     throw new NaverAutomationError('invalid_response');
+  }
 
+  // 1. 올바른 화면·사이트인지 확인합니다.
   const initialUrl = view.location.href;
   const page = naverPageState(document, initialUrl, '');
-  if (page.route !== 'inspection' || page.siteUrl !== siteUrl)
+  if (page.route !== 'inspection' || page.siteUrl !== siteUrl) {
     throw new NaverAutomationError('wrong_page');
+  }
 
+  // 2. 입력칸과 확인 버튼이 각각 하나씩인지 확인합니다.
   const inputs = inspectionInputs(document);
   const buttons = confirmationButtons(document);
   const input = inputs[0];
   const button = buttons[0];
-  if (inputs.length !== 1 || buttons.length !== 1 || !input || !button)
+  if (inputs.length !== 1 || buttons.length !== 1 || !input || !button) {
     throw new NaverAutomationError('ambiguous_control');
+  }
   if (signal.aborted) throw new NaverAutomationError('cancelled');
 
-  const previous = resultMarkers(document).map((node) => ({ node, text: judgementText(node) }));
+  // 3. 지금 화면의 판정 요소를 기억해 두고, 새 결과와 구분할 기준으로 씁니다.
+  const previous: readonly PreviousMarker[] = resultMarkers(document)
+    .map((node): PreviousMarker => ({ node, text: judgementText(node) }));
   const queriedAt = new Date().toISOString();
 
-  await new Promise<void>((resolve): void => {
-    queueMicrotask(resolve);
-  });
-
+  await yieldMicrotask();
   if (signal.aborted) throw new NaverAutomationError('cancelled');
 
+  // 4. URL을 입력하고 확인을 누른 뒤, 새 판정이 나타날 때까지 화면을 감시합니다.
   return await new Promise<NaverAutomationObservation>((resolve, reject): void => {
     let clicked = false;
     let done = false;
@@ -413,54 +607,28 @@ export async function inspectNaverUrl(
       finish(new NaverAutomationError('cancelled'));
     }
 
+    // 주소나 입력값이 바뀌었는지 확인합니다.
+    function pageChanged(): boolean {
+      return view!.location.href !== initialUrl || canonicalNaverTarget(input!.value) !== targetUrl;
+    }
+
     // 새 결과가 나타나도 사이트·입력·경로가 달라졌으면 처리하지 않습니다.
     function check(): void {
       if (!clicked || done) return;
 
-      if (view!.location.href !== initialUrl || canonicalNaverTarget(input!.value) !== targetUrl) {
+      if (pageChanged()) {
         finish(new NaverAutomationError('page_changed'));
         return;
       }
 
       const markers = resultMarkers(document);
-
-      if (
-        previous.length &&
-        previous.every(
-          (old): boolean => !old.node.isConnected || !isNaverElementVisible(old.node, document),
-        )
-      )
-        cleared = true;
-
-      if (markers.length !== 1) return;
+      if (allPreviousHidden(previous, document)) cleared = true;
 
       const marker = markers[0];
-      if (!marker) return;
+      if (markers.length !== 1 || !marker) return;
+      if (!isFreshMarker(previous, marker, cleared, document)) return;
 
-      const fresh =
-        cleared ||
-        previous.length === 0 ||
-        previous.every(
-          (old): boolean =>
-            !old.node.isConnected ||
-            !isNaverElementVisible(old.node, document) ||
-            judgementText(old.node) !== old.text,
-        ) ||
-        !previous.some((old): boolean => old.node === marker);
-      if (!fresh) return;
-
-      const message = judgementText(marker);
-
-      finish(undefined, {
-        kind: 'verified_gui',
-        siteUrl: siteUrl!,
-        targetUrl: targetUrl!,
-        indexStatus: message === NAVER_INDEXED_MESSAGE ? 'indexed' : 'unknown',
-        message,
-        queriedAt,
-        readAt: new Date().toISOString(),
-        targetVerified: true,
-      });
+      finish(undefined, verifiedObservation(siteUrl!, targetUrl!, judgementText(marker), queriedAt));
     }
 
     observer = new view!.MutationObserver(check);
@@ -472,7 +640,7 @@ export async function inspectNaverUrl(
       attributeFilter: ['class', 'style', 'hidden'],
     });
     timeout = setTimeout((): void => finish(new NaverAutomationError('timeout')), timeoutMs);
-    interval = setInterval(check, 150);
+    interval = setInterval(check, INSPECTION_POLL_MS);
     signal.addEventListener('abort', abort, { once: true });
     document.addEventListener('input', interference, true);
     document.addEventListener('click', interference, true);
@@ -482,8 +650,8 @@ export async function inspectNaverUrl(
       return;
     }
 
+    // 프레임워크(Vue)가 감지하도록 네이티브 setter로 값을 넣고 input·change 이벤트를 보냅니다.
     const setter = Object.getOwnPropertyDescriptor(view!.HTMLInputElement.prototype, 'value')?.set;
-
     if (!setter) {
       finish(new NaverAutomationError('ambiguous_control'));
       return;
