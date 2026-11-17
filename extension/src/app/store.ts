@@ -16,6 +16,7 @@ import type {
   Property,
   SiteAuthAccounts,
 } from '../types';
+import { emptyProperty } from './constants.ts';
 
 // 관리 화면 전체가 공유하는 가변 상태를 한곳에 모았습니다.
 // 여러 파일이 같은 값을 읽고 바꾸므로 ES 모듈의 export let 대신 객체 하나(store)의 필드로 둡니다.
@@ -179,3 +180,57 @@ export const store: AppStore = {
   sitemapOpen: false,
   sitemapFeedback: null,
 };
+
+// ─────────────────────────────────────────────────────────────
+// 상태를 읽는 도우미
+// ─────────────────────────────────────────────────────────────
+
+// 현재 선택한 사이트를 반환합니다.
+export function property(): Property {
+  return (
+    store.properties.find(
+      (item: Property): boolean => item.id === store.state.propertyId && item.clientId === store.state.clientId,
+    ) ?? emptyProperty
+  );
+}
+
+// 현재 고객사와 담당자 정보를 반환합니다.
+export function selectedClient(): Client | undefined {
+  return store.clients.find((item: Client): boolean => item.id === store.state.clientId);
+}
+
+// 한국 시간 기준의 표시용 현재 시각을 반환합니다.
+function now(): string {
+  return new Intl.DateTimeFormat('sv-SE', {
+    timeZone: 'Asia/Seoul',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  })
+    .format(new Date())
+    .replaceAll('-', '.');
+}
+
+// 현재 속성과 검색엔진에 해당하는 예시 관측 기록을 반환합니다.
+export function currentRows(): readonly Inspection[] {
+  if (!demo) return [];
+  return inspections.filter(
+    (item: Inspection): boolean =>
+      item.propertyId === store.state.propertyId && item.engine === store.state.engine,
+  );
+}
+
+// 작업 결과를 예시 실행 이력에 추가합니다.
+export function addActivity(label: string): void {
+  store.activities = [{ label, time: now() }, ...store.activities].slice(0, 8);
+}
+
+// 선택한 메인페이지 또는 글의 검사 대상을 반환합니다.
+export function inspectionTarget(): InspectionTarget | undefined {
+  return store.inspectionTargets.find(
+    (target: InspectionTarget): boolean => target.id === store.inspectionTargetId,
+  );
+}
