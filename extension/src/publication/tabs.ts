@@ -1,4 +1,5 @@
 import type { TabCheck, TabsClient, WorkTab } from '../tabs/client';
+import { isTabLoaded } from '../tabs/readiness.ts';
 
 // 네이버 안내·홈에서도 웹마스터 도구로 이동할 수 있게 정확한 출처의 일반 화면을 허용합니다.
 function publicationNaverUrl(value: string): boolean {
@@ -47,7 +48,7 @@ export async function checkPublicationNaverTab(
   if (!tab) return { connected: false, reason: 'unsupported_url' };
   if (tab.tabId !== selected.tabId || tab.url !== selected.url)
     return { connected: false, reason: 'url_changed' };
-  if (current.status !== 'complete' || current.pendingUrl || current.discarded)
+  if (!isTabLoaded(current))
     return { connected: false, reason: 'not_ready' };
   return { connected: true, tab };
 }

@@ -8,6 +8,7 @@ import {
 import type { NaverVisibleObservation } from './observation';
 import type { WorkTab } from '../../tabs/client';
 import type { ClientInspectionTarget } from '../../inspection/client-plan';
+import { isTabLoaded } from '../../tabs/readiness.ts';
 
 export interface NaverPreviewState {
   readonly loading: boolean;
@@ -42,7 +43,7 @@ export async function readNaverPreview(
   const before = await client.get(selected.tabId).catch((): null => null);
   if (!before?.url || before.id !== selected.tabId || !isNaverInspectionPage(before.url))
     throw new Error('선택한 네이버 탭에서 검증 → 색인 상태 확인 화면을 열어주세요.');
-  if (before.incognito || before.status !== 'complete' || before.discarded || before.pendingUrl)
+  if (before.incognito || !isTabLoaded(before))
     throw new Error('네이버 탭의 로딩을 마친 뒤 다시 읽어주세요.');
 
   const requestId = crypto.randomUUID();
@@ -78,9 +79,7 @@ export async function readNaverPreview(
     !after ||
     after.id !== selected.tabId ||
     after.url !== before.url ||
-    after.status !== 'complete' ||
-    after.pendingUrl ||
-    after.discarded
+    !isTabLoaded(after)
   )
     throw new Error('화면을 읽는 동안 탭이 이동하거나 닫혔습니다. 다시 확인하세요.');
   if (!response || typeof response !== 'object')

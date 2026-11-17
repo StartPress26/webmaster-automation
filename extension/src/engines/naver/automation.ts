@@ -14,6 +14,7 @@ import type {
 } from './observation';
 import type { WorkTab } from '../../tabs/client';
 import type { ClientInspectionTarget } from '../../inspection/client-plan';
+import { isTabLoaded } from '../../tabs/readiness.ts';
 
 export interface NaverAutomationHooks {
   readonly signal: AbortSignal;
@@ -187,14 +188,7 @@ export async function navigate(
   if (signal.aborted) throw new NaverAutomationError('cancelled');
 
   const tab = await client.get(tabId).catch((): null => null);
-  if (
-    !tab?.url ||
-    tab.id !== tabId ||
-    tab.incognito ||
-    tab.discarded ||
-    tab.status !== 'complete' ||
-    tab.pendingUrl
-  )
+  if (!tab?.url || tab.id !== tabId || tab.incognito || !isTabLoaded(tab))
     throw new NaverAutomationError('page_changed');
 
   const current = new URL(tab.url);

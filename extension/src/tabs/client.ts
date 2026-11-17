@@ -1,4 +1,5 @@
 import type { Engine } from '../types';
+import { isTabLoaded } from './readiness.ts';
 
 export interface WorkTab {
   readonly tabId: number;
@@ -117,7 +118,7 @@ export async function checkWorkTab(
   if (tab.tabId !== selected.tabId || tab.engine !== selected.engine || tab.url !== selected.url) {
     return { connected: false, reason: 'url_changed' };
   }
-  if (current.status !== 'complete' || current.pendingUrl || current.discarded) {
+  if (!isTabLoaded(current)) {
     return { connected: false, reason: 'not_ready' };
   }
 

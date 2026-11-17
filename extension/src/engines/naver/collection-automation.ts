@@ -10,6 +10,7 @@ import type { NaverCollectionReceipt } from './collection';
 import type { WorkTab } from '../../tabs/client';
 import type { ClientInspectionTarget } from '../../inspection/client-plan';
 import type { NaverPageState } from './observation';
+import { isTabLoaded } from '../../tabs/readiness.ts';
 
 export interface NaverCollectionHooks {
   readonly signal: AbortSignal;
@@ -83,8 +84,7 @@ async function prepareBoard(
 ): Promise<void> {
   if (signal.aborted) throw new NaverAutomationError('cancelled');
   const tab = await client.get(tabId).catch((): null => null);
-  if (!tab?.url || tab.id !== tabId || tab.incognito || tab.discarded ||
-    tab.status !== 'complete' || tab.pendingUrl)
+  if (!tab?.url || tab.id !== tabId || tab.incognito || !isTabLoaded(tab))
     throw new NaverAutomationError('page_changed');
   const url = new URL(tab.url);
   if (url.origin !== 'https://searchadvisor.naver.com' || url.username || url.password ||
