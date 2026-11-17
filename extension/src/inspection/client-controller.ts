@@ -6,6 +6,7 @@ import {
 } from './client-plan.ts';
 import type { ClientInspectionTarget, ClientInspectionTask } from './client-plan';
 import type { ApiClient } from '../api';
+import type { WorkTab } from '../tabs/client';
 import { createWorkTabController } from '../tabs/controller.ts';
 import type { WorkTabController, WorkTabState } from '../tabs/controller';
 import { readNaverPreview } from '../engines/naver/preview.ts';
@@ -15,10 +16,17 @@ import { runBingAutomation } from '../engines/bing/automation.ts';
 import { BingAutomationError, BING_STAGE_LABELS } from '../engines/bing/observation.ts';
 import { NaverAutomationError } from '../engines/naver/observation.ts';
 
+// ─────────────────────────────────────────────────────────────
+// 타입 정의
+// ─────────────────────────────────────────────────────────────
+
+// 브라우저 GUI로 조회하는 엔진
 export type GuiEngine = 'naver' | 'bing';
 
+// GUI 관측을 DB에 저장하지 못했음을 나타내는 예외 (조회 실패와 구분)
 class GuiInspectionSaveError extends Error {}
 
+// 고객사 전체 조회 실행 1회의 상태
 export interface ClientInspectionRun {
   readonly clientId: string;
   readonly clientName: string;
@@ -40,6 +48,7 @@ export interface ClientInspectionRun {
   readonly naverPreview?: NaverPreviewState;
 }
 
+// 화면이 쓰는 컨트롤러 기능
 export interface ClientInspectionController {
   readonly getState: () => ClientInspectionRun;
   readonly start: (clientId: string, clientName: string) => Promise<void>;
@@ -49,19 +58,139 @@ export interface ClientInspectionController {
   readonly readNaver: (scope: string) => Promise<void>;
 }
 
+type GuiObservation = NonNullable<ClientInspectionTask['guiObservation']>;
+type ApiEngine = 'google' | 'bing';
+type RunApi = Pick<ApiClient, 'listSites' | 'listPages' | 'inspect' | 'saveGuiInspection'>;
+
+// 엔진별 GUI 조회 실행에 필요한 설정
+interface GuiRunConfig {
+  readonly engine: GuiEngine;
+  readonly startMessage: string;
+  readonly skippedMessage: string;
+  readonly failureFallback: string;
+  readonly isAutomationError: (error: unknown) => boolean;
+}
+
+// ─────────────────────────────────────────────────────────────
+// 상수
+// ─────────────────────────────────────────────────────────────
+
 // 실행이 멈춰 있어 네이버 화면 읽기나 사이트맵 제출 같은 부가 작업을 허용하는 단계
 export const SETTLED_RUN_PHASES: readonly ClientInspectionRun['phase'][] = [
   'awaiting_tabs', 'finished', 'cancelled', 'failed',
 ];
 
+// 다른 실행을 시작할 수 없는 "진행 중" 단계
+const BUSY_PHASES: readonly ClientInspectionRun['phase'][] = ['collecting', 'preparing_tabs', 'awaiting_tabs', 'running'];
+// 아직 끝나지 않은 작업 상태
+const ACTIVE_STATUSES: readonly string[] = ['queued', 'running'];
+// 취소 시 "취소"로 바꾸는 상태
+const CANCELLABLE_STATUSES: readonly string[] = ['queued', 'running', 'gui_required'];
+// 이 종류의 API 오류가 나면 같은 엔진의 남은 조회를 중단합니다.
+const STOP_ENGINE_KINDS: readonly string[] = ['authentication', 'rate_limit', 'timeout', 'network'];
+// GUI 조회를 하는 엔진 순서
+const GUI_ENGINES: readonly GuiEngine[] = ['naver', 'bing'];
+
+// 서버가 돌려준 색인 상태의 짧은 표시
+const INDEX_STATUS_LABELS: Readonly<Record<string, string>> = {
+  indexed: '색인됨',
+  not_indexed: '미색인',
+  unknown: '미확인',
+  crawled: '크롤링됨',
+  submitted: '제출됨',
+  failed: '실패',
+};
+
+const EMPTY_RUN: ClientInspectionRun = {
+  clientId: '',
+  clientName: '',
+  scope: '',
+  tabs: {},
+  phase: 'idle',
+  cancelRequested: false,
+  targetCount: 0,
+  tasks: [],
+  message: '',
+};
+
+const GUI_RUN_CONFIGS: Readonly<Record<GuiEngine, GuiRunConfig>> = {
+  naver: {
+    engine: 'naver',
+    startMessage: '네이버 사이트·검사 화면 확인 및 새 결과 대기',
+    skippedMessage: 'GUI 탭 준비를 건너뛰어 네이버 조회는 실행하지 않았습니다.',
+    failureFallback: '네이버 탭 연결 또는 화면 전환에 실패해 중단했습니다.',
+    isAutomationError: (error): boolean => error instanceof NaverAutomationError,
+  },
+  bing: {
+    engine: 'bing',
+    startMessage: 'Bing 사이트·검사 URL 확인 및 새 결과 대기',
+    skippedMessage: 'GUI 탭 준비를 건너뛰어 Bing 색인 조회는 실행하지 않았습니다.',
+    failureFallback: 'Bing 탭 연결 또는 화면 전환에 실패해 중단했습니다.',
+    isAutomationError: (error): boolean => error instanceof BingAutomationError,
+  },
+};
+
+// ─────────────────────────────────────────────────────────────
+// 순수 함수
+// ─────────────────────────────────────────────────────────────
+
 // 수집·실행 중에는 다른 고객사의 중복 실행도 시작하지 않습니다.
 export function clientInspectionBusy(run: ClientInspectionRun): boolean {
-  return ['collecting', 'preparing_tabs', 'awaiting_tabs', 'running'].includes(run.phase);
+  return BUSY_PHASES.includes(run.phase);
 }
+
+// 엔진의 GUI 작업 ID
+function guiTaskId(engine: GuiEngine, targetId: string): string {
+  return engine === 'bing' ? `${targetId}:bing-gui` : `${targetId}:naver`;
+}
+
+// 이 엔진의 GUI 작업인지 확인합니다.
+function isGuiTaskOf(task: ClientInspectionTask, engine: GuiEngine): boolean {
+  return task.engine === engine && task.route === 'gui';
+}
+
+// 조건에 맞는 작업만 바꿔 새 목록을 만듭니다.
+function patchTasks(
+  tasks: readonly ClientInspectionTask[],
+  matches: (task: ClientInspectionTask) => boolean,
+  patch: (task: ClientInspectionTask) => Partial<ClientInspectionTask>,
+): readonly ClientInspectionTask[] {
+  return tasks.map((task): ClientInspectionTask => (matches(task) ? { ...task, ...patch(task) } : task));
+}
+
+// API 조회 실패가 "서버에 닿았는지 모르는" 종류인지 판단합니다. 엔진·인증 쪽 5xx 코드는 명확한 실패로 봅니다.
+function isUncertainApiFailure(error: unknown): boolean {
+  if (!(error instanceof ApiError)) return true;
+  if (error.status === 0) return true;
+  if (error.status < 500) return false;
+  return !error.code.startsWith('ENGINE_') && !error.code.startsWith('GOOGLE_AUTH_');
+}
+
+// 이 오류가 나면 같은 엔진의 남은 API 조회를 멈춰야 하는지 판단합니다.
+function shouldStopEngine(error: unknown): boolean {
+  return error instanceof ApiError && STOP_ENGINE_KINDS.includes(error.kind);
+}
+
+// GUI 조회가 실패했을 때 작업에 남길 메시지. 저장 실패·자동화 예외는 그 메시지를, 그 밖에는 기본 문구를 씁니다.
+function guiFailureMessage(error: unknown, config: GuiRunConfig): string {
+  if (error instanceof GuiInspectionSaveError || config.isAutomationError(error)) {
+    return (error as Error).message;
+  }
+  return config.failureFallback;
+}
+
+// 서버가 저장한 결과가 GUI 관측보다 더 최신인지 확인합니다.
+function isNewerThanObservation(lastCheckedAt: string | null, observation: GuiObservation): boolean {
+  return Date.parse(lastCheckedAt ?? '') > Date.parse(observation.readAt);
+}
+
+// ─────────────────────────────────────────────────────────────
+// 컨트롤러
+// ─────────────────────────────────────────────────────────────
 
 // 전체 조회의 스냅샷과 취소를 관리하고 기존 단일 URL API를 순차 호출합니다.
 export function createClientInspectionController(
-  api: Pick<ApiClient, 'listSites' | 'listPages' | 'inspect' | 'saveGuiInspection'>,
+  api: RunApi,
   changed: () => void = (): void => {},
   tabControllers: Readonly<Record<GuiEngine, WorkTabController>> = {
     naver: createWorkTabController(),
@@ -70,20 +199,16 @@ export function createClientInspectionController(
   naverAutomation: typeof runNaverAutomation = runNaverAutomation,
   bingAutomation: typeof runBingAutomation = runBingAutomation,
 ): ClientInspectionController {
-  let state: ClientInspectionRun = {
-    clientId: '',
-    clientName: '',
-    scope: '',
-    tabs: {},
-    phase: 'idle',
-    cancelRequested: false,
-    targetCount: 0,
-    tasks: [],
-    message: '',
-  };
+  let state: ClientInspectionRun = EMPTY_RUN;
+  // 실행 ID(scope)를 만들 때 쓰는 일련번호
   let sequence = 0;
-  let naverAbort = new AbortController();
-  let bingAbort = new AbortController();
+  // 엔진별 GUI 자동화 취소 신호
+  let aborts: Readonly<Record<GuiEngine, AbortController>> = {
+    naver: new AbortController(),
+    bing: new AbortController(),
+  };
+
+  // ── 상태 변경 ──────────────────────────────────────────────
 
   // 실행 상태를 새 객체로 교체하고 화면에 변경을 알립니다.
   function update(patch: Partial<ClientInspectionRun>): void {
@@ -93,72 +218,65 @@ export function createClientInspectionController(
 
   // 특정 작업의 상태만 교체하며 다른 엔진의 성공·오류를 유지합니다.
   function updateTask(id: string, patch: Partial<ClientInspectionTask>): void {
+    update({ tasks: patchTasks(state.tasks, (task): boolean => task.id === id, (): Partial<ClientInspectionTask> => patch) });
+  }
+
+  // 미실행 작업을 취소 상태로 바꾸고 탭 선택 대기 중에도 즉시 종료합니다.
+  function finishCancelled(): void {
     update({
-      tasks: state.tasks.map(
-        (task): ClientInspectionTask => (task.id === id ? { ...task, ...patch } : task),
+      tasks: patchTasks(
+        state.tasks,
+        (task): boolean => CANCELLABLE_STATUSES.includes(task.status),
+        (): Partial<ClientInspectionTask> => ({ status: 'cancelled', message: '사용자가 실행을 취소했습니다.' }),
       ),
+      phase: 'cancelled',
+      message: '조회 실행을 취소했습니다. 완료된 요청의 저장 결과는 유지됩니다.',
     });
   }
+
+  // ── 취소·네이버 미리보기 ──────────────────────────────────
 
   // 진행 중인 서버 요청은 끝까지 확인하고 다음 요청부터 취소합니다.
   function cancel(): void {
     if (!clientInspectionBusy(state)) return;
 
     const waiting = state.phase === 'awaiting_tabs';
-
     update({
       cancelRequested: true,
       message: '현재 요청이 끝나면 중단합니다. 이미 저장된 결과는 유지됩니다.',
     });
-    naverAbort.abort();
-    bingAbort.abort();
+    aborts.naver.abort();
+    aborts.bing.abort();
 
+    // 탭 선택을 기다리는 중이었다면 기다릴 요청이 없으니 바로 끝냅니다.
     if (waiting) finishCancelled();
   }
 
   // 현재 실행의 네이버 탭에서 보이는 관측만 읽고 작업 상태·DB는 변경하지 않습니다.
   async function readNaver(scope: string): Promise<void> {
     const selected = state.tabs.naver?.selected;
-    if (
-      scope !== state.scope ||
-      !selected ||
-      state.naverPreview?.loading ||
-      !SETTLED_RUN_PHASES.includes(state.phase)
-    )
-      return;
+    if (scope !== state.scope) return;
+    if (!selected) return;
+    if (state.naverPreview?.loading) return;
+    if (!SETTLED_RUN_PHASES.includes(state.phase)) return;
 
     update({ naverPreview: { loading: true } });
 
+    const naverTargets = state.tasks
+      .filter((task): boolean => task.engine === 'naver')
+      .map((task): ClientInspectionTarget => task.target);
+
     try {
-      const observation = await readNaverPreview(
-        selected,
-        state.tasks.filter((task): boolean => task.engine === 'naver').map((task) => task.target),
-      );
+      const observation = await readNaverPreview(selected, naverTargets);
       if (scope === state.scope) update({ naverPreview: { loading: false, observation } });
     } catch (error: unknown) {
-      if (scope === state.scope)
-        update({
-          naverPreview: {
-            loading: false,
-            error: error instanceof Error ? error.message : '네이버 화면을 읽지 못했습니다.',
-          },
-        });
+      if (scope !== state.scope) return;
+      const message = error instanceof Error ? error.message : '네이버 화면을 읽지 못했습니다.';
+      update({ naverPreview: { loading: false, error: message } });
     }
   }
 
-  // 미실행 작업을 취소 상태로 바꾸고 탭 선택 대기 중에도 즉시 종료합니다.
-  function finishCancelled(): void {
-    update({
-      tasks: state.tasks.map(
-        (task): ClientInspectionTask =>
-          ['queued', 'running', 'gui_required'].includes(task.status)
-            ? { ...task, status: 'cancelled', message: '사용자가 실행을 취소했습니다.' }
-            : task,
-      ),
-      phase: 'cancelled',
-      message: '조회 실행을 취소했습니다. 완료된 요청의 저장 결과는 유지됩니다.',
-    });
-  }
+  // ── 탭 준비 ───────────────────────────────────────────────
 
   // 엔진별 선택 결과는 개별 URL이 아니라 현재 전체 실행에 보관합니다.
   async function prepareEngineTab(engine: GuiEngine, candidateId?: string): Promise<void> {
@@ -177,7 +295,8 @@ export function createClientInspectionController(
       return;
     }
 
-    if (Object.values(state.tabs).some((tab): boolean => !tab.selected)) {
+    const hasUnselectedTab = Object.values(state.tabs).some((tab): boolean => !tab.selected);
+    if (hasUnselectedTab) {
       update({
         phase: 'awaiting_tabs',
         message: '네이버·Bing 작업 탭을 준비하세요. 탭 준비를 건너뛰면 API 조회만 실행합니다.',
@@ -202,13 +321,15 @@ export function createClientInspectionController(
     await runTasks(false);
   }
 
+  // ── GUI 관측 저장 ─────────────────────────────────────────
+
   // 검증된 GUI 관측을 URL별로 저장하고 저장 오류를 GUI 조회 오류와 구분합니다.
   async function saveGuiObservation(
     engine: GuiEngine,
     target: ClientInspectionTarget,
-    observation: NonNullable<ClientInspectionTask['guiObservation']>,
+    observation: GuiObservation,
   ): Promise<void> {
-    const id = engine === 'bing' ? `${target.id}:bing-gui` : `${target.id}:naver`;
+    const id = guiTaskId(engine, target.id);
     if (state.cancelRequested) {
       updateTask(id, { status: 'observed', guiObservation: observation, message: 'GUI 조회 성공 · 취소 요청으로 DB 저장은 실행하지 않았습니다.' });
       return;
@@ -224,143 +345,138 @@ export function createClientInspectionController(
         queried_at: observation.queriedAt,
         observed_at: observation.readAt,
       });
-      const status = { indexed: '색인됨', not_indexed: '미색인', unknown: '미확인', crawled: '크롤링됨', submitted: '제출됨', failed: '실패' }[stored.index_status];
-      const newer = Date.parse(stored.last_checked_at ?? '') > Date.parse(observation.readAt);
-      updateTask(id, {
-        status: 'succeeded',
-        message: newer ? `더 최신의 서버 상태를 유지했습니다 · ${status}` : `GUI 관측 DB 저장 확인 · ${status}`,
-      });
+      const status = INDEX_STATUS_LABELS[stored.index_status];
+      const message = isNewerThanObservation(stored.last_checked_at, observation)
+        ? `더 최신의 서버 상태를 유지했습니다 · ${status}`
+        : `GUI 관측 DB 저장 확인 · ${status}`;
+      updateTask(id, { status: 'succeeded', message });
     } catch (error: unknown) {
       const uncertain = isUncertainFailure(error);
       // 불확실하지 않은 실패는 항상 ApiError이므로 서버가 준 메시지를 그대로 보여줍니다.
       const detail = error instanceof ApiError ? error.message : '';
-      updateTask(id, {
-        status: 'save_failed',
-        message: uncertain
-          ? 'GUI 조회 성공 · DB 저장 응답 미확인. 자동 재시도하지 않습니다.'
-          : `GUI 조회 성공 · DB 저장 실패: ${detail}`,
-      });
+      const message = uncertain
+        ? 'GUI 조회 성공 · DB 저장 응답 미확인. 자동 재시도하지 않습니다.'
+        : `GUI 조회 성공 · DB 저장 실패: ${detail}`;
+      updateTask(id, { status: 'save_failed', message });
       throw new GuiInspectionSaveError('GUI 결과 저장을 확인하지 못해 해당 엔진의 후속 조회를 중단했습니다.');
     }
   }
 
-  // 네이버 탭의 사이트·URL은 순차 검사하며 오류는 네이버 작업에만 반영합니다.
-  async function runNaverGui(includeGui: boolean): Promise<void> {
-    const naverTasks = state.tasks.filter(
-      (task): boolean => task.engine === 'naver' && task.status === 'queued',
-    );
-    const naverTab = state.tabs.naver?.selected;
+  // ── GUI 조회 ──────────────────────────────────────────────
 
-    if (!state.cancelRequested && includeGui && naverTab && naverTasks.length) {
-      try {
-        await naverAutomation(
-          naverTab,
-          naverTasks.map((task) => task.target),
-          {
-            signal: naverAbort.signal,
-            onStart: (target): void => {
-              updateTask(`${target.id}:naver`, {
-                status: 'running',
-                message: '네이버 사이트·검사 화면 확인 및 새 결과 대기',
-              });
-            },
-            onResult: (target, observation): Promise<void> => saveGuiObservation('naver', target, observation),
-          },
-        );
-      } catch (error: unknown) {
-        if (!state.cancelRequested)
-          update({
-            tasks: state.tasks.map(
-              (task): ClientInspectionTask =>
-                task.engine === 'naver' && ['queued', 'running'].includes(task.status)
-                  ? {
-                      ...task,
-                      status: task.status === 'running' ? 'failed' : 'blocked',
-                      message:
-                        error instanceof GuiInspectionSaveError || error instanceof NaverAutomationError
-                          ? error.message
-                          : '네이버 탭 연결 또는 화면 전환에 실패해 중단했습니다.',
-                    }
-                  : task,
-            ),
-          });
-      }
-    } else if (!state.cancelRequested) {
-      update({
-        tasks: state.tasks.map(
-          (task): ClientInspectionTask =>
-            task.engine === 'naver' && task.status === 'queued'
-              ? {
-                  ...task,
-                  status: 'gui_required',
-                  message: 'GUI 탭 준비를 건너뛰어 네이버 조회는 실행하지 않았습니다.',
-                }
-              : task,
-        ),
-      });
+  // 엔진의 GUI 자동화를 실행합니다. 네이버와 Bing은 콜백 모양(Bing은 단계 알림 추가)만 다릅니다.
+  function runAutomation(
+    engine: GuiEngine,
+    tab: WorkTab,
+    targets: readonly ClientInspectionTarget[],
+    startMessage: string,
+  ): Promise<void> {
+    const onStart = (target: ClientInspectionTarget): void => {
+      updateTask(guiTaskId(engine, target.id), { status: 'running', message: startMessage });
+    };
+    const onResult = (target: ClientInspectionTarget, observation: GuiObservation): Promise<void> =>
+      saveGuiObservation(engine, target, observation);
+
+    if (engine === 'naver') {
+      return naverAutomation(tab, targets, { signal: aborts.naver.signal, onStart, onResult });
+    }
+    return bingAutomation(tab, targets, {
+      signal: aborts.bing.signal,
+      onStart,
+      onStage: (target, stage): void => {
+        updateTask(guiTaskId('bing', target.id), { message: `Bing ${BING_STAGE_LABELS[stage]} 중` });
+      },
+      onResult,
+    });
+  }
+
+  // GUI 조회가 실패하면 조회 중이던 작업은 실패, 대기 중이던 작업은 중단으로 표시합니다.
+  function failGuiTasks(engine: GuiEngine, error: unknown): void {
+    const message = guiFailureMessage(error, GUI_RUN_CONFIGS[engine]);
+    update({
+      tasks: patchTasks(
+        state.tasks,
+        (task): boolean => isGuiTaskOf(task, engine) && ACTIVE_STATUSES.includes(task.status),
+        (task): Partial<ClientInspectionTask> => ({
+          status: task.status === 'running' ? 'failed' : 'blocked',
+          message,
+        }),
+      ),
+    });
+  }
+
+  // 탭 준비를 건너뛴 엔진의 대기 작업을 "GUI 조회 미실행"으로 표시합니다.
+  function skipGuiTasks(engine: GuiEngine): void {
+    update({
+      tasks: patchTasks(
+        state.tasks,
+        (task): boolean => isGuiTaskOf(task, engine) && task.status === 'queued',
+        (): Partial<ClientInspectionTask> => ({ status: 'gui_required', message: GUI_RUN_CONFIGS[engine].skippedMessage }),
+      ),
+    });
+  }
+
+  // 엔진 탭의 사이트·URL은 순차 검사하며 오류는 그 엔진의 GUI 작업에만 반영합니다.
+  async function runGui(engine: GuiEngine, includeGui: boolean): Promise<void> {
+    const config = GUI_RUN_CONFIGS[engine];
+    const queued = state.tasks.filter((task): boolean => isGuiTaskOf(task, engine) && task.status === 'queued');
+    const tab = state.tabs[engine]?.selected;
+
+    if (state.cancelRequested) return;
+
+    if (!includeGui || !tab || !queued.length) {
+      skipGuiTasks(engine);
+      return;
+    }
+
+    try {
+      const targets = queued.map((task): ClientInspectionTarget => task.target);
+      await runAutomation(engine, tab, targets, config.startMessage);
+    } catch (error: unknown) {
+      if (!state.cancelRequested) failGuiTasks(engine, error);
     }
   }
 
-  // Bing 탭의 사이트·URL은 순차 검사하며 오류는 Bing GUI 작업에만 반영합니다.
-  async function runBingGui(includeGui: boolean): Promise<void> {
-    const bingTasks = state.tasks.filter(
-      (task): boolean => task.engine === 'bing' && task.route === 'gui' && task.status === 'queued',
-    );
-    const bingTab = state.tabs.bing?.selected;
+  // ── API 조회 ──────────────────────────────────────────────
 
-    if (!state.cancelRequested && includeGui && bingTab && bingTasks.length) {
-      try {
-        await bingAutomation(
-          bingTab,
-          bingTasks.map((task) => task.target),
-          {
-            signal: bingAbort.signal,
-            onStart: (target): void => {
-              updateTask(`${target.id}:bing-gui`, {
-                status: 'running',
-                message: 'Bing 사이트·검사 URL 확인 및 새 결과 대기',
-              });
-            },
-            onStage: (target, stage): void => {
-              const message = `Bing ${BING_STAGE_LABELS[stage]} 중`;
-              updateTask(`${target.id}:bing-gui`, { message });
-            },
-            onResult: (target, observation): Promise<void> => saveGuiObservation('bing', target, observation),
-          },
-        );
-      } catch (error: unknown) {
-        if (!state.cancelRequested)
-          update({
-            tasks: state.tasks.map(
-              (task): ClientInspectionTask =>
-                task.engine === 'bing' &&
-                task.route === 'gui' &&
-                ['queued', 'running'].includes(task.status)
-                  ? {
-                      ...task,
-                      status: task.status === 'running' ? 'failed' : 'blocked',
-                      message:
-                        error instanceof GuiInspectionSaveError || error instanceof BingAutomationError
-                          ? error.message
-                          : 'Bing 탭 연결 또는 화면 전환에 실패해 중단했습니다.',
-                    }
-                  : task,
-            ),
-          });
+  // API 조회 실패 뒤 남은 대기 작업을 중단합니다. 불확실한 실패면 모든 엔진, 아니면 같은 엔진만.
+  function blockQueuedApiTasks(uncertain: boolean, engine: ApiEngine): void {
+    const message = uncertain
+      ? '서버 연결·응답 확인이 필요해 실행을 중단했습니다.'
+      : '해당 엔진의 인증·조회 한도·연결 확인이 필요해 중단했습니다.';
+    update({
+      tasks: patchTasks(
+        state.tasks,
+        (item): boolean => item.route === 'api' && item.status === 'queued' && (uncertain || item.engine === engine),
+        (): Partial<ClientInspectionTask> => ({ status: 'blocked', message }),
+      ),
+    });
+  }
+
+  // API 작업 하나를 조회하고 결과를 작업에 반영합니다. 실패하면 남은 작업 중단 여부도 정합니다.
+  async function runApiTask(task: ClientInspectionTask, engine: ApiEngine): Promise<void> {
+    updateTask(task.id, { status: 'running', message: 'API 조회 중' });
+
+    try {
+      const result = await api.inspect(task.target.id, engine);
+      if (result.site_id !== task.target.id || result.engine !== engine) {
+        throw new ApiError(0, '검사 응답의 대상·엔진을 확인하지 못했습니다.', { code: 'INVALID_RESPONSE' });
       }
-    } else if (!state.cancelRequested) {
-      update({
-        tasks: state.tasks.map(
-          (task): ClientInspectionTask =>
-            task.engine === 'bing' && task.route === 'gui' && task.status === 'queued'
-              ? {
-                  ...task,
-                  status: 'gui_required',
-                  message: 'GUI 탭 준비를 건너뛰어 Bing 색인 조회는 실행하지 않았습니다.',
-                }
-              : task,
-        ),
-      });
+
+      // Bing API는 크롤링 상태만 알려주므로 "부분" 저장으로 표시합니다.
+      if (engine === 'bing') {
+        updateTask(task.id, { status: 'partial', message: 'API 크롤링 관측을 저장했습니다. 이후 더 최신의 GUI 관측으로 갱신될 수 있습니다.' });
+      } else {
+        updateTask(task.id, { status: 'succeeded', message: 'API 관측을 저장했습니다. 조회 성공은 색인 완료를 의미하지 않습니다.' });
+      }
+    } catch (error: unknown) {
+      const uncertain = isUncertainApiFailure(error);
+      const message = uncertain
+        ? '응답을 확인하지 못했습니다. 저장 결과를 다시 읽어 확인하세요. 자동 재시도하지 않습니다.'
+        : (error as ApiError).message;
+      updateTask(task.id, { status: 'failed', message });
+
+      if (uncertain || shouldStopEngine(error)) blockQueuedApiTasks(uncertain, engine);
     }
   }
 
@@ -368,84 +484,42 @@ export function createClientInspectionController(
   async function runTasks(includeGui: boolean): Promise<void> {
     update({ phase: 'running', message: '확정된 대상의 API 조회를 순차 실행합니다.' });
 
+    // 1. Google·Bing API 조회를 하나씩 실행합니다. (앞선 실패로 blocked된 작업은 건너뜁니다.)
     for (const task of state.tasks) {
       if (state.cancelRequested) break;
 
       const current = state.tasks.find((item): boolean => item.id === task.id);
       if (current?.status !== 'queued' || task.route !== 'api' || task.engine === 'naver') continue;
 
-      updateTask(task.id, { status: 'running', message: 'API 조회 중' });
-
-      try {
-        // 여기가 api 전송 파트
-        const result = await api.inspect(task.target.id, task.engine);
-        if (result.site_id !== task.target.id || result.engine !== task.engine)
-          throw new ApiError(0, '검사 응답의 대상·엔진을 확인하지 못했습니다.', {
-            code: 'INVALID_RESPONSE',
-          });
-
-        updateTask(task.id, {
-          status: task.engine === 'bing' ? 'partial' : 'succeeded',
-          message:
-            task.engine === 'bing'
-              ? 'API 크롤링 관측을 저장했습니다. 이후 더 최신의 GUI 관측으로 갱신될 수 있습니다.'
-              : 'API 관측을 저장했습니다. 조회 성공은 색인 완료를 의미하지 않습니다.',
-        });
-      } catch (error: unknown) {
-        const known = error instanceof ApiError;
-        const uncertain =
-          !known ||
-          error.status === 0 ||
-          (error.status >= 500 &&
-            !error.code.startsWith('ENGINE_') &&
-            !error.code.startsWith('GOOGLE_AUTH_'));
-
-        updateTask(task.id, {
-          status: 'failed',
-          message: uncertain
-            ? '응답을 확인하지 못했습니다. 저장 결과를 다시 읽어 확인하세요. 자동 재시도하지 않습니다.'
-            : error.message,
-        });
-
-        const stopEngine =
-          known && ['authentication', 'rate_limit', 'timeout', 'network'].includes(error.kind);
-
-        if (uncertain || stopEngine)
-          update({
-            tasks: state.tasks.map(
-              (item): ClientInspectionTask =>
-                item.route === 'api' &&
-                item.status === 'queued' &&
-                (uncertain || item.engine === task.engine)
-                  ? {
-                      ...item,
-                      status: 'blocked',
-                      message: uncertain
-                        ? '서버 연결·응답 확인이 필요해 실행을 중단했습니다.'
-                        : '해당 엔진의 인증·조회 한도·연결 확인이 필요해 중단했습니다.',
-                    }
-                  : item,
-            ),
-          });
-      }
+      await runApiTask(task, task.engine);
     }
 
-    // 여기 GUI 파트
-    if (includeGui && !state.cancelRequested)
+    // 2. 네이버·Bing GUI 조회를 병렬로 실행합니다.
+    if (includeGui && !state.cancelRequested) {
       update({ message: '네이버·Bing 작업 탭에서 GUI 조회를 병렬 실행합니다.' });
-    await Promise.all([runNaverGui(includeGui), runBingGui(includeGui)]);
+    }
+    await Promise.all(GUI_ENGINES.map((engine): Promise<void> => runGui(engine, includeGui)));
 
     if (state.cancelRequested) {
       finishCancelled();
       return;
     }
 
-    update({
-      phase: 'finished',
-      message: state.targetCount
-        ? '전체 조회 처리가 끝났습니다. API·GUI 관측의 저장 결과와 실패·미지원 항목을 확인하세요.'
-        : '조회할 활성 사이트·글이 없습니다.',
-    });
+    const message = state.targetCount
+      ? '전체 조회 처리가 끝났습니다. API·GUI 관측의 저장 결과와 실패·미지원 항목을 확인하세요.'
+      : '조회할 활성 사이트·글이 없습니다.';
+    update({ phase: 'finished', message });
+  }
+
+  // ── 시작 ──────────────────────────────────────────────────
+
+  // 대상 수집이 실패·취소됐을 때의 단계와 안내
+  function collectionFailure(error: unknown): Pick<ClientInspectionRun, 'phase' | 'message'> {
+    const cancelled = state.cancelRequested || error instanceof InspectionCollectionCancelled;
+    const message = state.cancelRequested
+      ? '대상 수집을 취소했습니다. 새 검사를 실행하지 않았습니다.'
+      : '전체 대상 목록을 확정하지 못해 검사를 시작하지 않았습니다. 목록 연결과 고객사 소속을 확인하세요.';
+    return { phase: cancelled ? 'cancelled' : 'failed', message };
   }
 
   // 시작 고객사·실행 ID를 고정하고 전체 대상 확정 후 엔진별 탭을 먼저 준비합니다.
@@ -454,14 +528,13 @@ export function createClientInspectionController(
 
     tabControllers.naver.reset();
     tabControllers.bing.reset();
+    aborts = { naver: new AbortController(), bing: new AbortController() };
 
-    naverAbort = new AbortController();
-    bingAbort = new AbortController();
-
+    sequence += 1;
     update({
       clientId,
       clientName,
-      scope: `${++sequence}:${clientId}`,
+      scope: `${sequence}:${clientId}`,
       tabs: {},
       naverPreview: undefined,
       phase: 'collecting',
@@ -472,17 +545,11 @@ export function createClientInspectionController(
     });
 
     try {
-      const targets = await collectClientInspectionTargets(
-        api,
-        clientId,
-        (): boolean => state.cancelRequested,
-      );
+      // 1. 조회 대상을 모두 모읍니다.
+      const targets = await collectClientInspectionTargets(api, clientId, (): boolean => state.cancelRequested);
+      if (state.cancelRequested) throw new InspectionCollectionCancelled();
 
-      if (state.cancelRequested) {
-        throw new InspectionCollectionCancelled();
-      }
-
-      // task들 넣기
+      // 2. 대상마다 엔진별 작업을 만듭니다.
       update({
         phase: 'preparing_tabs',
         targetCount: targets.length,
@@ -490,10 +557,9 @@ export function createClientInspectionController(
         message: '네이버·Bing 작업 탭을 준비합니다.',
       });
 
-      for (const engine of ['naver', 'bing'] as const) {
+      // 3. GUI 조회할 작업이 있는 엔진의 작업 탭을 준비합니다.
+      for (const engine of GUI_ENGINES) {
         if (state.cancelRequested) break;
-
-        // 탭 준비
         if (state.tasks.some((task): boolean => task.engine === engine)) {
           await prepareEngineTab(engine);
         }
@@ -501,24 +567,14 @@ export function createClientInspectionController(
 
       await finishTabPreparation();
     } catch (error: unknown) {
-      update({
-        phase:
-          state.cancelRequested || error instanceof InspectionCollectionCancelled
-            ? 'cancelled'
-            : 'failed',
-        message: state.cancelRequested
-          ? '대상 수집을 취소했습니다. 새 검사를 실행하지 않았습니다.'
-          : '전체 대상 목록을 확정하지 못해 검사를 시작하지 않았습니다. 목록 연결과 고객사 소속을 확인하세요.',
-      });
+      update(collectionFailure(error));
     }
   }
 
-  return {
-    getState: (): ClientInspectionRun => state,
-    start,
-    cancel,
-    chooseTab,
-    continueApiOnly,
-    readNaver,
-  };
+  // 현재 상태를 돌려줍니다.
+  function getState(): ClientInspectionRun {
+    return state;
+  }
+
+  return { getState, start, cancel, chooseTab, continueApiOnly, readNaver };
 }
