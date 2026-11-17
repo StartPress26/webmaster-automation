@@ -4,38 +4,19 @@ import { capturePublicationDraft } from './actions.ts';
 import { applyAvailability } from './events.ts';
 import { render } from './render.ts';
 import { api, demo, property, store } from './store.ts';
-import type { Client, InspectionTarget, Property, SiteRead } from '../types.ts';
+import type { Client, ClientRead, InspectionTarget, PageRead, Property, SiteRead, View } from '../types.ts';
 
-// 서버에서 목록·설정·저장 결과를 읽어 store에 반영하는 함수들. 늦게 도착한 이전 요청의 응답은 버립니다.
+// 서버에서 목록·설정·저장 결과를 읽어 store에 반영하는 함수들.
+// 각 함수는 요청 번호(version)와 당시 선택(id)을 기억해 두고, 응답이 왔을 때 아직 같은 요청·같은 선택일 때만 반영합니다.
+// 그래서 고객사나 사이트를 빠르게 바꿔도 늦게 도착한 이전 응답이 화면을 덮어쓰지 않습니다.
 
-// 고객사 전환 중 늦게 도착한 이전 고객사의 통계 응답은 무시합니다.
-export async function loadDashboard(): Promise<void> {
-  const version = ++store.dashboardVersion;
-  const id = store.state.clientId;
+// ─────────────────────────────────────────────────────────────
+// 공용 도우미
+// ─────────────────────────────────────────────────────────────
 
-  store.dashboardData = null;
-  store.dashboardError = null;
-  store.dashboardLoading = !demo && !!id;
-
-  if (store.state.view === 'dashboard') render();
-
-  if (demo || !id) return;
-
-  try {
-    const result = await api.getDashboard(id);
-
-    if (version === store.dashboardVersion && id === store.state.clientId) {
-      if (result.client.id !== id) throw new ApiError(0, '요청한 고객사와 통계 응답이 다릅니다.');
-      store.dashboardData = result;
-    }
-  } catch (error: unknown) {
-    if (version === store.dashboardVersion && id === store.state.clientId) store.dashboardError = asAppError(error);
-  } finally {
-    if (version === store.dashboardVersion && id === store.state.clientId) {
-      store.dashboardLoading = false;
-      if (store.state.view === 'dashboard') render();
-    }
-  }
+// 지금 그 화면을 보고 있을 때만 다시 그립니다.
+function renderIfViewing(view: View): void {
+  if (store.state.view === view) render();
 }
 
 // API 필드를 화면 모델로 변환하고 키 원문은 보관하지 않습니다.
@@ -55,104 +36,153 @@ export function mapSite(item: SiteRead): Property {
   };
 }
 
-// 선택 대상의 저장 결과를 읽고 이전 대상에 대한 늦은 응답은 무시합니다.
-export async function loadStoredInspections(): Promise<void> {
-  if (demo || !store.inspectionTargetId) return;
+// 고객사 응답을 화면 모델로 바꿉니다.
+function mapClient(item: ClientRead): Client {
+  return { id: item.id, name: item.name, manager: item.manager_name ?? '' };
+}
 
-  const version = ++store.observationVersion;
-  const id = store.inspectionTargetId;
+// 메인 사이트를 조회 대상 항목으로 바꿉니다.
+function siteTarget(site: Property): InspectionTarget {
+  return { id: site.id, name: site.name, url: site.siteUrl, active: site.active, type: 'site' };
+}
 
-  store.inspectionLoading = true;
-  store.inspectionError = null;
+// 글을 조회 대상 항목으로 바꿉니다.
+function pageTarget(page: PageRead): InspectionTarget {
+  return { id: page.id, name: page.name, url: page.url, active: page.is_active, type: 'page' };
+}
 
-  if (store.state.view === 'inspect') render();
+// ─────────────────────────────────────────────────────────────
+// 대시보드
+// ─────────────────────────────────────────────────────────────
+
+// 고객사 전환 중 늦게 도착한 이전 고객사의 통계 응답은 무시합니다.
+export async function loadDashboard(): Promise<void> {
+  store.dashboardVersion += 1;
+  const version = store.dashboardVersion;
+  const id = store.state.clientId;
+  const isCurrent = (): boolean => version === store.dashboardVersion && id === store.state.clientId;
+
+  store.dashboardData = null;
+  store.dashboardError = null;
+  store.dashboardLoading = !demo && Boolean(id);
+  renderIfViewing('dashboard');
+
+  if (demo || !id) return;
 
   try {
-    const rows = await api.getInspections(id);
-    if (version === store.observationVersion && id === store.inspectionTargetId) store.storedInspections = rows;
+    const result = await api.getDashboard(id);
+    if (isCurrent()) {
+      if (result.client.id !== id) throw new ApiError(0, '요청한 고객사와 통계 응답이 다릅니다.');
+      store.dashboardData = result;
+    }
   } catch (error: unknown) {
-    if (version === store.observationVersion && id === store.inspectionTargetId)
-      store.inspectionError = asAppError(error);
+    if (isCurrent()) store.dashboardError = asAppError(error);
   } finally {
-    if (version === store.observationVersion && id === store.inspectionTargetId) {
-      store.inspectionLoading = false;
-      if (store.state.view === 'inspect') render();
+    if (isCurrent()) {
+      store.dashboardLoading = false;
+      renderIfViewing('dashboard');
     }
   }
 }
 
-// 메인페이지와 저장된 글 목록을 읽고 검색엔진 호출 없이 조회 대상을 준비합니다.
-export async function loadInspectionTargets(): Promise<void> {
-  if (demo) return;
+// ─────────────────────────────────────────────────────────────
+// 색인 조회 대상과 저장 결과
+// ─────────────────────────────────────────────────────────────
 
-  const version = ++store.targetsVersion;
+// 선택 대상의 저장 결과를 읽고 이전 대상에 대한 늦은 응답은 무시합니다.
+export async function loadStoredInspections(): Promise<void> {
+  if (demo || !store.inspectionTargetId) return;
 
-  ++store.observationVersion;
+  store.observationVersion += 1;
+  const version = store.observationVersion;
+  const id = store.inspectionTargetId;
+  const isCurrent = (): boolean => version === store.observationVersion && id === store.inspectionTargetId;
 
-  const site = property();
-  const oldTargetId = store.inspectionTargetId;
+  store.inspectionLoading = true;
+  store.inspectionError = null;
+  renderIfViewing('inspect');
 
+  try {
+    const rows = await api.getInspections(id);
+    if (isCurrent()) store.storedInspections = rows;
+  } catch (error: unknown) {
+    if (isCurrent()) store.inspectionError = asAppError(error);
+  } finally {
+    if (isCurrent()) {
+      store.inspectionLoading = false;
+      renderIfViewing('inspect');
+    }
+  }
+}
+
+// 조회 대상 목록을 선택 사이트의 메인페이지만 담은 초기 상태로 되돌립니다.
+function resetInspectionTargets(site: Property): void {
   store.inspectionTargetId = site.id;
   store.storedInspections = [];
   store.inspectionLoading = false;
   store.targetsLoading = true;
   store.targetsError = null;
   store.inspectionError = null;
-  store.inspectionTargets = site.id
-    ? [{ id: site.id, name: site.name, url: site.siteUrl, active: site.active, type: 'site' }]
-    : [];
+  store.inspectionTargets = site.id ? [siteTarget(site)] : [];
+}
 
-  if (store.state.view === 'inspect') render();
+// 메인페이지와 저장된 글 목록을 읽고 검색엔진 호출 없이 조회 대상을 준비합니다.
+export async function loadInspectionTargets(): Promise<void> {
+  if (demo) return;
+
+  store.targetsVersion += 1;
+  const version = store.targetsVersion;
+  // 대상 목록이 바뀌면 이전 저장 결과 요청도 무효가 됩니다.
+  store.observationVersion += 1;
+
+  const site = property();
+  const oldTargetId = store.inspectionTargetId;
+  const isCurrent = (): boolean => version === store.targetsVersion && site.id === store.state.propertyId;
+
+  resetInspectionTargets(site);
+  renderIfViewing('inspect');
 
   if (!site.id) {
     store.targetsLoading = false;
-    if (store.state.view === 'inspect') render();
+    renderIfViewing('inspect');
     return;
   }
 
   try {
     const pages = await api.listPages(site.id);
-    if (version !== store.targetsVersion || site.id !== store.state.propertyId) return;
-    store.inspectionTargets = [
-      ...store.inspectionTargets,
-      ...pages.map(
-        (page): InspectionTarget => ({
-          id: page.id,
-          name: page.name,
-          url: page.url,
-          active: page.is_active,
-          type: 'page',
-        }),
-      ),
-    ];
-    store.inspectionTargetId = store.inspectionTargets.some(
-      (target: InspectionTarget): boolean => target.id === oldTargetId,
-    )
-      ? oldTargetId
-      : site.id;
+    if (!isCurrent()) return;
+
+    store.inspectionTargets = [...store.inspectionTargets, ...pages.map(pageTarget)];
+    // 이전에 보던 대상이 새 목록에도 있으면 그 선택을 유지합니다.
+    const keepOld = store.inspectionTargets.some((target: InspectionTarget): boolean => target.id === oldTargetId);
+    store.inspectionTargetId = keepOld ? oldTargetId : site.id;
   } catch (error: unknown) {
-    if (version === store.targetsVersion && site.id === store.state.propertyId)
-      store.targetsError = asAppError(error);
+    if (isCurrent()) store.targetsError = asAppError(error);
   } finally {
-    if (version === store.targetsVersion && site.id === store.state.propertyId) {
+    if (isCurrent()) {
       store.targetsLoading = false;
-      if (store.state.view === 'inspect') render();
+      renderIfViewing('inspect');
     }
   }
 
-  if (version === store.targetsVersion && site.id === store.state.propertyId) await loadStoredInspections();
+  if (isCurrent()) await loadStoredInspections();
 }
+
+// ─────────────────────────────────────────────────────────────
+// IndexNow 설정·인증 계정
+// ─────────────────────────────────────────────────────────────
 
 // 현재 사이트의 설정을 조회하고 이전 사이트의 늦은 응답은 무시합니다.
 export async function loadSettings(): Promise<void> {
   if (demo || !property().id) return;
 
-  const version = ++store.settingsRequest;
+  store.settingsRequest += 1;
+  const version = store.settingsRequest;
   const id = property().id;
+  const isCurrent = (): boolean => version === store.settingsRequest && id === store.state.propertyId;
 
   store.settingsLoading = true;
   store.settingsError = null;
-
   if (store.state.view === 'notify') {
     capturePublicationDraft();
     render();
@@ -160,15 +190,15 @@ export async function loadSettings(): Promise<void> {
 
   try {
     const settings = await api.getSettings(id);
-    if (version !== store.settingsRequest || id !== store.state.propertyId) return;
+    if (!isCurrent()) return;
     store.properties = store.properties.map(
       (item: Property): Property => (item.id === id ? { ...item, indexNow: settings } : item),
     );
   } catch (error: unknown) {
-    if (version !== store.settingsRequest || id !== store.state.propertyId) return;
+    if (!isCurrent()) return;
     store.settingsError = asAppError(error);
   } finally {
-    if (version === store.settingsRequest && id === store.state.propertyId) {
+    if (isCurrent()) {
       capturePublicationDraft();
       store.settingsLoading = false;
       if (store.state.view === 'notify') render();
@@ -177,21 +207,33 @@ export async function loadSettings(): Promise<void> {
   }
 }
 
+// 등록 화면이거나 고객사 화면에서 계정을 편집 중이면 계정 목록 변화를 바로 그립니다.
+function renderIfAccountsVisible(): void {
+  const editing = store.state.view === 'clients' && store.accountEditor;
+  if (store.state.view === 'register' || editing) render();
+}
+
 // 계정 목록 조회 실패를 빈 목록과 구분하고 등록 폼의 다른 입력은 보존합니다.
 export async function loadAuthAccounts(): Promise<void> {
   if (demo || store.authAccountsLoading) return;
+
   store.authAccountsLoading = true;
   store.authAccountsError = null;
-  if (store.state.view === 'register' || (store.state.view === 'clients' && store.accountEditor)) render();
+  renderIfAccountsVisible();
+
   try {
     store.authAccounts = await api.listAuthAccounts();
   } catch (error: unknown) {
     store.authAccountsError = asAppError(error);
   } finally {
     store.authAccountsLoading = false;
-    if (store.state.view === 'register' || (store.state.view === 'clients' && store.accountEditor)) render();
+    renderIfAccountsVisible();
   }
 }
+
+// ─────────────────────────────────────────────────────────────
+// 전체 목록
+// ─────────────────────────────────────────────────────────────
 
 // 고객사와 메인 사이트 목록을 서버에서 읽고 실패 시 예시 데이터로 대체하지 않습니다.
 export async function loadWorkspace(): Promise<void> {
@@ -206,15 +248,12 @@ export async function loadWorkspace(): Promise<void> {
     const siteLists = await Promise.all(
       result.map((item): Promise<readonly SiteRead[]> => api.listSites(item.id)),
     );
-    store.clients = result.map(
-      (item): Client => ({ id: item.id, name: item.name, manager: item.manager_name ?? '' }),
-    );
+    store.clients = result.map(mapClient);
     store.properties = siteLists.flat().map(mapSite);
 
-    const clientId = store.clients.some((item): boolean => item.id === store.state.clientId)
-      ? store.state.clientId
-      : (store.clients[0]?.id ?? '');
-
+    // 이전에 선택한 고객사가 아직 있으면 유지하고, 없으면 첫 고객사를 고릅니다.
+    const stillExists = store.clients.some((item): boolean => item.id === store.state.clientId);
+    const clientId = stillExists ? store.state.clientId : (store.clients[0]?.id ?? '');
     store.state = { ...store.state, ...clientSelection(store.properties, clientId, store.state.propertyId) };
   } catch (error: unknown) {
     store.loadError = asAppError(error);
