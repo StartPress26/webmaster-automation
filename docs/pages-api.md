@@ -3,6 +3,8 @@
 `POST /sites/{main_site_id}/pages` 한 번으로 글을 DB에 저장하고 기본으로 IndexNow 알림까지 실행합니다.
 `main_site_id`는 이미 저장된 부모 메인 사이트의 UUID입니다. 별도 submissions API는 없습니다.
 
+기존 글에 사용자가 명시적으로 재알림을 승인한 경우에는 아래 **기존 글 재알림** API를 사용합니다. 생성 API의 중복 거절 동작은 유지합니다.
+
 ## 요청
 
 ```json
@@ -57,6 +59,27 @@
 키 불일치는 `INDEXNOW_SETTINGS_INCONSISTENT`, 키 범위·형식 오류는 `INVALID_INDEXNOW_SETTINGS`,
 외부 거절은 `INDEXNOW_REJECTED`, 통신 오류는 `INDEXNOW_TIMEOUT` 또는 `INDEXNOW_TRANSPORT_ERROR`입니다.
 HTTP 응답을 받지 못했거나 전송을 생략하면 upstream_http_status와 requested_at은 null입니다.
+
+## 기존 글 재알림
+
+`POST /sites/{main_site_id}/pages/{page_id}/notifications`
+
+`Content-Type: application/json`과 다음 본문이 필수입니다.
+
+```json
+{
+  "expected_url": "https://example.com/posts/hello"
+}
+```
+
+- 부모와 글의 ID·대상 유형·고객사·부모 관계·활성 상태·URL 범위를 검증합니다. 승인 화면에서 확인한 `expected_url`이 저장 URL과 일치해야 합니다.
+- 글을 새로 저장하거나 제목·생성일을 바꾸지 않습니다. DB 트랜잭션이 끝난 뒤 기존 IndexNow 클라이언트로 한 번 알립니다.
+- HTTP 200의 `page / submission` 구조는 생성 API와 같습니다. 200은 서버 처리 결과이며 `submission.status`를 따로 확인합니다. IndexNow 접수는 색인 완료가 아닙니다.
+- 부모·글 없음은 404, 비활성 대상은 `409 SITE_INACTIVE`, 승인 이후 URL 변경은 `409 PAGE_URL_CHANGED`, JSON이 아닌 요청은 `415 JSON_REQUIRED`, 본문·범위 오류는 422입니다.
+- 타임아웃·통신 오류는 접수 여부 미확인이며 자동 재전송하지 않습니다. 요청·색인 이력 테이블이나 DB 마이그레이션은 추가하지 않았습니다.
+- 기존 운영 API에는 이 경로가 없으므로 새 확장을 사용하기 전에 API를 업데이트해야 합니다. 이 작업에서 운영 배포나 실제 외부 제출은 하지 않았습니다.
+
+확장은 생성 API의 `409 DUPLICATE_PAGE`에만 기존 글을 조회하고, 현재 고객사·부모·URL에 일치하는 활성 글을 확인한 뒤 모달을 표시합니다. **계속 요청**을 누르면 선택한 IndexNow와 네이버 GUI 요청을 진행하며, 취소하면 해당 URL만 건너뜁니다. 기타 409나 저장 여부 불명은 이 경로로 자동 전환하지 않습니다.
 
 ## 처리와 한계
 

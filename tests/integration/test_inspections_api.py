@@ -409,15 +409,20 @@ async def test_two_engines_and_openapi(inspection_api: AsyncClient) -> None:
 
 # 실제 DB에서 GUI 최신 결과를 저장하고 같은 요청·과거 관측은 그대로 유지합니다.
 @pytest.mark.parametrize("kind", ["site", "page"])
-@pytest.mark.parametrize("engine_name", ["naver", "bing"])
+@pytest.mark.parametrize("engine_name,index_status", [
+    ("naver", "indexed"),
+    ("naver", "not_indexed"),
+    ("bing", "indexed"),
+])
 async def test_gui_inspection_roundtrip_and_stale_result(
-    inspection_api: AsyncClient, migrated_database_url: str, kind: str, engine_name: str,
+    inspection_api: AsyncClient, migrated_database_url: str, kind: str,
+    engine_name: str, index_status: str,
 ) -> None:
     root = "https://example.com/blog/"
     _, target_id, url = await create_target(inspection_api, kind, root)
     now = datetime.now(timezone.utc)
     payload = {
-        "engine": engine_name, "site_url": root, "target_url": url, "index_status": "indexed",
+        "engine": engine_name, "site_url": root, "target_url": url, "index_status": index_status,
         "queried_at": (now - timedelta(seconds=2)).isoformat(), "observed_at": now.isoformat(),
     }
     path = f"/sites/{target_id}/gui-inspections"
@@ -426,7 +431,7 @@ async def test_gui_inspection_roundtrip_and_stale_result(
     first = response.json()
     assert first["site_id"] == target_id
     assert first["engine"] == engine_name
-    assert first["index_status"] == "indexed"
+    assert first["index_status"] == index_status
     assert first["last_checked_at"]
     assert first["error_message"] is None
     assert (await inspection_api.get(f"/sites/{target_id}/inspections")).json() == {"items": [first]}

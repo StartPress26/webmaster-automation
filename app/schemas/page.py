@@ -38,6 +38,18 @@ class PageRead(BaseModel):
     created_at: datetime
 
 
+class PageNotificationRequest(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid", str_strip_whitespace=True)
+
+    expected_url: IndexNowUrl
+
+    # 확인 모달에 표시했던 URL을 기존 글 URL과 같은 규칙으로 정규화합니다.
+    @field_validator("expected_url")
+    @classmethod
+    def normalize_expected_url(cls, value: str) -> str:
+        return SiteCreate.validate_url(value)
+
+
 class PageNotification(BaseModel):
     model_config = ConfigDict(frozen=True)
 

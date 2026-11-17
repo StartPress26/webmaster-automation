@@ -1,5 +1,6 @@
 import type { InspectionRead } from '../types';
 
+// 서버가 돌려주는 색인 상태 값을 화면 문구로 바꾸는 대응표
 export const inspectionStatusNames: Readonly<Record<InspectionRead['index_status'], string>> = {
   unknown: '미확인',
   submitted: '알림 접수됨 · 이후 수집 여부 미확인',
@@ -12,8 +13,10 @@ export const inspectionStatusNames: Readonly<Record<InspectionRead['index_status
 // 서버의 성공 관측 시각을 한국 시간으로 표시하며 누락값을 추정하지 않습니다.
 export function inspectionTime(value: string | null): string {
   if (!value) return '성공 관측 없음';
+
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return '시각 확인 필요';
+
   return new Intl.DateTimeFormat('ko-KR', {
     timeZone: 'Asia/Seoul',
     dateStyle: 'medium',

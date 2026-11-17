@@ -25,11 +25,9 @@ class GuiInspectionCreate(BaseModel):
     queried_at: AwareDatetime
     observed_at: AwareDatetime
 
-    # 엔진별 판정 범위와 검사 시작·관측 시각의 순서를 검증합니다.
+    # GUI 판정 범위는 필드 타입으로 제한하고 관측 시각의 순서를 검증합니다.
     @model_validator(mode="after")
     def validate_observation(self) -> Self:
-        if self.engine == "naver" and self.index_status == "not_indexed":
-            raise ValueError("네이버 GUI 판정은 indexed 또는 unknown이어야 합니다.")
         if self.observed_at < self.queried_at:
             raise ValueError("관측 시각은 검사 시작 시각보다 빠를 수 없습니다.")
         return self

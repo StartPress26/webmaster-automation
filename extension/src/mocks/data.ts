@@ -1,11 +1,14 @@
+// 데모 모드(?mode=demo)에서 서버 없이 화면을 보여주기 위한 예시 데이터입니다. 실제 고객사·사이트가 아닙니다.
 import type { Client, Inspection, Property } from '../types';
 
+// 예시 고객사 3곳
 export const initialClients: readonly Client[] = [
   { id: 'otter', name: '오터스튜디오', manager: '김유담' },
   { id: 'grove', name: '그로브커피', manager: '이서연' },
   { id: 'startpress', name: 'StartPress', manager: '김유담' },
 ];
 
+// 예시 사이트. 고객사마다 하나씩이고 첫 사이트만 IndexNow가 설정됨
 export const initialProperties: readonly Property[] = [
   {
     id: 'otter-site',
@@ -42,6 +45,7 @@ export const initialProperties: readonly Property[] = [
   },
 ];
 
+// 예시 색인 검사 결과. 첫 사이트에 Google·네이버·Bing 결과가 섞여 있음
 export const initialInspections: readonly Inspection[] = [
   {
     id: 'p1',
