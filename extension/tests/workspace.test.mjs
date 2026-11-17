@@ -15,6 +15,290 @@ const clients = [{ id: 'a', name: '고객사 A', manager_name: '담당 A' }, { i
 const sites = [{ id: 'a1', client_id: 'a', name: 'A 블로그', url: 'https://a.example/', owner_type: 'client', is_active: true }, { id: 'a2', client_id: 'a', name: 'A 두 번째 블로그', url: 'https://second.example/', owner_type: 'client', is_active: true }, { id: 'b1', client_id: 'b', name: 'B 블로그', url: 'https://b.example/', owner_type: 'client', is_active: true }];
 const summary = { indexed: 0, not_indexed: 0, crawled: 0, submitted: 0, failed: 0, unknown: 0, error_count: 0, last_checked_at: null };
 
+// 발행 화면에서 탭·저장·수집 명령의 실제 연결 순서를 외부 호출 없이 기록합니다.
+async function publicationWorkspace({ count = 1, startPath = '/console/board', submission = 'skipped', indexNow = false, requestError = false, onRequest, apiOverride } = {}) {
+  const events = [];
+  const tabUrls = Object.fromEntries(Array.from({ length: count }, (_, index) => [index + 1, `https://searchadvisor.naver.com${startPath}`]));
+  let queries = 0;
+  const app = await workspace((url, options) => {
+    const custom = apiOverride?.(url, options, events);
+    if (custom !== undefined) return custom;
+    if (url.endsWith('/indexnow-settings')) return new Response(JSON.stringify({ configured: indexNow, key_location: indexNow ? 'https://a.example/key.txt' : null }));
+    if (options.method === 'POST' && /^\/api\/sites\/[^/]+\/pages$/.test(url)) {
+      const article = JSON.parse(options.body);
+      const siteId = url.split('/')[3];
+      events.push(['save', siteId, article.url, article.notify_search_engines]);
+      return new Response(JSON.stringify({
+        page: { id: `saved-${article.url.split('/').at(-1)}`, name: article.name, url: article.url },
+        submission: { status: submission, error_code: submission === 'failed' ? 'INDEXNOW_UPSTREAM_ERROR' : null, upstream_http_status: submission === 'failed' ? 503 : null },
+      }));
+    }
+    return undefined;
+  }, '', { tabs: {
+    query: async () => {
+      queries += 1;
+      return Object.entries(tabUrls).map(([id, url]) => ({ id: Number(id), url, title: `네이버 ${id}`, status: 'complete' }));
+    },
+    get: async (id) => ({ id, url: tabUrls[id], status: 'complete' }),
+    update: async (id, patch) => { tabUrls[id] = patch.url; return { id, url: patch.url }; },
+    sendMessage: async (id, request) => {
+      const url = new URL(tabUrls[id]);
+      let value;
+      if (request.action === 'state') {
+        value = { route: url.pathname.endsWith('/board') ? 'board' : url.pathname.endsWith('/summary') ? 'summary' : url.pathname.endsWith('/crawl') ? 'collection' : 'other',
+          siteUrl: url.searchParams.has('site') ? new URL(url.searchParams.get('site')).href : null,
+          ready: true, documentToken: 'publication-document' };
+      } else {
+        events.push([request.action, id, request.targetUrl ?? request.siteUrl]);
+      }
+      if (request.action === 'open_board') tabUrls[id] = 'https://searchadvisor.naver.com/console/board';
+      if (['select_site', 'select_collection_site'].includes(request.action)) tabUrls[id] = `https://searchadvisor.naver.com/console/site/summary?site=${encodeURIComponent(request.siteUrl)}`;
+      if (request.action === 'open_collection') tabUrls[id] = `https://searchadvisor.naver.com/console/site/request/crawl?site=${encodeURIComponent(request.siteUrl)}`;
+      if (request.action === 'request_collection') {
+        if (onRequest) await onRequest(request);
+        if (requestError) return { requestId: request.requestId, ok: false, code: 'receipt_unconfirmed' };
+        value = { kind: 'collection_receipt', siteUrl: request.siteUrl, targetUrl: request.targetUrl,
+          requestStatus: 'accepted', collectionStatus: 'unknown', indexStatus: 'unknown',
+          requestedAt: new Date().toISOString(), readAt: new Date().toISOString(),
+          registeredAtText: new Date(Date.now() + 9 * 3600000).toISOString().slice(2, 19).replaceAll('-', '.').replace('T', ' '), targetVerified: true };
+      }
+      return { requestId: request.requestId, ok: true, value };
+    },
+  } });
+  app.navigate('notify');
+  await waitFor(() => app.document.querySelector('#naver-gui-enabled'));
+  return { ...app, events, queryCount: () => queries };
+}
+
+// 현재 렌더된 발행 폼에 제목·URL·선택 사항을 넣고 제출합니다.
+function submitPublication(app, { gui = false, notify: notifyEnabled = false, urls = ['https://a.example/new-post'] } = {}) {
+  const { document, window } = app;
+  document.querySelector('#notification-form [name="titles"]').value = urls.map((_, index) => `새 글 ${index + 1}`).join('\n');
+  document.querySelector('#notification-form [name="urls"]').value = urls.join('\n');
+  const notify = document.querySelector('#notify-enabled');
+  notify.checked = notifyEnabled;
+  notify.dispatchEvent(new window.Event('change', { bubbles: true }));
+  const naver = document.querySelector('#naver-gui-enabled');
+  naver.checked = gui;
+  naver.dispatchEvent(new window.Event('change', { bubbles: true }));
+  document.querySelector('#notification-form').dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true }));
+}
+
+// 기존 글과 재알림 endpoint를 재현하되 네이버·IndexNow의 실제 요청은 보내지 않습니다.
+async function duplicatePublication({ mismatch = false, count = 1, firstSave = false } = {}) {
+  let saves = 0;
+  const page = { id: 'existing-p1', client_id: mismatch ? 'b' : 'a', parent_site_id: 'a1',
+    target_type: 'page', name: '기존 제목', url: 'https://a.example/new-post', is_active: true };
+  return publicationWorkspace({ count, indexNow: true, apiOverride: (url, options, events) => {
+    if (options.method === 'POST' && url === '/api/sites/a1/pages') {
+      saves += 1;
+      events.push(['create', saves]);
+      return firstSave && saves === 1
+        ? new Response(JSON.stringify({ page, submission: { status: 'accepted', error_code: null, upstream_http_status: 200 } }))
+        : new Response(JSON.stringify({ detail: { code: 'DUPLICATE_PAGE', message: '이미 등록된 URL' } }), { status: 409 });
+    }
+    if (options.method === 'GET' && url.startsWith('/api/sites/a1/pages?'))
+      return new Response(JSON.stringify({ items: [page] }));
+    if (options.method === 'POST' && url === '/api/sites/a1/pages/existing-p1/notifications') {
+      events.push(['notify-existing', page.id]);
+      return new Response(JSON.stringify({ page, submission: { status: 'accepted', error_code: null, upstream_http_status: 200 } }));
+    }
+  } });
+}
+
+test('중복 글 모달 승인 전에는 알림하지 않고 승인하면 IndexNow와 GUI를 각각 한 번 실행한다', async () => {
+  const app = await duplicatePublication();
+  try {
+    submitPublication(app, { gui: true, notify: true });
+    await waitFor(() => app.document.querySelector('#duplicate-dialog'));
+    const dialog = app.document.querySelector('#duplicate-dialog');
+    assert.match(dialog.textContent, /IndexNow 알림/);
+    assert.match(dialog.textContent, /네이버 GUI/);
+    assert.equal(app.document.activeElement.id, 'cancel-duplicate');
+    assert.ok(app.document.querySelector('main').hasAttribute('inert'));
+    assert.deepEqual(app.events.filter(([action]) => ['notify-existing', 'request_collection'].includes(action)), []);
+    const confirm = app.document.querySelector('#confirm-duplicate');
+    confirm.click(); confirm.click();
+    await waitFor(() => app.document.querySelector('#publication-progress')?.dataset.phase === 'finished');
+    assert.equal(app.events.filter(([action]) => action === 'notify-existing').length, 1);
+    assert.equal(app.events.filter(([action]) => action === 'request_collection').length, 1);
+    assert.match(app.document.querySelector('#batch-results').textContent, /기존 글 사용/);
+    assert.equal(app.document.querySelector('#duplicate-dialog'), null);
+    assert.equal(app.document.querySelector('main').hasAttribute('inert'), false);
+  } finally { app.dom.window.close(); }
+});
+
+test('네이버를 선택하지 않아도 중복 모달에서 IndexNow만 다시 요청할 수 있다', async () => {
+  const app = await duplicatePublication({ count: 0 });
+  try {
+    submitPublication(app, { notify: true });
+    await waitFor(() => app.document.querySelector('#duplicate-dialog'));
+    assert.doesNotMatch(app.document.querySelector('#duplicate-dialog').textContent, /네이버 GUI/);
+    app.document.querySelector('#confirm-duplicate').click();
+    await waitFor(() => app.document.querySelector('#publication-progress')?.dataset.phase === 'finished');
+    assert.equal(app.events.filter(([action]) => action === 'notify-existing').length, 1);
+    assert.equal(app.queryCount(), 0);
+  } finally { app.dom.window.close(); }
+});
+
+test('중복 모달은 포커스를 가두고 Escape 또는 취소로 해당 URL의 후속 요청을 막는다', async () => {
+  for (const action of ['escape', 'cancel']) {
+    const app = await duplicatePublication();
+    try {
+      submitPublication(app, { gui: true, notify: true });
+      await waitFor(() => app.document.querySelector('#duplicate-dialog'));
+      app.document.querySelector('#confirm-duplicate').focus();
+      const tab = new app.window.KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true });
+      app.document.dispatchEvent(tab);
+      assert.equal(app.document.activeElement.id, 'close-duplicate');
+      if (action === 'escape') app.document.dispatchEvent(new app.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+      else app.document.querySelector('#cancel-duplicate').click();
+      await waitFor(() => app.document.querySelector('#publication-progress')?.dataset.phase === 'finished');
+      assert.deepEqual(app.events.filter(([event]) => ['notify-existing', 'request_collection'].includes(event)), []);
+      assert.equal(app.document.body.classList.contains('has-publication-modal'), false);
+    } finally { app.dom.window.close(); }
+  }
+});
+
+test('같은 관리 화면에서 이미 저장한 글도 명시적인 중복 확인을 거쳐 다시 요청할 수 있다', async () => {
+  const app = await duplicatePublication({ firstSave: true });
+  try {
+    submitPublication(app, { notify: true });
+    await waitFor(() => app.document.querySelector('#publication-progress')?.dataset.phase === 'finished');
+    submitPublication(app, { notify: true });
+    await waitFor(() => app.document.querySelector('#duplicate-dialog'));
+    app.document.querySelector('#confirm-duplicate').click();
+    await waitFor(() => app.document.querySelector('#publication-progress')?.dataset.phase === 'finished');
+    assert.equal(app.events.filter(([action]) => action === 'create').length, 2);
+    assert.equal(app.events.filter(([action]) => action === 'notify-existing').length, 1);
+  } finally { app.dom.window.close(); }
+});
+
+test('다른 고객사의 기존 글이면 중복 모달과 후속 요청을 실행하지 않는다', async () => {
+  const app = await duplicatePublication({ mismatch: true });
+  try {
+    submitPublication(app, { gui: true, notify: true });
+    await waitFor(() => app.document.querySelector('#publication-progress')?.dataset.phase === 'finished');
+    assert.equal(app.document.querySelector('#duplicate-dialog'), null);
+    assert.deepEqual(app.events.filter(([action]) => ['notify-existing', 'request_collection'].includes(action)), []);
+  } finally { app.dom.window.close(); }
+});
+
+test('발행 화면의 GUI 기본값은 해제이고 체크하지 않으면 탭 조회 없이 글만 저장한다', async () => {
+  const app = await publicationWorkspace();
+  try {
+    assert.equal(app.document.querySelector('#naver-gui-enabled').checked, false);
+    submitPublication(app);
+    await waitFor(() => app.document.querySelector('#publication-progress')?.dataset.phase === 'finished');
+    assert.deepEqual(app.events, [['save', 'a1', 'https://a.example/new-post', false]]);
+    assert.equal(app.queryCount(), 0);
+    assert.match(app.document.querySelector('#batch-results').textContent, /저장 확인됨/);
+  } finally { app.dom.window.close(); }
+});
+
+test('전체 조회 없이 새 글 GUI 체크로 네이버 가이드에서 메뉴를 거쳐 저장 URL을 수집 요청한다', async () => {
+  const app = await publicationWorkspace({ startPath: '/guide/request-crawl' });
+  try {
+    submitPublication(app, { gui: true });
+    await waitFor(() => app.document.querySelector('#publication-progress')?.dataset.phase === 'finished');
+    assert.deepEqual(app.events.map(([action]) => action), ['save', 'open_board', 'select_collection_site', 'open_collection', 'request_collection']);
+    assert.equal(app.events.at(-1)[2], 'https://a.example/new-post');
+    assert.match(app.document.querySelector('#publication-progress').textContent, /접수 확인/);
+    const row = app.document.querySelector('#publication-progress tbody tr');
+    assert.deepEqual(Array.from(row.querySelectorAll('td')).slice(2).map((cell) => cell.textContent), ['미확인', '미확인']);
+    assert.equal(app.calls.some((call) => call.url.endsWith('/gui-inspections') || call.url.endsWith('/inspect')), false);
+    assert.equal(app.document.querySelector('#notification-form #publication-progress'), null);
+    assert.equal(app.document.querySelector('#notification-form [data-publication-tab]'), null);
+  } finally { app.dom.window.close(); }
+});
+
+test('발행의 IndexNow 실패 결과와 네이버 GUI 접수 성공은 별도 영역에 유지한다', async () => {
+  const app = await publicationWorkspace({ submission: 'failed', indexNow: true });
+  try {
+    await waitFor(() => app.document.querySelector('.indexnow-settings').textContent.includes('설정 저장됨'));
+    submitPublication(app, { gui: true, notify: true });
+    await waitFor(() => app.document.querySelector('#publication-progress')?.dataset.phase === 'finished');
+    assert.match(app.document.querySelector('#batch-results').textContent, /저장 확인됨/);
+    assert.match(app.document.querySelector('#batch-results').textContent, /알림 실패/);
+    assert.match(app.document.querySelector('#publication-progress').textContent, /접수 확인/);
+    assert.equal(app.events.filter(([action]) => action === 'save').length, 1);
+    assert.equal(app.events.find(([action]) => action === 'save')[3], true);
+    assert.equal(app.events.filter(([action]) => action === 'request_collection').length, 1);
+  } finally { app.dom.window.close(); }
+});
+
+test('발행의 여러 네이버 탭은 저장 전에 선택을 기다리고 선택 후 자동으로 이어간다', async () => {
+  const app = await publicationWorkspace({ count: 2 });
+  try {
+    submitPublication(app, { gui: true });
+    await waitFor(() => app.document.querySelector('#publication-progress')?.dataset.phase === 'awaiting_tabs');
+    assert.deepEqual(app.events, []);
+    assert.equal(app.document.querySelector('#submit-pages').disabled, true);
+    const form = app.document.querySelector('[data-publication-tab="naver"]');
+    assert.ok(form);
+    assert.equal(form.closest('#notification-form'), null);
+    assert.equal(form.querySelector('button').disabled, false);
+    assert.equal(app.document.querySelector('#notification-form [name="urls"]').value, 'https://a.example/new-post');
+    app.choose('#publication-tab-naver-select', '2');
+    form.dispatchEvent(new app.window.Event('submit', { bubbles: true, cancelable: true }));
+    await waitFor(() => app.document.querySelector('#publication-progress')?.dataset.phase === 'finished');
+    assert.equal(app.events.filter(([action]) => action === 'save').length, 1);
+    assert.ok(app.events.filter(([action]) => action !== 'save').every(([, tabId]) => tabId === 2));
+  } finally { app.dom.window.close(); }
+});
+
+test('발행에서 네이버 탭이 없으면 저장·알림 없이 대기하고 취소할 수 있다', async () => {
+  const app = await publicationWorkspace({ count: 0 });
+  try {
+    submitPublication(app, { gui: true });
+    await waitFor(() => app.document.querySelector('#publication-progress')?.dataset.phase === 'awaiting_tabs');
+    assert.equal(app.calls.filter((call) => call.options.method === 'POST').length, 0);
+    assert.deepEqual(app.events, []);
+    assert.ok(app.document.querySelector('[data-refresh-publication-tab="naver"]'));
+    app.document.querySelector('#cancel-publication').click();
+    await waitFor(() => app.document.querySelector('#publication-progress')?.dataset.phase === 'cancelled');
+    assert.equal(app.document.querySelector('#submit-pages').disabled, false);
+    assert.deepEqual(app.events, []);
+  } finally { app.dom.window.close(); }
+});
+
+test('GUI 접수 미확인 뒤 후속 URL을 중단하고 자동 재전송 없이 저장 결과를 유지한다', async () => {
+  const app = await publicationWorkspace({ requestError: true });
+  try {
+    submitPublication(app, { gui: true, urls: ['https://a.example/first', 'https://a.example/second'] });
+    await waitFor(() => app.document.querySelector('#publication-progress')?.dataset.phase === 'failed');
+    assert.equal(app.events.filter(([action]) => action === 'save').length, 2);
+    assert.equal(app.events.filter(([action]) => action === 'request_collection').length, 1);
+    assert.match(app.document.querySelector('#publication-progress').textContent, /접수 여부 미확인/);
+    assert.equal(app.document.querySelectorAll('#batch-results tbody tr').length, 2);
+    await delay(20);
+    assert.equal(app.events.filter(([action]) => action === 'save').length, 2);
+    assert.equal(app.events.filter(([action]) => action === 'request_collection').length, 1);
+  } finally { app.dom.window.close(); }
+});
+
+test('발행 GUI 요청 중 고객사를 바꿔도 시작 사이트를 유지하고 결과를 새 고객사에 섞지 않는다', async () => {
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const app = await publicationWorkspace({ onRequest: async () => gate });
+  try {
+    submitPublication(app, { gui: true });
+    await waitFor(() => app.events.some(([action]) => action === 'request_collection'));
+    app.choose('#client-select', 'b');
+    assert.match(app.document.querySelector('#publication-progress').textContent, /다른 사이트 발행 작업 진행 중/);
+    assert.equal(app.document.querySelector('#publication-progress table'), null);
+    assert.ok(app.document.querySelector('#cancel-publication'));
+    release();
+    await waitFor(() => app.document.querySelector('#publication-progress') === null);
+    assert.equal(app.document.querySelectorAll('#batch-results tbody tr').length, 0);
+    app.choose('#client-select', 'a');
+    await waitFor(() => app.document.querySelector('#publication-progress')?.dataset.phase === 'finished');
+    assert.match(app.document.querySelector('#publication-progress').textContent, /https:\/\/a.example\/new-post/);
+    assert.ok(app.events.filter(([action]) => action === 'save').every(([, siteId]) => siteId === 'a1'));
+    assert.equal(app.events.filter(([action]) => action === 'request_collection').length, 1);
+  } finally { release(); await delay(0); app.dom.window.close(); }
+});
+
 // 비동기 렌더가 끝날 때까지 DOM의 구체적인 조건을 기다립니다.
 async function waitFor(condition) {
   for (let attempt = 0; attempt < 200; attempt += 1) {
@@ -658,6 +942,7 @@ test('선택한 네이버 화면은 현재 실행의 미리보기로만 표시�
 test('전체 조회 버튼은 네이버 사이트별 URL 조회를 실행하고 마지막에 목록으로 복귀한다', async () => {
   let naverUrl = 'https://searchadvisor.naver.com/console/board';
   const inspected = [];
+  const collected = [];
   const chromeClient = { tabs: {
     query: async () => [{ id: 1, title: '네이버', url: naverUrl, status: 'complete' }, { id: 2, title: 'Bing', url: 'https://www.bing.com/webmasters/', status: 'complete' }],
     get: async (id) => ({ id, url: id === 1 ? naverUrl : 'https://www.bing.com/webmasters/', status: 'complete' }),
@@ -668,11 +953,20 @@ test('전체 조회 버튼은 네이버 사이트별 URL 조회를 실행하고 
       const url = new URL(naverUrl);
       let value;
 
-      if (request.action === 'state') value = { route: url.pathname.endsWith('/board') ? 'board' : url.pathname.endsWith('/summary') ? 'summary' : 'inspection', siteUrl: url.searchParams.has('site') ? new URL(url.searchParams.get('site')).href : null, ready: true, documentToken: 'doc' };
+      if (request.action === 'state') value = { route: url.pathname.endsWith('/board') ? 'board' : url.pathname.endsWith('/summary') ? 'summary' : url.pathname.endsWith('/crawl') ? 'collection' : 'inspection', siteUrl: url.searchParams.has('site') ? new URL(url.searchParams.get('site')).href : null, ready: true, documentToken: 'doc' };
 
       if (request.action === 'select_site') naverUrl = `https://searchadvisor.naver.com/console/site/summary?site=${encodeURIComponent(request.siteUrl)}`;
 
       if (request.action === 'inspect_url') { inspected.push(request.targetUrl); value = { kind: 'verified_gui', siteUrl: request.siteUrl, targetUrl: request.targetUrl, indexStatus: 'unknown', message: 'URL 검사 결과가 없습니다.', queriedAt: new Date().toISOString(), readAt: new Date().toISOString(), targetVerified: true }; }
+      if (request.action === 'request_collection') {
+        collected.push(request.targetUrl);
+        const registeredAtText = new Date(Date.now() + 9 * 3600000).toISOString()
+          .slice(2, 19).replace('T', ' ').replaceAll('-', '.');
+        value = { kind: 'collection_receipt', siteUrl: request.siteUrl, targetUrl: request.targetUrl,
+          requestStatus: 'accepted', collectionStatus: 'unknown', indexStatus: 'unknown',
+          requestedAt: new Date().toISOString(), readAt: new Date().toISOString(), registeredAtText,
+          targetVerified: true };
+      }
 
       return { requestId: request.requestId, ok: true, value };
     },
@@ -700,6 +994,8 @@ test('전체 조회 버튼은 네이버 사이트별 URL 조회를 실행하고 
     assert.equal(guiPosts.length, 3);
     assert.ok(guiPosts.every((call) => call.options.method === 'POST' && JSON.parse(call.options.body).engine === 'naver'));
     await waitFor(() => !app.document.querySelector('#refresh-index').disabled);
+    assert.deepEqual(collected, []);
+    assert.equal(app.document.querySelector('#naver-collection-form'), null);
   } finally { await delay(0); app.dom.window.close(); }
 });
 

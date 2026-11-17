@@ -31,6 +31,7 @@ export interface ApiClient {
   readonly putSettings: (id: string, data: IndexNowSettings) => Promise<IndexNowSettingsRead>;
   readonly addPage: (id: string, article: Article, notify: boolean) => Promise<PageCreateResult>;
   readonly listPages: (id: string) => Promise<readonly PageRead[]>;
+  readonly notifyPage: (id: string, page: PageRead) => Promise<PageCreateResult>;
   readonly getInspections: (id: string) => Promise<readonly InspectionRead[]>;
   readonly inspect: (id: string, engine: 'google' | 'bing') => Promise<InspectionRead>;
   readonly saveGuiInspection: (id: string, data: GuiInspectionCreate) => Promise<InspectionRead>;
@@ -270,7 +271,24 @@ export function createApi(
         key: data.key,
         key_location: data.keyLocation,
       }),
-    // 글을 저장하고 선택한 경우 서버에서 한 번 알립니다.
+    // 기존 글을 다시 저장하지 않고 해당 글의 IndexNow 알림만 한 번 전송합니다.
+    notifyPage: async (id: string, page: PageRead): Promise<PageCreateResult> => {
+      const result = await request<PageCreateResult & { readonly page: PageRead }>(
+        `/sites/${encodeURIComponent(id)}/pages/${encodeURIComponent(page.id)}/notifications`,
+        'POST', { expected_url: page.url }, 'submit',
+      );
+      if (
+        result?.page?.id !== page.id || result.page.url !== page.url ||
+        result.page.client_id !== page.client_id || result.page.parent_site_id !== id ||
+        result.page.target_type !== 'page' || result.page.is_active !== true ||
+        !result.submission ||
+        !['accepted', 'key_pending', 'failed', 'unknown', 'skipped'].includes(result.submission.status)
+      ) throw new ApiError(0, '기존 글 알림 응답의 대상과 접수 결과를 확인하지 못했습니다.', {
+        code: 'INVALID_RESPONSE', operation: 'submit',
+      });
+      return result;
+    },
+    // 새 글을 저장하고 선택한 경우 서버에서 한 번 알립니다.
     addPage: async (id: string, article: Article, notify: boolean): Promise<PageCreateResult> => {
       const result = await request<PageCreateResult>(
         `/sites/${encodeURIComponent(id)}/pages`,

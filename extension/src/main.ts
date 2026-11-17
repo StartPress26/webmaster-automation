@@ -2,7 +2,9 @@ import './styles.css';
 import { initialClients, initialInspections, initialProperties } from './mocks/data';
 import { validateIndexNowSettings } from './indexnow';
 import { createApi } from './api';
-import { submitPageBatch } from './batch';
+import { createPublicationController, publicationBusy } from './publication/controller';
+import type { PublicationInput } from './publication/controller';
+import { renderPublication, renderPublicationDuplicateModal } from './publication/view';
 import { inspectionStatusNames, inspectionTime } from './inspection/format';
 import {
   createClientInspectionController,
@@ -144,7 +146,7 @@ let pending = false;
 let outcomes: readonly PageOutcome[] = [];
 let outcomeHistory: ReadonlyMap<string, readonly PageOutcome[]> = new Map();
 let outcomesError: ApiError | null = null;
-let attempted: ReadonlySet<string> = new Set();
+let uncertainSaves: ReadonlySet<string> = new Set();
 let inspectionTargets: readonly InspectionTarget[] = [];
 let inspectionTargetId = '';
 let storedInspections: readonly InspectionRead[] = [];
@@ -154,6 +156,23 @@ const clientInspections = createClientInspectionController(api, (): void => {
   if (state.view === 'inspect' || state.view === 'dashboard') render();
   else applyAvailability();
 });
+const publications = createPublicationController({
+  submit: (input, article): Promise<PageCreateResult> => input.demo
+    ? Promise.resolve({
+        page: { id: crypto.randomUUID(), name: article.name, url: article.url },
+        submission: { status: 'skipped', error_code: 'DEMO_MODE', upstream_http_status: null },
+      })
+    : api.addPage(input.siteId, article, input.notify),
+  blocked: (): boolean => pending || clientInspectionBusy(clientInspections.getState()) ||
+    !!clientInspections.getState().naverPreview?.loading,
+  report: recordPublicationOutcomes,
+  changed: publicationChanged,
+  listPages: api.listPages,
+  notifyExisting: (input, page): Promise<PageCreateResult> => api.notifyPage(input.siteId, page),
+});
+let completedPublicationScope = '';
+let duplicateFocusKey = '';
+let duplicateReturnFocusId = 'submit-pages';
 let targetsLoading = false;
 let targetsError: ApiError | null = null;
 let targetsVersion = 0;
@@ -161,6 +180,7 @@ let observationVersion = 0;
 let notificationDraft = '';
 let notificationTitles = '';
 let notifyEnabled = true;
+let naverGuiEnabled = false;
 let requestText = '';
 let formDrafts: FormDrafts = new Map();
 let renderedScope = '';
@@ -273,6 +293,7 @@ function selectProperty(id: string): void {
 
   notificationDraft = '';
   notificationTitles = '';
+  naverGuiEnabled = false;
   requestText = '';
   outcomes = outcomeHistory.get(id) ?? [];
   outcomesError = null;
@@ -536,8 +557,9 @@ function notificationView(): string {
     <div class="form-layout"><section class="report form-report"><div class="report-header"><div><h2>${routes.find((route): boolean => route.id === state.route)?.title}</h2><p>${escape(property().name)} · ${escape(property().origin)}</p></div></div>
       ${state.route === 'direct' ? indexNowSettingsView() : ''}
       <form id="notification-form" class="work-form"><label>글 제목 <span class="required">*</span><textarea name="titles" rows="2" required placeholder="새 글 제목을 입력하세요">${escape(notificationTitles)}</textarea><span class="field-help">여러 글은 URL과 같은 순서로 한 줄에 하나씩 제목을 입력하세요.</span></label><label>발행된 글 URL <span class="required">*</span><textarea name="urls" rows="5" required placeholder="${escape(property().origin)}/posts/new-article">${escape(notificationDraft)}</textarea><span class="field-help">URL을 한 줄에 하나씩 입력하세요. 선택한 사이트의 글만 처리합니다.</span></label>
-      ${state.route === 'direct' ? `<label class="radio-label"><input type="checkbox" name="notify" id="notify-enabled" ${notifyEnabled ? 'checked' : ''}>글 저장과 함께 IndexNow 알림 전송</label><div class="inline-note">네이버·Bing 공통 알림입니다. 체크를 해제하면 글만 DB에 저장합니다. Google 일반 URL 제출과는 별개입니다.</div>` : state.route === 'link' ? '<div class="inline-note">우리 블로그의 글 편집·발행 작업을 준비합니다. 링크 추가가 고객사 URL의 직접 제출이나 색인을 보장하지는 않습니다.</div>' : '<label>요청 내용<textarea name="note" rows="2" placeholder="예: 신규 글 제출과 접수 결과 확인을 부탁드립니다."></textarea></label>'}
+      ${state.route === 'direct' ? `<fieldset class="publication-options"><legend class="visually-hidden">발행 알림 방법</legend><div class="publication-option"><label class="radio-label"><input type="checkbox" name="notify" id="notify-enabled" aria-describedby="indexnow-notify-help" ${notifyEnabled ? 'checked' : ''}>글 저장과 함께 IndexNow 알림 전송</label><p class="field-help" id="indexnow-notify-help">IndexNow로 네이버·Bing에 알립니다. Google 일반 URL 제출과는 별개입니다.</p></div><div class="publication-option"><label class="radio-label"><input type="checkbox" name="naverGui" id="naver-gui-enabled" aria-describedby="naver-gui-help" ${naverGuiEnabled ? 'checked' : ''}>네이버 GUI로도 수집 요청</label><p class="field-help" id="naver-gui-help">로그인된 네이버 탭을 확인한 뒤 저장된 글을 웹 페이지 수집에 요청합니다. 접수 후 수집·색인은 별도로 확인하세요.</p></div></fieldset>` : state.route === 'link' ? '<div class="inline-note">우리 블로그의 글 편집·발행 작업을 준비합니다. 링크 추가가 고객사 URL의 직접 제출이나 색인을 보장하지는 않습니다.</div>' : '<label>요청 내용<textarea name="note" rows="2" placeholder="예: 신규 글 제출과 접수 결과 확인을 부탁드립니다."></textarea></label>'}
       <div class="form-error" id="notification-error"></div><div class="form-footer"><span class="muted small">${state.route === 'direct' ? (demo ? '예시 실행 · 실제 전송 없음' : '글 저장과 알림 결과를 각각 확인하세요') : '문구 작성만 수행하며 외부 전달·발행은 하지 않습니다'}</span><button class="button primary" type="submit" id="submit-pages">${icon(state.route === 'direct' ? 'send' : state.route === 'link' ? 'link' : 'mail')}${state.route === 'direct' ? '글 저장 및 발행 알림' : state.route === 'link' ? '링크 추가 작업 준비' : '요청 문구 만들기'}</button></div></form>
+      ${state.route === 'direct' ? renderPublication(publications.getState(), property().id) : ''}
       ${requestText ? `<div class="request-result"><h3>${state.route === 'request' ? '고객사에 전달할 요청 문구' : '링크 추가 작업 메모'}</h3><pre>${escape(requestText)}</pre><button class="button secondary" id="copy-request">문구 복사</button></div>` : ''}</section>
       <aside class="context-column"><h3>사이트 처리 권한</h3><dl class="property-facts"><div><dt>고객사</dt><dd>${escape(clients.find((client: Client): boolean => client.id === property().clientId)?.name ?? '')}</dd></div><div><dt>소유 구분</dt><dd>${property().owned ? '우리 팀 사이트' : '고객사 사이트'}</dd></div><div><dt>접근 권한</dt><dd>실제 연결 시 확인 필요</dd></div></dl><div class="context-note">${icon('info')}<p>고객사 사이트는 권한과 운영 방식에 맞게 처리하세요. 요청 문구 작성과 실제 고객사 전달은 구분합니다.</p></div></aside></div>
     <div id="batch-results">${outcomeView()}</div>${activityView()}`;
@@ -579,6 +601,10 @@ function detailView(): string {
 
 // 전체 관리 화면과 현재 선택한 작업 페이지를 표시합니다.
 function render(): void {
+  const modalFocusId = app.querySelector('#duplicate-dialog')?.contains(document.activeElement)
+    ? (document.activeElement as HTMLElement).id : '';
+  if (!duplicateFocusKey && publications.getState().duplicate)
+    duplicateReturnFocusId = (document.activeElement as HTMLElement | null)?.id || 'submit-pages';
   if (renderedScope) formDrafts = captureFormDrafts(app, renderedScope, formDrafts);
 
   const scope = `${state.clientId}:${state.view}:${state.propertyId}:${state.route}`;
@@ -594,7 +620,7 @@ function render(): void {
   document.title = `StartPress · ${viewTitles[state.view]}`;
   app.innerHTML = `<header class="app-header"><button class="icon-button menu-toggle" id="menu-toggle" aria-label="왼쪽 메뉴 열기 또는 닫기" aria-expanded="${window.matchMedia('(max-width:760px)').matches ? state.mobileNav : !state.mobileNav}">${icon('menu')}</button><a class="brand" href="#inspect" aria-label="StartPress 홈"><span class="brand-symbol"><span></span><span></span><span></span></span><span>StartPress <span class="brand-subtitle">Console</span></span></a><form class="global-search" id="url-search"><label class="visually-hidden" for="url-inspect">선택한 사이트의 URL 검사</label>${icon('search')}<input id="url-inspect" type="url" placeholder="${escape(property().origin)} 내 URL 검사" required autocomplete="off"><kbd>URL 검사</kbd></form><div class="header-end"><a class="mode-switch" href="${demo ? '/' : '/?mode=demo'}">${demo ? 'API 모드로' : '예시 모드'}</a><span class="user-avatar" aria-label="StartPress 팀">S</span></div></header>
     <aside class="sidebar ${state.mobileNav ? 'open' : ''}"><label class="property-picker"><span class="property-symbol">${icon('users')}</span><span class="visually-hidden">관리할 고객사 선택</span><select id="client-select">${clients.length ? clients.map((client: Client): string => `<option value="${escape(client.id)}" ${client.id === state.clientId ? 'selected' : ''}>${escape(client.name)}</option>`).join('') : '<option value="">등록된 고객사 없음</option>'}</select></label><div class="sidebar-client">담당자: ${escape(selectedClient()?.manager || '미지정')}<span>${clientProperties(properties, state.clientId).length}개 블로그</span></div>${navigation('dashboard', 'dashboard')}<div class="nav-divider"></div><div class="nav-section-label">검색엔진 관리</div><nav aria-label="검색엔진 관리">${navigation('register', 'globe')}${navigation('notify', 'send')}${navigation('inspect', 'inspect')}</nav><div class="nav-divider"></div><div class="nav-section-label">워크스페이스</div><nav aria-label="워크스페이스">${navigation('clients', 'users')}</nav><div class="sidebar-bottom"><span class="team-symbol">SP</span><div>StartPress 팀<span>사이트 운영 워크스페이스</span></div></div></aside>
-    <main class="main-content"><div class="breadcrumb"><span>${state.view === 'clients' ? '워크스페이스' : escape(selectedClient()?.name ?? '고객사를 선택하세요')}</span>${icon('chevron')}<span>${viewTitles[state.view]}</span></div><div class="preview-notice">${icon('info')}<span>${demo ? '예시 모드입니다. 실제 검색엔진 요청이나 DB 저장은 하지 않습니다.' : 'API 연결 모드입니다. 사용 전 SSH 터널을 연결해 주세요. 고객사·사이트·글 저장은 DB에 반영되며, 발행 알림 선택 시 실제 IndexNow 요청을 실행합니다.'}</span></div>${loading ? '<div class="connection-notice" role="status">서버에서 고객사와 사이트를 불러오는 중…</div>' : loadError ? errorPanel(loadError, '고객사·사이트 목록을 불러오지 못했습니다', 'workspace') : ''}${state.notice ? `<div class="success-notice ${state.noticeTone ?? 'success'}" role="status">${icon(state.noticeTone && state.noticeTone !== 'success' ? 'info' : 'check')}<span>${escape(state.notice)}</span><button class="icon-button" id="dismiss-notice" aria-label="안내 닫기">${icon('close')}</button></div>` : ''}${state.view === 'notify' ? sitePicker() : ''}${state.view === 'dashboard' ? dashboardView() : state.view === 'inspect' ? inspectionView() : state.view === 'register' ? registrationView() : state.view === 'notify' ? notificationView() : clientsView()}<footer class="page-footer"><span>StartPress Console</span><span>${demo ? '예시 데이터 · 새로고침하면 초기화' : 'API 연결 · 알림 결과와 이번 작업 이력은 이 화면에서만 유지'}</span></footer></main>${detailView()}<div class="visually-hidden" role="status" aria-live="polite" id="live-status"></div>`;
+    <main class="main-content"><div class="breadcrumb"><span>${state.view === 'clients' ? '워크스페이스' : escape(selectedClient()?.name ?? '고객사를 선택하세요')}</span>${icon('chevron')}<span>${viewTitles[state.view]}</span></div><div class="preview-notice">${icon('info')}<span>${demo ? '예시 모드입니다. 실제 검색엔진 요청이나 DB 저장은 하지 않습니다.' : 'API 연결 모드입니다. 사용 전 SSH 터널을 연결해 주세요. 고객사·사이트·글 저장은 DB에 반영되며, 발행 알림 선택에 따라 실제 IndexNow 알림과 네이버 GUI 수집 요청을 실행합니다.'}</span></div>${loading ? '<div class="connection-notice" role="status">서버에서 고객사와 사이트를 불러오는 중…</div>' : loadError ? errorPanel(loadError, '고객사·사이트 목록을 불러오지 못했습니다', 'workspace') : ''}${state.notice ? `<div class="success-notice ${state.noticeTone ?? 'success'}" role="status">${icon(state.noticeTone && state.noticeTone !== 'success' ? 'info' : 'check')}<span>${escape(state.notice)}</span><button class="icon-button" id="dismiss-notice" aria-label="안내 닫기">${icon('close')}</button></div>` : ''}${state.view === 'notify' ? sitePicker() : ''}${state.view === 'dashboard' ? dashboardView() : state.view === 'inspect' ? inspectionView() : state.view === 'register' ? registrationView() : state.view === 'notify' ? notificationView() : clientsView()}<footer class="page-footer"><span>StartPress Console</span><span>${demo ? '예시 데이터 · 새로고침하면 초기화' : 'API 연결 · 알림 결과와 이번 작업 이력은 이 화면에서만 유지'}</span></footer></main>${detailView()}${renderPublicationDuplicateModal(publications.getState())}<div class="visually-hidden" role="status" aria-live="polite" id="live-status"></div>`;
 
   for (const input of privateInputs) {
     const replacement = input.formId
@@ -614,9 +640,12 @@ function render(): void {
   const notify = app.querySelector<HTMLInputElement>('#notify-enabled');
 
   if (notify) notifyEnabled = notify.checked;
+  const naverGui = app.querySelector<HTMLInputElement>('#naver-gui-enabled');
+  if (naverGui) naverGuiEnabled = naverGui.checked;
 
   renderedScope = scope;
   applyAvailability();
+  syncDuplicateModalFocus(modalFocusId);
 }
 
 // HTTP(S) 주소를 검증하고 인증정보와 프래그먼트를 거부합니다.
@@ -976,7 +1005,7 @@ function applyAvailability(): void {
   const run = clientInspections.getState();
   const refresh = app.querySelector<HTMLButtonElement>('#refresh-index');
 
-  if (refresh) refresh.disabled = demo || !state.clientId || clientInspectionBusy(run);
+  if (refresh) refresh.disabled = demo || !state.clientId || clientInspectionBusy(run) || publicationBusy(publications.getState());
 
   const cancel = app.querySelector<HTMLButtonElement>('#cancel-client-inspection');
 
@@ -987,6 +1016,7 @@ function applyAvailability(): void {
   if (naverRead)
     naverRead.disabled =
       !!run.naverPreview?.loading ||
+      publicationBusy(publications.getState()) ||
       !['awaiting_tabs', 'finished', 'cancelled', 'failed'].includes(run.phase);
 
   const noSite = !property().id || !property().active;
@@ -1049,9 +1079,14 @@ function applyAvailability(): void {
 
   if (button && state.route === 'direct') {
     button.disabled =
-      noSite ||
+      noSite || publicationBusy(publications.getState()) || clientInspectionBusy(run) ||
       (notifyEnabled && (settingsLoading || !!settingsError || !property().indexNow?.configured));
-    button.textContent = notifyEnabled ? '글 저장 및 발행 알림' : '글만 저장';
+    button.textContent = publicationBusy(publications.getState()) ? '발행 알림 처리 중…' : notifyEnabled || naverGuiEnabled ? '글 저장 및 발행 알림' : '글만 저장';
+  }
+  if (publicationBusy(publications.getState())) {
+    app.querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLButtonElement>(
+      '#notification-form input, #notification-form textarea, #notification-form button, [data-route]',
+    ).forEach((element): void => { element.disabled = true; });
   }
 }
 
@@ -1077,6 +1112,8 @@ function outcomeView(): string {
       '알림 응답 시간이 초과돼 접수 여부를 알 수 없습니다. 자동 재전송하지 않습니다.',
     INDEXNOW_TRANSPORT_ERROR:
       '알림 통신 중 접수 여부를 확인하지 못했습니다. 자동 재전송하지 않습니다.',
+    INDEXNOW_RESPONSE_ERROR:
+      '알림 응답의 대상이나 접수 결과를 확인하지 못했습니다. 자동 재전송하지 않습니다.',
     NOTIFICATION_DISABLED: '알림을 선택하지 않아 글만 저장했습니다.',
     DEMO_MODE: '예시 결과이며 실제 저장·전송은 하지 않았습니다.',
   };
@@ -1087,7 +1124,7 @@ function outcomeView(): string {
       const reason = item.result?.submission.error_code
         ? (explanations[item.result.submission.error_code] ?? '알림 처리 결과를 확인하세요.')
         : '';
-      return `<tr><td>${escape(item.article.name)}<span class="result-url">${escape(item.article.url)}</span></td><td>${item.saveStatus === 'saved' ? (demo ? '예시 저장' : '저장 확인됨') : item.saveStatus === 'unknown' ? '저장 여부 불명' : item.saveStatus === 'rejected' ? '요청 거절' : '미실행'}</td><td>${item.result ? labels[item.result.submission.status] : item.saveStatus === 'not_sent' ? '전송하지 않음' : '접수 여부 미확인'}${reason ? `<span class="result-url">${escape(reason)}</span>` : ''}${item.message ? `<span class="result-url">${escape(item.message)}</span>` : ''}${issue ? `<details class="row-error"><summary>원인·다음 행동</summary><p>${escape(issue.advice)}</p><small>오류 코드: ${escape(item.error?.code ?? '')}</small></details>` : ''}</td></tr>`;
+      return `<tr><td>${escape(item.article.name)}<span class="result-url">${escape(item.article.url)}</span></td><td>${item.saveStatus === 'existing' ? '기존 글 사용' : item.saveStatus === 'saved' ? (demo ? '예시 저장' : '저장 확인됨') : item.saveStatus === 'unknown' ? '저장 여부 불명' : item.saveStatus === 'rejected' ? '요청 거절' : '미실행'}</td><td>${item.result ? labels[item.result.submission.status] : item.saveStatus === 'not_sent' ? '전송하지 않음' : '접수 여부 미확인'}${reason ? `<span class="result-url">${escape(reason)}</span>` : ''}${item.message ? `<span class="result-url">${escape(item.message)}</span>` : ''}${issue ? `<details class="row-error"><summary>원인·다음 행동</summary><p>${escape(issue.advice)}</p><small>오류 코드: ${escape(item.error?.code ?? '')}</small></details>` : ''}</td></tr>`;
     })
     .join('')}</tbody></table></div></section>`;
 }
@@ -1366,11 +1403,43 @@ async function saveIndexNowSettings(event: SubmitEvent): Promise<void> {
   }
 }
 
-// 선택한 처리 경로에 따라 예시 접수 또는 전달 문구를 준비합니다.
+// 발행 시작 사이트의 결과만 갱신하고 저장 확인·불명 URL의 자동 재전송을 막습니다.
+function recordPublicationOutcomes(input: PublicationInput, results: readonly PageOutcome[]): void {
+  const currentUrls = new Set(input.articles.map((article): string => article.url));
+  const previous = outcomeHistory.get(input.siteId) ?? [];
+  const combined = [...results, ...previous.filter((item): boolean => !currentUrls.has(item.article.url))];
+  outcomeHistory = new Map([...outcomeHistory, [input.siteId, combined]]);
+  const known = new Set(results.filter((item): boolean => ['saved', 'existing'].includes(item.saveStatus))
+    .map((item): string => `${input.siteId}:${item.article.url}`));
+  uncertainSaves = new Set([...uncertainSaves].filter((key): boolean => !known.has(key)).concat(
+    results.filter((item): boolean => item.saveStatus === 'unknown')
+      .map((item): string => `${input.siteId}:${item.article.url}`)));
+  if (property().id === input.siteId) outcomes = combined;
+}
+
+// 발행 진행을 다시 그리되 다른 사이트 화면에는 시작 사이트의 완료 안내를 섞지 않습니다.
+function publicationChanged(): void {
+  const run = publications.getState();
+  if (['finished', 'cancelled', 'failed'].includes(run.phase) &&
+      completedPublicationScope !== run.scope) {
+    completedPublicationScope = run.scope;
+    addActivity(`글 ${run.outcomes.filter((item): boolean => item.saveStatus === 'saved').length}개 저장 결과 확인`);
+    dashboardData = null;
+    if (property().id === run.siteId) {
+      state = { ...state, notice: run.message,
+        noticeTone: run.phase === 'finished' ? 'info' : 'warning' };
+      if (!demo) void loadInspectionTargets();
+    }
+  }
+  render();
+}
+
+// 선택한 처리 경로에 따라 발행 배치를 시작하거나 전달 문구를 준비합니다.
 async function notifyPublication(event: SubmitEvent): Promise<void> {
   event.preventDefault();
 
-  if (pending || !property().id) return;
+  if (pending || !property().id || !property().active || publicationBusy(publications.getState()) ||
+      clientInspectionBusy(clientInspections.getState())) return;
 
   const form = event.currentTarget as HTMLFormElement;
 
@@ -1421,95 +1490,26 @@ async function notifyPublication(event: SubmitEvent): Promise<void> {
       throw new Error('IndexNow 설정을 확인하거나 알림 체크를 해제해 글만 저장하세요.');
 
     const id = property().id;
-    if (articles.some((article): boolean => attempted.has(`${id}:${article.url}`)))
+    if (articles.some((article): boolean => uncertainSaves.has(`${id}:${article.url}`)))
       throw new Error(
-        '이미 저장했거나 저장 여부가 불명확한 URL이 포함되어 있습니다. 아래 결과를 확인하고 해당 URL을 입력에서 제외하세요. 자동 재시도하지 않습니다.',
+        '저장 여부가 불명확한 URL이 포함되어 있습니다. 아래 결과를 확인하고 해당 URL을 입력에서 제외하세요. 자동 재시도하지 않습니다.',
       );
 
-    setPending(true);
     requestText = '';
     outcomesError = null;
-
-    const previous = outcomeHistory.get(id) ?? [];
-    const currentUrls = new Set(articles.map((article): string => article.url));
-
-    outcomes = previous.filter((item: PageOutcome): boolean => !currentUrls.has(item.article.url));
-
-    const notify = notifyEnabled;
-
-    const processed = await submitPageBatch(
+    const site = property();
+    await publications.start({
+      clientId: site.clientId,
+      siteId: site.id,
+      siteName: site.name,
+      siteUrl: site.siteUrl,
       articles,
-      async (article): Promise<PageCreateResult> => {
-        return demo
-          ? {
-              page: { id: crypto.randomUUID(), name: article.name, url: article.url },
-              submission: {
-                status: 'skipped',
-                error_code: 'DEMO_MODE',
-                upstream_http_status: null,
-              },
-            }
-          : api.addPage(id, article, notify);
-      },
-      (results): void => {
-        outcomes = [
-          ...results,
-          ...previous.filter((item: PageOutcome): boolean => !currentUrls.has(item.article.url)),
-        ];
-        outcomeHistory = new Map([...outcomeHistory, [id, outcomes]]);
-        attempted = new Set([
-          ...attempted,
-          ...results
-            .filter(
-              (item: PageOutcome): boolean =>
-                item.saveStatus === 'saved' || item.saveStatus === 'unknown',
-            )
-            .map((item: PageOutcome): string => `${id}:${item.article.url}`),
-        ]);
-
-        const live = app.querySelector<HTMLElement>('#live-status');
-
-        if (live) live.textContent = `${results.length}/${articles.length}개 글 처리 결과 확인`;
-
-        const resultView = app.querySelector<HTMLElement>('#batch-results');
-
-        if (resultView) {
-          resultView.innerHTML = outcomeView();
-          bindErrorActions(resultView);
-          applyAvailability();
-        }
-      },
-    );
-    pending = false;
-    addActivity(
-      `글 ${processed.filter((item: PageOutcome): boolean => item.saveStatus === 'saved').length}개 저장 결과 확인`,
-    );
-
-    const incomplete = processed.some(
-      (item: PageOutcome): boolean =>
-        item.saveStatus !== 'saved' ||
-        (!!item.result && !['accepted', 'skipped'].includes(item.result.submission.status)) ||
-        item.result?.submission.error_code === 'INDEXNOW_NOT_CONFIGURED',
-    );
-    const savedCount = processed.filter(
-      (item: PageOutcome): boolean => item.saveStatus === 'saved',
-    ).length;
-
-    update({
-      notice: demo
-        ? '예시 처리 결과입니다. 실제 DB 저장·전송은 없습니다.'
-        : incomplete
-          ? `${processed.length}개 중 ${savedCount}개 글의 저장이 확인됐습니다. 알림 실패·대기·결과 불명 항목을 아래에서 확인하세요.`
-          : '글 처리를 완료했습니다. 저장 결과와 알림 접수 결과는 아래 표에서 각각 확인하세요.',
-      noticeTone: incomplete ? 'warning' : demo ? 'info' : 'success',
+      notify: notifyEnabled,
+      gui: data.get('naverGui') === 'on',
+      demo,
     });
-    dashboardData = null;
-
-    if (!demo) void loadInspectionTargets();
   } catch (error: unknown) {
     showError('#notification-error', error);
-  } finally {
-    setPending(false);
   }
 }
 
@@ -1557,7 +1557,8 @@ async function refreshClientInspections(): Promise<void> {
     pending ||
     loading ||
     !state.clientId ||
-    clientInspectionBusy(clientInspections.getState())
+    clientInspectionBusy(clientInspections.getState()) ||
+    publicationBusy(publications.getState())
   )
     return;
 
@@ -1666,8 +1667,58 @@ function closeDetail(): void {
   if (id) app.querySelector<HTMLButtonElement>(`[data-inspect="${CSS.escape(id)}"]`)?.focus();
 }
 
+// 모달이 열린 동안 배경 조작을 막고 기본 포커스를 취소 버튼에 둡니다.
+function syncDuplicateModalFocus(previousFocusId: string): void {
+  const dialog = app.querySelector<HTMLElement>('#duplicate-dialog');
+  app.querySelectorAll<HTMLElement>(':scope > header, :scope > aside, :scope > main, #detail-backdrop')
+    .forEach((element): void => { element.toggleAttribute('inert', !!dialog); });
+  document.body.classList.toggle('has-publication-modal', !!dialog);
+  if (dialog) {
+    const key = dialog.dataset.confirmationId ?? '';
+    const restore = duplicateFocusKey === key && previousFocusId
+      ? dialog.querySelector<HTMLElement>(`#${CSS.escape(previousFocusId)}`) : null;
+    duplicateFocusKey = key;
+    (restore ?? dialog.querySelector<HTMLElement>('#cancel-duplicate') ?? dialog).focus();
+  } else if (duplicateFocusKey) {
+    duplicateFocusKey = '';
+    const button = app.querySelector<HTMLElement>(`#${CSS.escape(duplicateReturnFocusId)}:not(:disabled)`);
+    const progress = app.querySelector<HTMLElement>('#publication-progress');
+    if (progress) progress.tabIndex = -1;
+    (button ?? progress)?.focus();
+  }
+}
+
+// 화면에 표시했던 실행·확인 ID만 전달하고 승인 버튼의 중복 클릭을 막습니다.
+function respondToDuplicate(approved: boolean, scope: string, confirmationId: string): void {
+  const dialog = app.querySelector<HTMLElement>('#duplicate-dialog');
+  if (!dialog || dialog.dataset.scope !== scope || dialog.dataset.confirmationId !== confirmationId) return;
+  dialog.querySelectorAll<HTMLButtonElement>('button').forEach((button): void => {
+    button.disabled = true;
+  });
+  publications.confirmDuplicate(scope, confirmationId, approved);
+}
+
 // 상세 창에서 탭 키가 배경 화면으로 이동하지 않도록 합니다.
 function handleDialogKeyboard(event: KeyboardEvent): void {
+  const duplicateDialog = app.querySelector<HTMLElement>('#duplicate-dialog');
+  if (duplicateDialog) {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      respondToDuplicate(false, duplicateDialog.dataset.scope ?? '', duplicateDialog.dataset.confirmationId ?? '');
+      return;
+    }
+    if (event.key === 'Tab') {
+      const buttons = duplicateDialog.querySelectorAll<HTMLButtonElement>('button:not(:disabled)');
+      const first = buttons[0];
+      const last = buttons[buttons.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault(); last?.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault(); first?.focus();
+      }
+    }
+    return;
+  }
   if (!state.selectedId) return;
 
   if (event.key === 'Escape') closeDetail();
@@ -1859,6 +1910,25 @@ function bindEvents(): void {
       notifyEnabled = (event.target as HTMLInputElement).checked;
       applyAvailability();
     });
+  app.querySelector<HTMLInputElement>('#naver-gui-enabled')
+    ?.addEventListener('change', (event: Event): void => {
+      naverGuiEnabled = (event.target as HTMLInputElement).checked;
+      applyAvailability();
+    });
+  app.querySelectorAll<HTMLFormElement>('[data-publication-tab]').forEach((form): void => {
+    form.addEventListener('submit', (event: SubmitEvent): void => {
+      event.preventDefault();
+      const candidateId = form.querySelector<HTMLSelectElement>('[name="tabId"]')?.value;
+      if (candidateId) void publications.chooseTab(form.dataset.scope ?? '', candidateId);
+    });
+  });
+  app.querySelectorAll<HTMLButtonElement>('[data-refresh-publication-tab]').forEach((button): void => {
+    button.addEventListener('click', (): void => {
+      void publications.chooseTab(button.dataset.scope ?? '');
+    });
+  });
+  app.querySelector<HTMLButtonElement>('#cancel-publication')
+    ?.addEventListener('click', (): void => publications.cancel());
   app.querySelector<HTMLFormElement>('#url-search')?.addEventListener('submit', inspectUrl);
   app
     .querySelector<HTMLInputElement>('#url-inspect')
@@ -1895,6 +1965,7 @@ function bindEvents(): void {
   app
     .querySelector<HTMLButtonElement>('#read-naver-preview')
     ?.addEventListener('click', (event: MouseEvent): void => {
+      if (publicationBusy(publications.getState())) return;
       void clientInspections.readNaver(
         (event.currentTarget as HTMLButtonElement).dataset.scope ?? '',
       );
@@ -1919,6 +1990,17 @@ function bindEvents(): void {
     app.querySelector<HTMLElement>('.success-notice')?.remove();
   });
   app.querySelector<HTMLButtonElement>('#close-detail')?.addEventListener('click', closeDetail);
+  const duplicateDialog = app.querySelector<HTMLElement>('#duplicate-dialog');
+  const duplicateScope = duplicateDialog?.dataset.scope ?? '';
+  const duplicateId = duplicateDialog?.dataset.confirmationId ?? '';
+  app.querySelector<HTMLButtonElement>('#confirm-duplicate')
+    ?.addEventListener('click', (): void => respondToDuplicate(true, duplicateScope, duplicateId));
+  app.querySelectorAll<HTMLButtonElement>('#cancel-duplicate, #close-duplicate').forEach((button): void => {
+    button.addEventListener('click', (): void => respondToDuplicate(false, duplicateScope, duplicateId));
+  });
+  app.querySelector<HTMLElement>('#duplicate-backdrop')?.addEventListener('click', (event: MouseEvent): void => {
+    if (event.target === event.currentTarget) respondToDuplicate(false, duplicateScope, duplicateId);
+  });
   app.querySelector<HTMLButtonElement>('#copy-request')?.addEventListener('click', (): void => {
     void copyRequest();
   });

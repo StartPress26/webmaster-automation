@@ -126,6 +126,7 @@ export interface Article {
 }
 
 export interface PageCreateResult {
+  readonly reused?: boolean;
   readonly page: { readonly id: string; readonly name: string; readonly url: string };
   readonly submission: {
     readonly status: 'accepted' | 'key_pending' | 'failed' | 'unknown' | 'skipped';
@@ -136,7 +137,7 @@ export interface PageCreateResult {
 
 export interface PageOutcome {
   readonly article: Article;
-  readonly saveStatus: 'saved' | 'rejected' | 'unknown' | 'not_sent';
+  readonly saveStatus: 'saved' | 'existing' | 'rejected' | 'unknown' | 'not_sent';
   readonly result?: PageCreateResult;
   readonly message: string;
   readonly error?: ApiError;

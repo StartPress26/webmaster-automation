@@ -443,7 +443,7 @@ export function createClientInspectionController(
 
   // 시작 고객사·실행 ID를 고정하고 전체 대상 확정 후 엔진별 탭을 먼저 준비합니다.
   async function start(clientId: string, clientName: string): Promise<void> {
-    if (!clientId || clientInspectionBusy(state)) return;
+    if (!clientId || clientInspectionBusy(state) || state.naverPreview?.loading) return;
 
     tabControllers.naver.reset();
     tabControllers.bing.reset();

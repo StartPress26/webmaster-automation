@@ -1,23 +1,28 @@
 import { ApiError } from './api.ts';
 import type { Article, PageCreateResult, PageOutcome } from './types';
 
+export class PageSubmissionSkipped extends Error {}
+
 // 글별 결과를 보존하며 순차 실행하고 접수 불명 또는 서버 오류 뒤에는 중단합니다.
 export async function submitPageBatch(
   articles: readonly Article[],
   submit: (article: Article) => Promise<PageCreateResult>,
   report: (outcomes: readonly PageOutcome[]) => void,
+  cancelled: () => boolean = (): boolean => false,
 ): Promise<readonly PageOutcome[]> {
   let outcomes: readonly PageOutcome[] = [];
   let stopped = false;
 
   for (const article of articles) {
-    if (stopped) {
+    if (stopped || cancelled()) {
       outcomes = [
         ...outcomes,
         {
           article,
           saveStatus: 'not_sent',
-          message: '앞선 요청을 확인하거나 대기해야 하므로 실행하지 않았습니다.',
+          message: cancelled()
+            ? '사용자가 취소해 아직 전송하지 않았습니다.'
+            : '앞선 요청을 확인하거나 대기해야 하므로 실행하지 않았습니다.',
         },
       ];
       report(outcomes);
@@ -26,8 +31,13 @@ export async function submitPageBatch(
 
     try {
       const result = await submit(article);
-      outcomes = [...outcomes, { article, saveStatus: 'saved', result, message: '' }];
+      outcomes = [...outcomes, { article, saveStatus: result.reused ? 'existing' : 'saved', result, message: '' }];
     } catch (error: unknown) {
+      if (error instanceof PageSubmissionSkipped) {
+        outcomes = [...outcomes, { article, saveStatus: 'not_sent', message: error.message }];
+        report(outcomes);
+        continue;
+      }
       const ambiguous = !(error instanceof ApiError) || error.status === 0 || error.status >= 500;
       outcomes = [
         ...outcomes,
