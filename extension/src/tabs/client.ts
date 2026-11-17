@@ -86,7 +86,7 @@ const WORK_TAB_POLICY: TabPolicy = {
 // ─────────────────────────────────────────────────────────────
 
 // 일반 웹 미리보기에서는 Chrome 탭 API를 호출하지 못하도록 명시적으로 중단합니다.
-export function browserTabsClient(unavailableMessage: string): TabsClient {
+function browserTabsClient(unavailableMessage: string): TabsClient {
   if (!globalThis.chrome?.tabs) {
     throw new Error(unavailableMessage);
   }
@@ -99,7 +99,7 @@ function isValidTabId(id: number | undefined): id is number {
 }
 
 // 규칙에 맞는 탭만 화면에 전달할 읽기 전용 모델로 변환합니다. 시크릿 창이나 주소 없는 탭은 제외합니다.
-export function toWorkTabWith(policy: TabPolicy, tab: chrome.tabs.Tab): WorkTab | null {
+function toWorkTabWith(policy: TabPolicy, tab: chrome.tabs.Tab): WorkTab | null {
   if (!isValidTabId(tab.id)) return null;
   if (!tab.url || tab.incognito) return null;
 

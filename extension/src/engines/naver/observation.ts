@@ -14,7 +14,7 @@ export const NAVER_AUTOMATION_MESSAGE = 'STARTPRESS_NAVER_AUTOMATION';
 // 네이버 서치어드바이저의 출처와 화면 경로
 export const NAVER_ORIGIN = 'https://searchadvisor.naver.com';
 export const NAVER_BOARD_PATH = '/console/board';
-export const NAVER_SUMMARY_PATH = '/console/site/summary';
+const NAVER_SUMMARY_PATH = '/console/site/summary';
 export const NAVER_INSPECTION_PATH = '/console/site/check/inspection';
 export const NAVER_COLLECTION_PATH = '/console/site/request/crawl';
 export const NAVER_BOARD_URL = `${NAVER_ORIGIN}${NAVER_BOARD_PATH}`;
