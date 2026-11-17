@@ -1,5 +1,5 @@
 import { PageSubmissionSkipped, submitPageBatch } from '../batch.ts';
-import { ApiError } from '../errors.ts';
+import { ApiError, isUncertainFailure } from '../errors.ts';
 import { createWorkTabController } from '../tabs/controller.ts';
 import type { WorkTabController, WorkTabState } from '../tabs/controller';
 import { runNaverCollectionAutomation } from '../engines/naver/collection-automation.ts';
@@ -8,6 +8,7 @@ import type { NaverCollectionReceipt } from '../engines/naver/collection';
 import type { Article, PageCreateResult, PageOutcome, PageRead } from '../types';
 import type { ClientInspectionTarget } from '../inspection/client-plan';
 import { checkPublicationNaverTab, listPublicationNaverTabs } from './tabs.ts';
+import { VALID_SUBMISSION_STATUSES } from '../api.ts';
 
 // ─────────────────────────────────────────────────────────────
 // 타입 정의
@@ -90,9 +91,6 @@ const BUSY_PHASES: readonly PublicationState['phase'][] = [
 
 // 저장이 확인된 것으로 보는 saveStatus (새로 저장 / 기존 글 재사용)
 const SAVED_STATUSES: readonly PageOutcome['saveStatus'][] = ['saved', 'existing'];
-
-// 서버 알림 응답에서 허용하는 submission.status
-const VALID_SUBMISSION_STATUSES: readonly string[] = ['accepted', 'key_pending', 'failed', 'unknown', 'skipped'];
 
 // 이 상태 코드의 에러는 알림 결과로 바꾸지 않고 그대로 위로 던진다 (인증·권한·대상 없음·충돌·검증 실패)
 const RETHROW_STATUS_CODES: readonly number[] = [401, 403, 404, 409, 422];
@@ -273,7 +271,7 @@ function notifyFailureResult(error: unknown, page: PageRead): PageCreateResult {
   const apiError = error instanceof ApiError ? error : null;
 
   // 서버가 명확히 거절했는지, 아니면 전달됐는지조차 모르는지 구분합니다.
-  const uncertain = apiError === null || apiError.status === 0 || apiError.status >= 500;
+  const uncertain = isUncertainFailure(error);
 
   let errorCode: string;
   if (apiError?.kind === 'timeout') {
