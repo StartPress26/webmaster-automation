@@ -32,6 +32,18 @@ class DuplicatePageError(Exception):
     """같은 고객사에 이미 해당 URL이 저장돼 있습니다."""
 
 
+class PageNotFoundError(Exception):
+    """부모 사이트에 속한 기존 글을 찾을 수 없습니다."""
+
+
+class PageInactiveError(Exception):
+    """기존 글이 비활성 상태입니다."""
+
+
+class PageUrlChangedError(Exception):
+    """사용자가 확인한 URL과 현재 저장된 글 URL이 다릅니다."""
+
+
 # 다른 호스트·포트·프로토콜·상위 경로의 글을 부모 사이트에 추가하지 못하게 합니다.
 def _validate_page_scope(parent_url: str, page_url: str) -> None:
     parent, page = urlsplit(parent_url), urlsplit(page_url)
@@ -106,6 +118,47 @@ async def create_page(
 
         saved = PageRead.model_validate(page)
 
+    return await _send_notification(saved, notification, client=client)
+
+
+# 기존 글의 소속과 활성 상태를 확인하고 읽기 트랜잭션 종료 뒤 알림만 실행합니다.
+async def notify_existing_page(
+    session: AsyncSession, parent_id: UUID, page_id: UUID, *, expected_url: str, client: IndexNowClient,
+) -> PageCreateResult:
+    async with session.begin():
+        parent = await session.scalar(select(Site).where(
+            Site.id == parent_id, Site.target_type == "site",
+        ).with_for_update(read=True))
+        if parent is None or parent.id != parent_id or parent.target_type != "site":
+            raise PageParentNotFoundError("부모 메인 사이트를 찾을 수 없습니다.")
+        if not parent.is_active:
+            raise PageParentInactiveError("비활성 사이트에는 알림을 보낼 수 없습니다.")
+
+        page = await session.scalar(select(Site).where(
+            Site.id == page_id, Site.parent_site_id == parent.id,
+            Site.client_id == parent.client_id, Site.target_type == "page",
+        ).with_for_update(read=True))
+        if (
+            page is None or page.id != page_id or page.target_type != "page"
+            or page.parent_site_id != parent.id or page.client_id != parent.client_id
+        ):
+            raise PageNotFoundError("해당 사이트에 등록된 글을 찾을 수 없습니다.")
+        if not page.is_active:
+            raise PageInactiveError("비활성 글에는 알림을 보낼 수 없습니다.")
+        if page.url != expected_url:
+            raise PageUrlChangedError("확인한 URL과 현재 저장된 글 URL이 다릅니다. 글 정보를 다시 확인하세요.")
+
+        _validate_page_scope(parent.url, page.url)
+        notification = await _prepare_notification(session, parent.id, page.url)
+        saved = PageRead.model_validate(page)
+
+    return await _send_notification(saved, notification, client=client)
+
+
+# 신규·기존 글 모두 접수 응답과 통신 불확실을 같은 형식으로 반환하고 재시도하지 않습니다.
+async def _send_notification(
+    saved: PageRead, notification: IndexNowRequest | PageNotification, *, client: IndexNowClient,
+) -> PageCreateResult:
     if isinstance(notification, PageNotification):
         return PageCreateResult(page=saved, submission=notification)
 
