@@ -15,6 +15,11 @@ import { runNaverAutomation } from '../engines/naver/automation.ts';
 import { runBingAutomation } from '../engines/bing/automation.ts';
 import { BingAutomationError, BING_STAGE_LABELS } from '../engines/bing/observation.ts';
 import { NaverAutomationError } from '../engines/naver/observation.ts';
+import { withNaverFocus } from '../focus/client.ts';
+import { actualFailure } from '../focus/naver-runner.ts';
+import type { FocusClientOptions } from '../focus/client.ts';
+import { NaverFocusError } from '../focus/protocol.ts';
+import { naverFocusErrorMessage } from '../focus/messages.ts';
 
 // ─────────────────────────────────────────────────────────────
 // 타입 정의
@@ -173,6 +178,9 @@ function shouldStopEngine(error: unknown): boolean {
 
 // GUI 조회가 실패했을 때 작업에 남길 메시지. 저장 실패·자동화 예외는 그 메시지를, 그 밖에는 기본 문구를 씁니다.
 function guiFailureMessage(error: unknown, config: GuiRunConfig): string {
+  if (error instanceof NaverFocusError) {
+    return naverFocusErrorMessage(error);
+  }
   if (error instanceof GuiInspectionSaveError || config.isAutomationError(error)) {
     return (error as Error).message;
   }
@@ -198,8 +206,11 @@ export function createClientInspectionController(
   },
   naverAutomation: typeof runNaverAutomation = runNaverAutomation,
   bingAutomation: typeof runBingAutomation = runBingAutomation,
+  naverFocusConnection: Pick<FocusClientOptions, 'runtime' | 'timeoutMs'> = {},
 ): ClientInspectionController {
   let state: ClientInspectionRun = EMPTY_RUN;
+  // 조회 결과와 별개로 연결 정리가 실패했을 때 완료 안내에 함께 남깁니다.
+  let naverCleanupWarning: string | undefined;
   // 실행 ID(scope)를 만들 때 쓰는 일련번호
   let sequence = 0;
   // 엔진별 GUI 자동화 취소 신호
@@ -223,6 +234,12 @@ export function createClientInspectionController(
 
   // 미실행 작업을 취소 상태로 바꾸고 탭 선택 대기 중에도 즉시 종료합니다.
   function finishCancelled(): void {
+    let message = '조회 실행을 취소했습니다. 완료된 요청의 저장 결과는 유지됩니다.';
+
+    if (naverCleanupWarning) {
+      message = `${message} ${naverCleanupWarning}`;
+    }
+
     update({
       tasks: patchTasks(
         state.tasks,
@@ -230,7 +247,7 @@ export function createClientInspectionController(
         (): Partial<ClientInspectionTask> => ({ status: 'cancelled', message: '사용자가 실행을 취소했습니다.' }),
       ),
       phase: 'cancelled',
-      message: '조회 실행을 취소했습니다. 완료된 요청의 저장 결과는 유지됩니다.',
+      message,
     });
   }
 
@@ -378,7 +395,30 @@ export function createClientInspectionController(
       saveGuiObservation(engine, target, observation);
 
     if (engine === 'naver') {
-      return naverAutomation(tab, targets, { signal: aborts.naver.signal, onStart, onResult });
+      // 네이버만 기존 포커스 모듈로 감싸고 Bing의 병렬 실행은 그대로 유지합니다.
+      return withNaverFocus(
+        tab.tabId,
+        aborts.naver.signal,
+        async (focusSignal): Promise<void> => {
+          try {
+            await naverAutomation(tab, targets, {
+              signal: focusSignal,
+              onStart,
+              onResult,
+            });
+          } catch (error: unknown) {
+            // 연결이 끊겨 멈춘 것을 사용자 취소로 표시하지 않습니다.
+            throw actualFailure(error, aborts.naver.signal, focusSignal);
+          }
+        },
+        {
+          ...naverFocusConnection,
+          // 원래 조회 오류가 있어도 연결 정리 실패 안내를 따로 보존합니다.
+          onCleanupError: (error): void => {
+            naverCleanupWarning = naverFocusErrorMessage(error);
+          },
+        },
+      );
     }
     return bingAutomation(tab, targets, {
       signal: aborts.bing.signal,
@@ -505,9 +545,14 @@ export function createClientInspectionController(
       return;
     }
 
-    const message = state.targetCount
+    let message = state.targetCount
       ? '전체 조회 처리가 끝났습니다. API·GUI 관측의 저장 결과와 실패·미지원 항목을 확인하세요.'
       : '조회할 활성 사이트·글이 없습니다.';
+
+    if (naverCleanupWarning) {
+      message = `${message} ${naverCleanupWarning}`;
+    }
+
     update({ phase: 'finished', message });
   }
 
@@ -526,6 +571,7 @@ export function createClientInspectionController(
   async function start(clientId: string, clientName: string): Promise<void> {
     if (!clientId || clientInspectionBusy(state) || state.naverPreview?.loading) return;
 
+    naverCleanupWarning = undefined;
     tabControllers.naver.reset();
     tabControllers.bing.reset();
     aborts = { naver: new AbortController(), bing: new AbortController() };

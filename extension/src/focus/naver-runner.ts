@@ -4,7 +4,7 @@ import { withNaverFocus } from './client.ts';
 import { NaverFocusError } from './protocol.ts';
 
 // 사용자가 취소하지 않았는데 '취소'로 끝났다면, 연결이 끊긴 실제 이유를 돌려줍니다.
-function actualFailure(
+export function actualFailure(
   error: unknown,
   userSignal: AbortSignal,
   focusSignal: AbortSignal,

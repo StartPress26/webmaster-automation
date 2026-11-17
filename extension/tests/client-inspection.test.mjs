@@ -6,12 +6,17 @@ import { createClientInspectionController as createController } from '../src/ins
 import { createWorkTabController } from '../src/tabs/controller.ts';
 import { renderClientInspection } from '../src/inspection/client-view.ts';
 import { ApiError } from '../src/errors.ts';
+import { createFocusRuntime } from './helpers/focus-session-port.mjs';
+import { installNaverFocusHost } from '../src/focus/host.ts';
+import { NaverAutomationError } from '../src/engines/naver/observation.ts';
+import { fakeChrome, flush } from './helpers/focus-chrome.mjs';
 
 // 외부 탭 없이 엔진별 작업을 준비하는 컨트롤러를 만듭니다.
-function parallelController(naver, bing, overrides = {}) {
+function parallelController(naver, bing, overrides = {}, focusOptions = {}) {
   const tabs = [{ tabId: 1, engine: 'naver', title: '네이버', url: 'https://searchadvisor.naver.com/console/board' }, { tabId: 2, engine: 'bing', title: 'Bing', url: 'https://www.bing.com/webmasters/' }];
   const factory = () => createWorkTabController({ list: async () => tabs, check: async (tab) => ({ connected: true, tab }), available: () => true });
-  return createController(fakeApi(overrides), undefined, { naver: factory(), bing: factory() }, naver, bing);
+  const focusConnection = { runtime: createFocusRuntime([]), ...focusOptions };
+  return createController(fakeApi(overrides), undefined, { naver: factory(), bing: factory() }, naver, bing, focusConnection);
 }
 
 // 테스트에서 엔진의 완료 순서를 직접 제어합니다.
@@ -45,7 +50,8 @@ test('네이버가 끝나기 전에 Bing도 시작하고 두 엔진이 모두 �
   const running = controller.start('a', 'A');
   try {
     await flushController();
-    assert.deepEqual(started, ['naver', 'bing']);
+    // 네이버는 포커스 연결을 기다린 뒤 시작하므로 시작 순서는 고정하지 않습니다.
+    assert.deepEqual([...started].sort(), ['bing', 'naver']);
     gates.bing.resolve(); await flushController();
     assert.equal(controller.getState().phase, 'running');
     assert.equal(controller.getState().tasks.filter((task) => task.engine === 'bing' && task.route === 'gui' && task.status === 'succeeded').length, 3);
@@ -69,7 +75,8 @@ test('GUI 한쪽 실패는 다른 엔진의 진행·취소 신호·결과에 영
     const running = controller.start('a', 'A');
     try {
       await flushController();
-      assert.deepEqual(started, ['naver', 'bing']);
+      // 네이버는 포커스 연결을 기다린 뒤 시작하므로 시작 순서는 고정하지 않습니다.
+      assert.deepEqual([...started].sort(), ['bing', 'naver']);
       assert.equal(controller.getState().phase, 'running');
       assert.equal(controller.getState().tasks.filter((task) => task.engine === failing && task.route === 'gui' && task.status === 'failed').length, 1);
       gate.resolve(); await running;
@@ -117,7 +124,7 @@ function createClientInspectionController(api, changed) {
       hooks.onStart(item);
       await hooks.onResult(item, { kind: 'verified_bing_gui', siteUrl: item.siteUrl, targetUrl: item.url, indexStatus: 'indexed', message: '색인화되었습니다.', reason: '<제외 사유>', canonicalUrl: 'https://one.example/?x=<script>', crawlStatus: 'succeeded', lastCrawledText: null, queriedAt: new Date().toISOString(), readAt: new Date().toISOString(), targetVerified: true });
     }
-  });
+  }, { runtime: createFocusRuntime([]) });
 }
 
 const sites = [
@@ -469,5 +476,39 @@ test('네이버 미리보기 로딩과 실패 안내는 종료된 실행에서�
       assert.equal(dom.window.document.querySelector('.inspection-tab-section').open, true);
       if (naverPreview.error) assert.match(dom.window.document.querySelector('.naver-preview [role="alert"]').textContent, /연결 없음/);
     } finally { dom.window.close(); }
+  }
+});
+
+test('조회 중 디버거가 끊기면 취소가 아니라 연결 종료 안내로 네이버 작업을 실패 처리한다', async () => {
+  const fake = fakeChrome();
+  const dispose = installNaverFocusHost(fake.api);
+
+  // 기존 조회 함수처럼 신호가 울리면 '취소' 오류로 멈춥니다.
+  const naver = async (_, targets, hooks) => {
+    hooks.onStart(targets[0]);
+    await new Promise((resolve) => hooks.signal.addEventListener('abort', resolve, { once: true }));
+    throw new NaverAutomationError('cancelled');
+  };
+  const bing = async (_, targets, hooks) => {
+    for (const target of targets) await hooks.onResult(target, guiResult('bing', target));
+  };
+  const controller = parallelController(naver, bing, {}, { runtime: fake.api.runtime });
+  const running = controller.start('a', 'A');
+
+  try {
+    await flush();
+    // 테스트 컨트롤러의 네이버 작업 탭 번호는 1입니다.
+    fake.state.attached = false;
+    fake.api.debugger.onDetach.emit({ tabId: 1 }, 'replaced_with_devtools');
+    await running;
+
+    const failed = controller.getState().tasks.filter((task) => task.engine === 'naver' && task.route === 'gui' && task.status === 'failed');
+    assert.equal(failed.length, 1);
+    assert.match(failed[0].message, /연결이 종료됐습니다/);
+    assert.doesNotMatch(failed[0].message, /취소했습니다/);
+  } finally {
+    await running;
+    await flush();
+    await dispose();
   }
 });
