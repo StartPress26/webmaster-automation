@@ -1,3 +1,5 @@
+import { canonicalHttpUrl } from '../../url.ts';
+
 export const BING_AUTOMATION_MESSAGE = 'STARTPRESS_BING_AUTOMATION';
 export const BING_INSPECTION_URL = 'https://www.bing.com/webmasters/urlinspection';
 
@@ -79,14 +81,7 @@ export interface BingAutomationObservation {
 
 // 쿼리는 보존하고 인증정보나 프래그먼트가 있는 URL은 거부합니다.
 export function normalizeBingUrl(value: string): string | null {
-  try {
-    const url = new URL(value);
-    return ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password && !url.hash
-      ? url.href
-      : null;
-  } catch {
-    return null;
-  }
+  return canonicalHttpUrl(value);
 }
 
 // 같은 출처와 사이트의 경로 범위에 있는 URL만 검사합니다.

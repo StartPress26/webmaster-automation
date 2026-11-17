@@ -1,3 +1,5 @@
+import { canonicalHttpUrl } from '../../url.ts';
+
 export const NAVER_READ_MESSAGE = 'STARTPRESS_READ_NAVER_OBSERVATION';
 export const NAVER_INDEXED_MESSAGE =
   '문서가 성공적으로 색인됐습니다. 해당 문서를 검색할 수 있습니다.';
@@ -86,16 +88,9 @@ export type NaverReadResult =
         | 'result_conflict';
     };
 
-// 인증정보·프래그먼트があるURLやHTTP以外の値を読み取り対象から除外します。
+// 인증정보나 프래그먼트가 있는 URL, HTTP가 아닌 값은 읽기 대상에서 제외하고 나머지는 정규화합니다.
 export function canonicalNaverTarget(value: string): string | null {
-  try {
-    const url = new URL(value);
-    return ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password && !url.hash
-      ? url.href
-      : null;
-  } catch {
-    return null;
-  }
+  return canonicalHttpUrl(value);
 }
 
 // 実画面で確認した色イン状態確認ルートだけを許可します。

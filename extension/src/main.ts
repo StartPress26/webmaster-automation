@@ -37,6 +37,7 @@ import type {
   InspectionTarget,
   InspectionRead,
 } from './types';
+import { isPlainHttpUrl } from './url.ts';
 
 type Icon =
   | 'dashboard'
@@ -643,12 +644,7 @@ function render(): void {
 // HTTP(S) 주소를 검증하고 인증정보와 프래그먼트를 거부합니다.
 function parseUrl(value: string): URL {
   const parsed = new URL(value);
-  if (
-    !['https:', 'http:'].includes(parsed.protocol) ||
-    parsed.username ||
-    parsed.password ||
-    parsed.hash
-  ) {
+  if (!isPlainHttpUrl(parsed)) {
     throw new Error('인증정보나 #이 없는 HTTP(S) URL을 입력하세요.');
   }
 
