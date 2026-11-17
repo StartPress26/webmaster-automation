@@ -49,6 +49,11 @@ export interface ClientInspectionController {
   readonly readNaver: (scope: string) => Promise<void>;
 }
 
+// 실행이 멈춰 있어 네이버 화면 읽기나 사이트맵 제출 같은 부가 작업을 허용하는 단계
+export const SETTLED_RUN_PHASES: readonly ClientInspectionRun['phase'][] = [
+  'awaiting_tabs', 'finished', 'cancelled', 'failed',
+];
+
 // 수집·실행 중에는 다른 고객사의 중복 실행도 시작하지 않습니다.
 export function clientInspectionBusy(run: ClientInspectionRun): boolean {
   return ['collecting', 'preparing_tabs', 'awaiting_tabs', 'running'].includes(run.phase);
@@ -118,7 +123,7 @@ export function createClientInspectionController(
       scope !== state.scope ||
       !selected ||
       state.naverPreview?.loading ||
-      !['awaiting_tabs', 'finished', 'cancelled', 'failed'].includes(state.phase)
+      !SETTLED_RUN_PHASES.includes(state.phase)
     )
       return;
 

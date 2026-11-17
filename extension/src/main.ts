@@ -9,6 +9,7 @@ import { inspectionStatusNames, inspectionTime } from './inspection/format';
 import {
   createClientInspectionController,
   clientInspectionBusy,
+  SETTLED_RUN_PHASES,
 } from './inspection/client-controller';
 import type { GuiEngine } from './inspection/client-controller';
 import { renderClientInspection } from './inspection/client-view';
@@ -1005,7 +1006,7 @@ function applyAvailability(): void {
     naverRead.disabled =
       !!run.naverPreview?.loading ||
       publicationBusy(publications.getState()) ||
-      !['awaiting_tabs', 'finished', 'cancelled', 'failed'].includes(run.phase);
+      !SETTLED_RUN_PHASES.includes(run.phase);
 
   const noSite = !property().id || !property().active;
   const noSitemap = noSite || state.engine === 'naver';

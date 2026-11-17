@@ -1,4 +1,4 @@
-import { clientInspectionBusy } from './client-controller.ts';
+import { clientInspectionBusy, SETTLED_RUN_PHASES } from './client-controller.ts';
 import type { ClientInspectionRun } from './client-controller';
 import type { ClientInspectionTask } from './client-plan';
 import { renderWorkTabPanel } from '../tabs/view.ts';
@@ -137,7 +137,7 @@ export function renderClientInspection(
       tabPanels
         ? `<details class="inspection-tab-section" ${expandTabs ? 'open' : ''}><summary><span>작업 탭</span><span class="inspection-tab-caption">${selecting ? '엔진별로 사용할 탭을 확인하세요' : '선택한 탭 확인'}</span></summary>
       <fieldset class="work-tab-preparation" ${run.phase === 'awaiting_tabs' ? '' : 'disabled'}><legend class="visually-hidden">엔진별 작업 탭 준비</legend>${tabPanels}</fieldset>
-      ${run.tabs.naver?.selected ? renderNaverPreview(run.scope, run.naverPreview, ['awaiting_tabs', 'finished', 'cancelled', 'failed'].includes(run.phase)) : ''}
+      ${run.tabs.naver?.selected ? renderNaverPreview(run.scope, run.naverPreview, SETTLED_RUN_PHASES.includes(run.phase)) : ''}
       ${run.phase === 'awaiting_tabs' ? `<div class="inspection-tab-footer"><p>탭이 하나면 자동 선택합니다. 네이버·Bing은 선택한 탭에서 사이트와 URL을 순차 조회합니다.</p><button class="inspection-text-button" id="continue-api-only" data-scope="${escapeHtml(run.scope)}">탭 없이 API 조회만 계속</button></div>` : ''}
     </details>`
         : ''
