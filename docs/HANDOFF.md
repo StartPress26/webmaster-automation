@@ -1,5 +1,111 @@
 # 작업 인계 문서
 
+## 현재 인계 요약 — 2026-11-17 커밋 정리·포커스 에뮬레이션 검증 / Asia/Seoul
+
+**이 절과 맨 아래 `마지막 상태 — 최신 / 2026-11-17 커밋 정리·후속 검증`을 우선한다. 이전의 “원인 미확정·전부 미커밋” 기록은 아래 실제 재현 결과와 커밋 상태로 갱신됐다. 실제 네이버 URL 제출·접수 성공과 본 확장에 포커스 에뮬레이션 적용은 아직 미완료다.**
+
+### 현재 구현과 커밋
+
+- 현재 브랜치는 `feat/naver-url-collection`이다. 기존 글 재알림 API는 `2f8f94b`, 네이버 GUI 수집 엔진은 `93b0f0a`, 발행 체크박스·기존 글 확인 모달·결과 UI는 `cdf9c53`으로 로컬 커밋했다. 이 인계와 사용법은 별도 문서 커밋으로 정리한다. push·PR·병합·배포는 요청 범위가 아니다.
+- 학습용 주석과 순수 함수 분해를 포함한 `publication/controller.ts` 최신 편집본을 그대로 보존했다. 기존 Vite 프록시 변경·ZIP·비밀파일·비공개 기록·`dist`는 커밋하지 않는다.
+
+### 이번에 확인한 실패 원인과 대안
+
+- 사이트 목록에 표시된 메인 URL과 실제 발행 명령의 정규화 대상이 일치했다. 실제 개발 확장 문맥에서도 정확한 링크 하나와 정상 가시성 조건을 확인했다. 사이트 미등록이나 고정된 URL 비교 오류로 단정하지 않는다.
+- 새 네이버 board 문서를 비활성 탭에서 로드하면 `ready:false`가 유지됐다. 그 상태에서 실제 `select_collection_site`를 호출하자 약 15.6초 후 `site_missing`이 나왔다. **새로고침하지 않은 같은 문서**를 활성화하면 `ready:true`가 되고 같은 URL의 사이트 선택이 2ms 만에 성공했다.
+- 실제 발행 runner는 먼저 `waitPage()`를 거친다. 표 자체가 없으면 앞 단계에서 `timeout`, 표는 있지만 대상 링크가 준비되지 않으면 선택 단계에서 `site_missing`이 날 수 있다. 직접 선택 함수 재현과 과거 발행 실패 당시의 DOM 관측 범위를 구분하며, 모든 과거 실패가 동일 원인이었다고 단정하지 않는다. Chrome 내부의 정확한 렌더링 중단 원인은 미확정이다.
+- 사용자는 **Chrome을 계속 사용하는 동안 화면을 뺏지 않는 백그라운드 처리**를 원한다. 탭 활성화는 진단 조건이며, 이를 제품의 기본 해결책으로 적용하지 않는다.
+- DevTools의 **Emulate a focused page**를 수동 적용해 끔→켬→켬→끔으로 비교했다. 끈 상태는 `site_missing`(약 15.7초·15.2초), 켠 상태 두 번은 새 문서의 사이트 선택(5ms·58ms)과 **요청 → 웹 페이지 수집** 화면 준비까지 성공했다. 네 번 모두 관리 탭 선택이 유지됐으며 글 URL 입력·실제 수집 제출·IndexNow 전송은 하지 않았다.
+- 검증 후 에뮬레이션을 끄고 Rendering 패널을 닫았다. 관리 탭을 새로고침해 임시 함수 제거도 확인했다. 이 결과는 DevTools 수동 검증이며 현재 프로젝트 manifest에 `debugger` 권한이나 CDP 연결 코드를 추가한 것이 아니다.
+
+### 후속 작업과 검증 한계
+
+- 별도 실험 확장은 `/tmp/startpress-focus-probe-20261117`에만 준비했다. 타입·빌드·모의 수명주기 검사와 코드·보안 리뷰를 통과했지만 **로드·새 debugger 권한 부여·실제 CDP 연결은 하지 않았다**. 임시 폴더이므로 이후 파일 존재를 재확인한다. 이 실험 코드는 현재 저장소 커밋에 포함하지 않는다.
+- 사용자에게 실험 확장의 `debugger` 권한 부여 직전 확인을 요청했으며 아직 승인 응답은 없다. 이후 질문은 필요한 권한과 스크립트 변경의 의미에 관한 것이었고, 현재 요청은 기존 변경의 로컬 커밋이다. 커밋 승인을 디버거 권한 승인으로 해석하지 않는다.
+- 다음은 사용자 승인 후 실험 확장에서 DevTools를 닫은 상태의 CDP 연동·백그라운드 화면 전환·취소·페이지 종료 시 해제를 검증하는 것이다. 그 뒤 본 확장의 권한과 연결·정리 모듈 적용 여부를 결정한다. 실제 수집 제출·접수 확인은 별도 단계다.
+- 이번 커밋 전 재검증: 프론트 **208 passed**, 백엔드 단위 **694 passed**, 로컬 PostgreSQL의 UUID 임시 DB 통합 **7 passed**, TypeScript·확장 빌드·diff 검사 통과. 코드·백엔드 보안 리뷰에서 커밋 차단 이슈는 발견하지 못했다. 단위 테스트는 동명 통합 모듈 충돌을 피하려고 `tests --ignore=tests/integration`으로 실행했다.
+- 비공개 진단 기록: `.secrets/bot_runs/site-missing-deep-20261117T060214Z.jsonl`, `.secrets/bot_runs/focus-emulation-20261117T075146Z.jsonl`. 인증값·실제 입력값·쿼리·원본 요청/응답은 커밋하지 않는다.
+
+## 과거 인계 요약 — 2026-11-17 네이버 GUI 실재현·접수 미완료 / Asia/Seoul
+
+**이 절과 맨 아래 `마지막 상태 — 최신 / 2026-11-17 네이버 GUI 실검증 중단`을 우선한다. 아래 181/199개 테스트·실제 GUI 미실행 설명은 이전 단계 기록이다. 최신 프론트는 208개 통과했지만, 실제 네이버 수집 요청 접수는 여전히 확인하지 못했다. 테스트 통과나 로딩 대기 보완을 실제 문제 해결로 설명하지 않는다. 사용자 요청으로 디버깅을 중단하고 인계만 갱신한다.**
+
+### 완료된 구현
+
+- **새 글 발행 알림**의 별도 체크박스 `네이버 GUI로도 수집 요청` → 탭 준비/선택 → 글 저장·선택적 IndexNow → 네이버 GUI 수집 흐름을 구현했다. 전체 색인 조회를 먼저 할 필요가 없다. 처음 만들었던 조회 종료 후 수집 폼은 사용자 의도와 달라 제거했다. 현재 `collection-view.ts`는 없고 `publication/view.ts`가 발행 진행·접수 UI를 담당한다.
+- `DUPLICATE_PAGE` 409에만 현재 고객사·부모·정확한 URL·활성 상태가 일치하는 기존 글을 GET으로 확인한 뒤 모달을 표시한다. **계속 요청**을 누르면 기존 글을 다시 저장하지 않고 체크한 IndexNow·네이버 GUI를 실행한다. 취소/닫기/Escape는 해당 URL만 건너뛰며 전체 취소는 배치를 중단한다. 실행 ID·확인 ID, 오래된 이벤트·이중 클릭·키보드 포커스/배경 inert를 검증한다.
+- 기존 글 IndexNow 재알림: `POST /sites/{main_site_id}/pages/{page_id}/notifications`, 필수 JSON `expected_url`, `application/json`만 허용. 서버는 소속·활성·범위·승인 URL 일치를 재검증한 뒤 읽기 트랜잭션을 닫고 기존 IndexNow 클라이언트를 한 번 호출한다. DB 행·제목·생성일 변경과 마이그레이션은 없다. 기존 생성 API의 중복 409 동작은 유지한다.
+- 신규 저장은 `saved`, 기존 글 재사용은 `existing`으로 구분하며, IndexNow/GUI 접수와 수집·색인 완료는 별개다. 외부 알림 실패를 DB 저장 여부 불명과 섞지 않고 자동 재전송하지 않는다. Bing GUI 제출·Google 개별 URL 제출은 추가하지 않았다.
+- 디자인 요청을 반영해 중첩 결과 카드를 제거하고 헤더·문구·탭·표의 inset을 데스크톱 25px/모바일 18px로 통일했다. 체크박스와 설명을 묶었고 표는 검사 화면 전용 CSS 변수에 의존하지 않는다.
+
+### 실제 화면에서 확인한 사실과 남은 문제
+
+- 검증 대상은 사용자가 지정한 **RAG 고도화(1) - 데이터셋 구축**, 메인 `https://otteru.vercel.app/`, 글 `https://otteru.vercel.app/ko/3f0210261e9580279e7df70694ef7ddb`다. 이 글에 대해 모달과 **기존 글 사용 / 알림 접수됨**을 실제 StartPress 화면에서 읽었다. 이 IndexNow 접수는 사용자의 이전 실행 결과이며 에이전트가 새로 성공시킨 것이 아니다.
+- 브라우저 DOM 도구는 `The browser access host is unavailable`였다. 처음에는 네이티브 Chrome 화면 읽기와 사용자 탭 전환으로 관찰했으나, 사용자가 **직접 조작하는 computer use**를 명시적으로 요구했다. 이후 `mcp__cua_repl`의 `cua.getApp('com.google.Chrome')`으로 클릭·체크박스·입력·탭 전환·새로고침을 직접 수행했다. 읽기 도구만으로 조작 불가라고 반복하지 않는다. 셸/AppleScript/외부 브라우저 자동화로 우회하지 않았다.
+- 모든 재현 실행은 **IndexNow 체크 해제 / 네이버 GUI 체크** 상태였다. 중복 모달을 확인하고 GUI만 시도했다. IndexNow 재알림 API를 다시 실행하지 않았다. 네이버의 실제 확인 버튼·새 접수 행까지 도달하지 못했고, 관찰한 요청 내역에는 지정 글이 없었다. 실패 재현 횟수를 실제 수집 제출 횟수로 설명하지 않는다.
+- 첫 재현은 일반 문구 `발행 후속 작업을 확인하지 못했습니다`였다. 네이버 탭 새로고침 후 자동 인증 리다이렉트가 정상 복귀했고, 다음 실행은 board로 이동한 뒤 `site_missing`이었다. 이후 이미 로딩된 board에서 실행하면 사이트 선택을 통과해 summary로 이동했으나 `ambiguous_control`로 멈췄다. 메뉴가 표시된 뒤 네이티브 UI로 **요청 → 웹 페이지 수집**을 클릭하면 정상 이동했다.
+- 로딩 지연을 보완한 새 빌드를 **실제 개발 확장에 적용하고 네이버 탭도 새로고침**했지만, 마지막 실행은 15초 대기 후에도 `site_missing`으로 끝났다. 화면에는 이제 **요청 안 함**으로 표시된다. **따라서 실제 원인을 단순 로딩 지연으로 확정하거나 수정 완료로 말하면 안 된다.**
+- 네이버 board의 실제 DOM을 DevTools에서 읽어 확인했다. 첫 사이트 링크는 `a[href="#"].d-block...api_link`, 표시 텍스트는 정확한 메인 URL, 계산된 href는 같은 출처의 `/console/board#`다. 텍스트의 canonical은 `https://otteru.vercel.app/`, rect 수 1, 계산된 visibility `visible`이며 숨김·비표시 조상도 없었다. 백그라운드 진단에서도 `document.visibilityState='hidden'`, rect 수 1, 텍스트 비교 true였다. 단순 백그라운드 rect=0 가설은 뒷받침되지 않았다.
+- 로컬 API GET으로도 해당 메인 사이트 URL이 `https://otteru.vercel.app/`, 활성 true임을 확인했다. 화면과 DB URL 불일치는 현재 증거에서 발견하지 못했다. 공개 메인 URL·활성 여부만 읽었으며 키·쿠키·토큰은 읽거나 출력하지 않았다.
+- Chrome 툴바에 StartPress 아이콘이 둘 보였고, 네이버 DevTools의 실행 문맥에는 같은 이름의 StartPress 항목이 여러 개 있었다. 한 문맥에서 `chrome.runtime.id`를 읽으려다 runtime이 undefined인 것을 관찰했으나, 유효/무효·확장/프레임 구분은 끝내지 못했다. **복수 확장이나 무효 컨텍스트가 원인이라는 것은 아직 추정**이다. 마지막에는 DevTools 문맥 선택 중 오래된 AX 요소 ID 오류가 발생했고 사용자가 인계를 요청했다.
+
+### 이번 디버깅에서 보완한 코드
+
+- `collection.ts`: 수집 전용 `selectNaverCollectionSite()`가 정확한 사이트 링크를 최대 15초 기다리고, `openNaverCollection()`도 요청 메뉴 헤더 렌더를 기다린다. 취소·사용자 조작·주소 변경·중복 컨트롤은 중단한다. 클릭 직전에 동일한 predicate와 유일성·동일 노드를 재검증하며 클릭은 한 번뿐이다. **이 보완만으로 실탭 문제는 해결되지 않았다.**
+- `content.ts`/`collection-automation.ts`: 수집 사이트 선택은 비동기 `select_collection_site` 명령으로 분리했다. 기존 색인 검사 `select_site` 동작은 유지했다. 콘솔 이동은 `open_board` → 사이트 선택 → `open_collection` → `request_collection`이다.
+- `automation.ts`/`observation.ts`: 제출 전 Chrome 메시지의 원본 Error를 `script_unavailable` 고정 안내로 변환하고, 문서 전환 중의 상태 조회는 제한 시간 내 재대기한다. 실제 `request_collection` 전송 후 연결 단절은 여전히 `receipt_unconfirmed`이며 자동 재전송하지 않는다.
+- `publication/controller.ts`: 제출 전 `site_missing`·`ambiguous_control`·연결 오류 같은 타입 있는 실패는 `blocked`/요청 안 함으로 표시한다. 실제 제출 후 불확실과 구분한다. 이전에는 `onStart()`가 목록 이동 전부터 호출되므로 시작 전 실패도 접수 미확인으로 잘못 표시될 수 있었다.
+- `publication/view.ts`: 탭 준비 설명은 주소·문서 로딩 확인이라는 사실만 표시하도록 수정했다. 탭 준비됨을 콘텐츠 연결·로그인·GUI 제출 성공으로 해석하지 않는다.
+
+### 검증과 현재 작업 트리
+
+- 최신 프론트 전체 **208 passed** (`/tmp/naver-live-final-tests.log`), TypeScript 검사·관리 화면/네이버/Bing 콘텐츠 스크립트 빌드·`git diff --check` 통과. 로딩 대기·클릭 직전 변조·연결 오류·제출 전/후 상태 구분 회귀를 추가했고 코드 리뷰를 받았다. 이 수치는 모의 테스트다.
+- 직전 중복 모달/API 단계의 백엔드 단위 **694 passed**, UUID 임시 PostgreSQL 통합 **7 passed**는 완료했다. 그 이후 디버깅은 프론트만 바꿨으므로 백엔드 테스트를 다시 실행하지 않았다. 실제 외부 IndexNow/네이버 접수·수집·색인 성공이나 운영 배포 근거로 사용하지 않는다.
+- 현재 브랜치 **`feat/naver-url-collection`**, HEAD **`da7155f` — Merge pull request #9 from StartPress26/feat/main-page-inspection-dashboard**. 새 변경은 전부 미커밋이다. 커밋·push·PR·운영 배포·버전 증가·ZIP 재생성은 하지 않았다. 로컬 manifest/package 버전은 0.1.1이다.
+- 개발 확장 ID **`ibdnlkjpolhjadejfmllpkglggknmbpg`**, Chrome 확장 상세에서 **Unpacked / `~/Desktop/study/sideProject/webmaster_automation/extension/dist`**를 직접 확인했다. 로컬 빌드 후 해당 확장의 Reload를 눌렀고, 네이버 문서 새로고침 및 새 관리 탭 열기까지 수행했다. 마지막 빌드의 `naver-content.js`는 약 18.08 kB다. 실제 설치 확장과 작업 트리 소스를 혼동하지 않도록 다음 실행 직전에 재확인한다.
+- 사용자는 로컬에서 `python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 18001`로 API를 실행한다. 이 경우 저장된 Python 변경은 자동 반영되며 Docker 재빌드 안내는 현재 로컬 환경에 필요 없다. 운영 Docker와 구분한다. 설치 확장 API는 18001, 기존 Vite 개발 프록시는 사용자 변경인 8000이다.
+- 보존할 기존 변경: **`extension/vite.config.ts`**, **`extension/startpress-extension.zip`**. `.env`·`.secrets`·`dist`·토큰·키·실행 원문은 커밋하지 않는다. 기존 ZIP은 최신 소스와 일치하는 산출물이 아니다. 사용자 학습용 주석 등 다른 로컬 편집을 임의로 되돌리지 않는다.
+
+### 다음에 해야 할 작업
+
+1. 가장 먼저 실탭의 `site_missing` 원인을 추적한다. top 문서의 실제 링크 predicate는 정상인 반면 콘텐츠 명령에서는 매칭되지 않는 이유가 미해결이다. **실제 수신하는 콘텐츠 스크립트의 확장 ID/문서/프레임, 명령 payload의 정규화된 대상과 DOM 탐색 결과**를 민감값 없이 비교하는 것이 다음 진단 후보다. 같은 이름의 여러 DevTools 문맥을 하나라고 가정하지 않는다.
+2. 다음 조작 전 `.cursor/rules/bot-execution-records.mdc`를 읽고 새 비공개 실행 기록을 만든다. `cua.getState()`의 브라우저 호스트가 없어도 사용자 명시 요청에 따라 네이티브 Chrome 앱 조작은 실제로 가능했으므로 도구의 현재 동작을 확인한다. AX 요소 ID는 새 상태에서 재획득한다.
+3. 지정한 글의 기존 네이버 요청 내역을 먼저 확인한다. 이미 접수되어 있다면 반복 제출하지 않는다. 재현이 필요하면 **IndexNow 해제 / 네이버 GUI만 선택**하고 현재 문서·대상을 확인한 뒤 실행한다. 추가 인증·CAPTCHA는 자동 처리하지 않고 사용자에게 맡긴다.
+4. 실제 접수 성공은 새 URL/갱신 등록일 행으로 확인한 뒤에만 말한다. 그 후 수집·색인 완료는 별도로 검사한다. mock 테스트가 통과했다는 이유로 실제 GUI 해결로 보고하지 않는다.
+5. 사용자 요청 시 변경을 리뷰·커밋한다. 현재 미커밋이 많으며 백엔드 API·발행 UX·네이버 DOM·디자인·실재현 보완이 섞여 있으므로 파일별 변경을 확인한 뒤 나눈다. `main/master` 직접 push 금지, 한국어 `[타입] 제목`, 공동 작성자 없음.
+
+### 관련 파일과 비공개 기록
+
+- `extension/src/publication/{controller,tabs,view}.ts`, `extension/src/main.ts`, `extension/src/{api,batch,types}.ts`, `extension/src/styles.css`: 발행 UI·중복 승인·기존 글 재알림·실행 상태.
+- `extension/src/engines/naver/{collection,collection-automation,content,observation,automation}.ts`: 이번 미해결 GUI 진단의 핵심.
+- `app/api/pages.py`, `app/services/page.py`, `app/schemas/page.py`: 기존 글 IndexNow 재알림 API와 검증.
+- `extension/tests/{publication,workspace,existing-notification-api,naver-collection,naver-collection-automation,naver-connection}.test.mjs`, `tests/test_page_notifications*.py`, `tests/integration/test_page_notifications_api.py`: 관련 회귀.
+- `docs/pages-api.md`, `docs/naver-collection.md`: 계약·사용법. 이 인계의 실제 실패 상태가 기존 문서의 테스트/구현 완료 설명보다 우선한다.
+- 이번 실제 조작 기록: **`.secrets/bot_runs/naver-gui-trace-20261116T124226828285Z.jsonl`**. 사용자 인계 요청으로 종료 상태를 append했다. 0700 디렉터리·0600 파일이며 쿼리·실제 입력값·인증값·원본 응답을 보존하지 않는다.
+- 앞선 읽기 실패 기록: `.secrets/bot_runs/naver-gui-failure-20261116T124044Z.jsonl`. 과거 구조 관측/도구 중단 기록은 `.secrets/bot_runs/naver-collection-20261116T112500Z.jsonl`, `.secrets/bot_runs/naver-publication-ui-20261116T115754807933Z.jsonl`이다.
+- Chrome에는 검증용 StartPress 관리 탭과 네이버 board가 열려 있고 네이버 DevTools도 남아 있을 수 있다. 마지막 체크박스는 IndexNow 해제·GUI 선택이었다. 인계 시 추가 화면 조작·폼 제출은 하지 않는다. 다음 실행은 반드시 현재 화면을 새로 관측한다.
+
+## 최신 추가 — 2026-11-16 중복 글 모달과 IndexNow 재알림
+
+- 사용자 요청으로 `DUPLICATE_PAGE` 발생 시 현재 고객사·부모·URL의 활성 기존 글을 확인한 뒤 모달을 띄운다. **계속 요청**을 승인하면 글을 재저장하지 않고 선택한 IndexNow 재알림과 네이버 GUI를 모두 실행한다. 취소·Escape는 해당 URL만 건너뛰며 전체 취소는 배치를 중단한다.
+- 백엔드 `POST /sites/{main_site_id}/pages/{page_id}/notifications`를 추가했다. JSON `expected_url` 필수이며 DB 대상·활성·범위·승인 URL 일치를 검증한 뒤 트랜잭션을 닫고 한 번 알린다. 생성 API의 중복 409 의미는 유지한다. 기존 글 ID·제목·생성일을 바꾸지 않으며 마이그레이션은 없다.
+- 기존 글은 `existing`/기존 글 사용으로 표시하고 IndexNow·GUI 접수와 색인 완료를 구분한다. 알림 실패가 저장 여부 불명으로 섞이지 않으며 모달 승인 전 전송·이중 확인·오래된 확인 이벤트·자동 재전송을 막는다.
+- 최종 프론트 **199 passed**, 백엔드 단위 **694 passed**, UUID 임시 PostgreSQL 통합 **7 passed**, TypeScript·빌드·diff 검사 및 코드·보안 리뷰 통과. 실제 외부 제출·운영 DB 변경·배포는 하지 않았다. **운영에서 기존 글 IndexNow 재알림을 쓰려면 확장과 API를 함께 업데이트해야 한다.**
+- 현재 `feat/naver-url-collection`의 미커밋 변경이며 기존 Vite·ZIP을 보존했다. 상세 사용법·계약은 `docs/naver-collection.md`, `docs/pages-api.md`를 따른다. 아래 기존 181개 검증과 신규 저장 글만 GUI 실행하던 설명은 모달 추가 전 기록이다.
+
+## 현재 작업 — 2026-11-16 발행 알림에서 네이버 GUI 수집 요청 / Asia/Seoul
+
+- 사용자 정정에 따라 GUI 수집을 **새 글 발행 알림**의 `네이버 GUI로도 수집 요청` 체크박스로 이동했다. 전체 색인 조회는 선행하지 않는다. 체크는 기본 해제이며 **글 저장 및 발행 알림**을 눌렀을 때 실행한다. 이전의 조회 종료 후 작업 탭 수집 폼은 제거했다.
+- GUI를 선택하면 글 저장 전에 네이버 탭을 확인한다. 단일 후보는 자동 확인, 여러 후보는 선택 대기, 후보 없음은 탭 준비 안내이며 준비되기 전에는 DB 저장·IndexNow·GUI 제출을 하지 않는다. 선택 후 자동으로 이어간다.
+- `publication/controller.ts`가 시작 고객사·사이트·글·체크박스를 고정하고 글 저장/IndexNow → 저장 확인된 글의 네이버 GUI 요청 순서로 진행한다. IndexNow를 끄고 GUI만 선택할 수 있다. 글 저장 여부 불명인 배치는 GUI를 실행하지 않는다.
+- `publication/view.ts`가 발행 폼 밖에 탭 선택과 URL별 GUI 접수를 표시한다. 기존 전체조회 수집용 `collection-view.ts`와 inspection controller의 수집 진입점은 제거했다. 기존 색인 조회는 그대로 유지한다.
+- 네이버 runner는 board가 아니면 상단 **웹마스터 도구** → 등록 사이트 선택 → **요청 → 웹 페이지 수집** 메뉴 클릭 → URL 입력·확인 순서다. 접수는 `accepted`, 수집·색인은 `unknown`이며 GUI 접수를 색인 관측 DB나 대시보드 통계로 저장하지 않는다.
+- 발행 취소는 현재 저장 응답을 보존하고 다음 저장·GUI 요청을 중단한다. 제출 후 불확실한 요청은 자동 재전송하지 않는다. 발행 중 같은 관리 화면의 전체 조회와 중복 발행을 막는다.
+- 이번 구체 구현 대상은 네이버 GUI다. Bing은 기존 IndexNow 알림을 유지한다. Google 개별 URL 제출은 추가하지 않았다.
+- 현재 브랜치 `feat/naver-url-collection`, 시작 HEAD `da7155f`(PR #9 main 병합). 기존 `extension/vite.config.ts`·ZIP은 보존한다. 커밋·push·배포·ZIP 재생성은 하지 않았다.
+- 이전 로그인 화면 조사는 사이트 선택·수집 화면 구조까지 확인했고 실제 제출은 하지 않았다. 이번 추가 브라우저 재확인은 도구 dispatch 전 중단되어 메뉴 클릭 코드의 추가 실탭 검증은 미완료다. 기록은 `.secrets/bot_runs/naver-publication-ui-20261116T115754807933Z.jsonl`이다. 기존 조사 기록도 유지한다.
+- 최종 프론트 테스트 **181 passed**, TypeScript 검사·관리 화면/네이버/Bing 콘텐츠 빌드·`git diff --check` 통과. 코드 리뷰에서 다른 사이트 전환 시 진행·취소 UI가 숨는 문제를 보완하고 재검증했다. 사용법은 `docs/naver-collection.md`를 따른다. 실제 접수·수집·색인 완료는 미검증이다.
+
 ## 현재 인계 요약 — 2026-11-16 메인 사이트 대시보드·Bing 표시 통일·PR #9 / Asia/Seoul
 
 **이 절과 맨 아래 `마지막 상태 — 최신 / 2026-11-16 메인 사이트 대시보드 PR #9`를 우선한다. 아래 메인페이지 표시 미구현·Bing 라벨 미정리·통합 테스트 미실행·push/PR 미승인 설명은 과거 상태다.**
@@ -1373,10 +1479,39 @@ Notion은 요구사항·설계 자료다. 실제 구현·적용 여부는 이 �
 
 새 세션 시작 문구: **“docs/HANDOFF.md 최상단과 맨 아래 2026-11-16 요약부터 읽어줘. feat/main-page-inspection-dashboard에서 기존 c0e60ba의 Bing 카드 변경에 이어 버전 0.1.1 커밋 a92d0cf와 HANDOFF 커밋·push를 승인받아 진행했어. 최종 HEAD·원격 일치는 Git에서 확인해줘. Bing 라벨과 표는 아직이고 PR·배포는 하지 않았어. Vite 프록시·ZIP·비밀파일은 제외해줘. 운영 인증은 확인됐고 메인페이지와 등록 글 통계는 구분해야 해. 현재 ZIP은 c0e60ba 미포함이야.”**
 
-## 마지막 상태 — 최신 / 2026-11-16 메인 사이트 대시보드 PR #9
+## 과거 마지막 상태 — 2026-11-16 메인 사이트 대시보드 PR #9
 
 - 메인 사이트 저장 관측의 대시보드 API·별도 표, 실행 목록의 메인/글 구분과 완료 후 자동 반영 회귀 검증, Bing 카드·표·상태 순서 통일을 완료했다. 글 통계와 메인 관측은 분리한다.
 - 백엔드 단위 655개·대시보드 PostgreSQL 통합 5개·프론트 136개·타입 검사·빌드·diff 검사 통과. 실제 외부 검색엔진 검사나 운영 배포를 새로 실행한 것은 아니다.
 - 기능 커밋 `1616e68`을 원격 브랜치에 push하고 main 대상 [PR #9](https://github.com/StartPress26/webmaster-automation/pull/9)를 생성했다. 후속 HANDOFF docs 커밋과 최종 원격 일치는 Git에서 확인한다. Vite 프록시와 기존 ZIP은 커밋하지 않는다. 병합·배포·버전 증가·ZIP 재생성은 수행하지 않는다.
 
 새 세션 시작 문구: **“docs/HANDOFF.md의 최상단과 맨 아래 최신 상태부터 읽어줘. feat/main-page-inspection-dashboard에서 메인 사이트 별도 표시와 Bing 표시 통일을 1616e68로 커밋·push하고 main 대상 PR #9를 생성했어. HANDOFF 갱신도 별도 docs 커밋·push 범위야. 백엔드 단위 655개·임시 PostgreSQL 통합 5개·프론트 136개와 빌드가 통과했어. 최종 커밋·원격 일치·PR 상태를 확인하고, 기존 Vite·ZIP 변경은 보존해줘. 병합·운영 배포·새 스토어 업데이트는 아직 수행하지 않았어.”**
+
+
+## 과거 마지막 상태 — 2026-11-16 발행 알림 GUI 수집
+
+- 문서 최상단의 사용자 정정 후 흐름을 우선한다. 새 글 발행 알림에서 네이버 GUI 체크 → 탭 준비 → 글 저장/선택적 IndexNow → 네이버 수집 요청이다. 전체 색인 조회를 먼저 실행할 필요가 없다.
+- 접수와 색인 관측을 분리하며 실제 외부 제출은 이번 검증에 포함하지 않는다. 검증·사용법·기록 위치는 `docs/naver-collection.md`와 최상단을 따른다.
+- 작업은 `feat/naver-url-collection`의 미커밋 변경이다. 기존 Vite·ZIP을 보존했고 스토어 배포·운영 변경을 하지 않았다.
+
+
+## 과거 마지막 상태 — 2026-11-17 네이버 GUI 실검증 중단
+
+- 브랜치 `feat/naver-url-collection`, HEAD `da7155f`, 전부 미커밋. 기존 Vite·ZIP·비밀파일 보존. 커밋·push·운영 배포는 하지 않았다.
+- 발행 알림 체크박스, 기존 글 확인 모달과 선택한 IndexNow/네이버 GUI 실행, 새 재알림 API, 디자인 여백 통일을 구현했다. 모달/API 단계 백엔드 단위 694개·임시 DB 통합 7개, 최신 프론트 208개·타입·빌드·diff 검사 통과.
+- 사용자 명시 요구에 따라 네이티브 computer use로 Chrome을 직접 조작해 실패를 재현하고 실제 unpacked 확장을 새 빌드로 Reload했다. IndexNow는 모든 재현에서 껐고, 실제 네이버 요청 접수는 확인하지 못했다.
+- 로딩 대기·클릭 직전 재검증·제출 전 연결 오류 표시를 보완했지만 **실탭은 여전히 site_missing으로 중단**한다. top DOM 링크·DB의 메인 URL은 일치했고 백그라운드 rect도 정상이다. 실제 수신 스크립트의 문맥·문서·대상 비교는 미완료다. 이 문제를 해결 완료로 보고하지 않는다.
+- 기록 `.secrets/bot_runs/naver-gui-trace-20261116T124226828285Z.jsonl`. 현재 Chrome 네이버 board/DevTools와 관리 탭이 남아 있을 수 있으며 새 실행 전에 화면 상태와 AX ID를 다시 확인한다.
+
+새 세션 시작 문구: **“docs/HANDOFF.md 최상단과 맨 아래 2026-11-17 최신 상태를 읽고 이어서 진행해줘. feat/naver-url-collection의 변경은 미커밋이며 발행 체크박스·기존 글 모달·IndexNow 재알림 API는 구현했어. 프론트 208개와 빌드는 통과했지만 네이버 실탭은 아직 site_missing으로 중단돼. computer use로 직접 조작해 재현했고 로딩 대기를 보완·개발 확장 Reload까지 했으나 해결되지 않았어. 실제 DOM·DB URL은 정상이라 수신 콘텐츠 스크립트의 문맥/문서/대상부터 진단해줘. IndexNow는 반복하지 말고 네이버 접수·수집·색인을 구분해. 기존 Vite·ZIP·비밀파일은 보존하고 커밋·push·배포는 별도 요청 전 하지 마.”**
+
+
+## 마지막 상태 — 최신 / 2026-11-17 커밋 정리·후속 검증
+
+- 현재 브랜치 `feat/naver-url-collection`에 API `2f8f94b`, 네이버 GUI 엔진 `93b0f0a`, 발행 UI `cdf9c53`을 로컬 커밋했다. 이 문서와 수집 사용법을 네 번째 문서 커밋으로 정리한다. 최종 HEAD는 `git log -4 --oneline`으로 확인한다. push·PR·배포는 하지 않는다.
+- 프론트 208개·백엔드 단위 694개·UUID 임시 PostgreSQL 통합 7개, 타입·빌드·diff 검사 통과. 코드·보안 리뷰 완료. 사용자 학습용 주석과 함수 분해를 보존했다.
+- 새 문서가 비활성 네이버 탭에서 준비되지 않는 현상을 동일 문서 활성화 비교로 확인했다. DevTools 포커스 에뮬레이션은 끔→켬→켬→끔 비교에서 켠 두 번만 백그라운드 사이트 선택·수집 화면 준비를 통과했고 사용자 탭 선택은 유지됐다. 실제 URL 제출·접수·수집·색인 완료는 미검증이다.
+- 본 확장의 debugger 권한·CDP 연결·해제 코드는 아직 없다. 별도 `/tmp/startpress-focus-probe-20261117`의 실험 코드는 커밋하지 않으며, 새 권한 부여와 실제 확장 연동 검증은 아직 승인·실행하지 않았다.
+- 다음 단계는 사용자 승인 후 실험 확장의 CDP 연결·취소·해제 검증이다. 화면을 뺏지 않는 백그라운드 처리 요구를 유지한다. 기존 Vite 프록시·ZIP·비밀파일·비공개 실행 기록은 커밋 제외로 보존한다.
+
+새 세션 시작 문구: **“HANDOFF 최상단과 맨 아래 최신 상태부터 읽어줘. feat/naver-url-collection에서 기존 발행·네이버 GUI 구현을 네 개 로컬 커밋으로 정리했으니 Git 상태부터 확인해줘. DevTools 포커스 에뮬레이션으로 화면을 전환하지 않고 수집 화면까지 진입하는 것은 검증했지만, 본 확장에 debugger 권한과 연결·해제 코드는 아직 없고 실제 URL 접수도 미확인이야. 임시 실험 확장은 준비만 했으며 권한 승인은 아직 없어. Vite·ZIP·비밀파일은 제외하고 push·PR·배포는 별도 요청 전 하지 마.”**
