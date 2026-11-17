@@ -199,7 +199,7 @@ export function selectedClient(): Client | undefined {
   return store.clients.find((item: Client): boolean => item.id === store.state.clientId);
 }
 
-// 한국 시간 기준의 표시용 현재 시각을 반환합니다.
+// 작업 이력에 남길 현재 시각을 "YYYY.MM.DD HH:MM" 형식(한국 시간)으로 만듭니다.
 function now(): string {
   return new Intl.DateTimeFormat('sv-SE', {
     timeZone: 'Asia/Seoul',
@@ -223,9 +223,12 @@ export function currentRows(): readonly Inspection[] {
   );
 }
 
-// 작업 결과를 예시 실행 이력에 추가합니다.
+// 작업 이력으로 보존하는 최대 개수
+const MAX_ACTIVITIES = 8;
+
+// 작업 결과를 이력 맨 앞에 추가하고 오래된 것은 버립니다.
 export function addActivity(label: string): void {
-  store.activities = [{ label, time: now() }, ...store.activities].slice(0, 8);
+  store.activities = [{ label, time: now() }, ...store.activities].slice(0, MAX_ACTIVITIES);
 }
 
 // 선택한 메인페이지 또는 글의 검사 대상을 반환합니다.
