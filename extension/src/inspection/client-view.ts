@@ -3,6 +3,7 @@ import type { ClientInspectionRun } from './client-controller';
 import type { ClientInspectionTask } from './client-plan';
 import { renderWorkTabPanel } from '../tabs/view.ts';
 import { renderNaverPreview } from '../engines/naver/view.ts';
+import { escapeHtml } from '../html.ts';
 
 const engineNames = { google: 'Google', naver: '네이버', bing: 'Bing' } as const;
 const statusNames: Readonly<Record<ClientInspectionTask['status'], string>> = {
@@ -30,15 +31,6 @@ const phaseNames: Readonly<Record<ClientInspectionRun['phase'], string>> = {
   failed: '실행 실패',
 };
 
-// 고객사 이름·URL·오류 메시지를 HTML에 안전하게 표시합니다.
-function escape(value: string): string {
-  return value.replace(
-    /[&<>"']/g,
-    (char: string): string =>
-      ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char] ?? char,
-  );
-}
-
 // 엔진별로 검증된 관측만 표시하고 Bing의 크롤링과 색인 상태를 구분합니다.
 function observationDetails(task: ClientInspectionTask): string {
   const result = task.guiObservation;
@@ -55,15 +47,15 @@ function observationDetails(task: ClientInspectionTask): string {
       : [];
 
   return [result.message, ...extra]
-    .map((value): string => `<br><span class="small">${escape(value)}</span>`)
+    .map((value): string => `<br><span class="small">${escapeHtml(value)}</span>`)
     .join('');
 }
 
 // 작업 결과는 저장 성공과 실제 색인 확인 여부가 구분되도록 표시합니다.
 function taskRow(task: ClientInspectionTask): string {
-  return `<tr><td><span class="inspection-result-site">${escape(task.target.siteName)} · ${task.target.id === task.target.siteId ? '메인 사이트' : '개별 글'}</span><span class="inspection-result-url">${escape(task.target.url)}</span></td>
+  return `<tr><td><span class="inspection-result-site">${escapeHtml(task.target.siteName)} · ${task.target.id === task.target.siteId ? '메인 사이트' : '개별 글'}</span><span class="inspection-result-url">${escapeHtml(task.target.url)}</span></td>
     <td><span class="inspection-engine-name"><span class="engine-symbol ${task.engine}" aria-hidden="true">${task.engine === 'naver' ? 'N' : task.engine === 'google' ? 'G' : 'b'}</span>${engineNames[task.engine]}${task.engine === 'bing' ? ` ${task.route.toUpperCase()}` : ''}</span></td>
-    <td><span class="inspection-result-status ${task.status}">${statusNames[task.status]}</span></td><td class="inspection-result-message">${escape(task.message)}${observationDetails(task)}</td></tr>`;
+    <td><span class="inspection-result-status ${task.status}">${statusNames[task.status]}</span></td><td class="inspection-result-message">${escapeHtml(task.message)}${observationDetails(task)}</td></tr>`;
 }
 
 // 범위와 제한사항은 실행 영역을 방해하지 않는 접이식 안내로 제공합니다.
@@ -120,16 +112,16 @@ export function renderClientInspection(
   return `<section class="report inspection-console" id="client-inspection" aria-labelledby="client-inspection-title" data-phase="${activePhase}">
     <header class="inspection-console-header"><div class="inspection-console-heading">
       <span class="inspection-console-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6 7a7 7 0 0 1 12-1l2 3M4 15l2 3a7 7 0 0 0 12-1"/></svg></span>
-      <div><h2 id="client-inspection-title">전체 색인 조회</h2><p>${escape(clientName || '고객사를 선택하세요')}${clientId ? '의 모든 활성 사이트와 등록 글을 확인합니다.' : ''}</p></div>
+      <div><h2 id="client-inspection-title">전체 색인 조회</h2><p>${escapeHtml(clientName || '고객사를 선택하세요')}${clientId ? '의 모든 활성 사이트와 등록 글을 확인합니다.' : ''}</p></div>
     </div><div class="inspection-console-actions">
       ${busy ? `<button class="inspection-text-button" id="cancel-client-inspection" ${run.cancelRequested ? 'disabled' : ''}>${run.cancelRequested ? '취소 대기 중' : '실행 취소'}</button>` : ''}
       <button class="button primary" id="refresh-index" ${busy || !clientId || demo ? 'disabled' : ''}>${busy ? '전체 조회 진행 중' : '고객사 전체 색인 조회'}</button>
     </div></header>
-    ${busy && !visible ? `<div class="inspection-run-notice" role="status"><span class="inspection-state-dot"></span><p>${escape(run.clientName)} 작업이 진행 중입니다.${run.phase === 'awaiting_tabs' ? ' 해당 고객사에서 작업 탭을 선택하세요.' : ' 현재 고객사의 데이터와 분리해 처리합니다.'}</p></div>` : ''}
+    ${busy && !visible ? `<div class="inspection-run-notice" role="status"><span class="inspection-state-dot"></span><p>${escapeHtml(run.clientName)} 작업이 진행 중입니다.${run.phase === 'awaiting_tabs' ? ' 해당 고객사에서 작업 탭을 선택하세요.' : ' 현재 고객사의 데이터와 분리해 처리합니다.'}</p></div>` : ''}
     ${
       visible
         ? `<div class="inspection-progress" id="client-inspection-progress" role="status">
-      <div class="inspection-progress-heading"><span class="inspection-phase ${activePhase}"><span class="inspection-state-dot"></span>${phaseNames[activePhase]}</span><p>${escape(run.message)}</p></div>
+      <div class="inspection-progress-heading"><span class="inspection-phase ${activePhase}"><span class="inspection-state-dot"></span>${phaseNames[activePhase]}</span><p>${escapeHtml(run.message)}</p></div>
       <dl class="inspection-metrics">
         <div aria-label="대상 URL ${run.targetCount}개"><dt>조회 대상</dt><dd>${run.targetCount}<span>개 URL</span></dd></div>
         <div aria-label="API 처리 ${done}/${apiTasks.length}건"><dt>API 처리</dt><dd>${done}<span>/ ${apiTasks.length}건</span></dd></div>
@@ -146,7 +138,7 @@ export function renderClientInspection(
         ? `<details class="inspection-tab-section" ${expandTabs ? 'open' : ''}><summary><span>작업 탭</span><span class="inspection-tab-caption">${selecting ? '엔진별로 사용할 탭을 확인하세요' : '선택한 탭 확인'}</span></summary>
       <fieldset class="work-tab-preparation" ${run.phase === 'awaiting_tabs' ? '' : 'disabled'}><legend class="visually-hidden">엔진별 작업 탭 준비</legend>${tabPanels}</fieldset>
       ${run.tabs.naver?.selected ? renderNaverPreview(run.scope, run.naverPreview, ['awaiting_tabs', 'finished', 'cancelled', 'failed'].includes(run.phase)) : ''}
-      ${run.phase === 'awaiting_tabs' ? `<div class="inspection-tab-footer"><p>탭이 하나면 자동 선택합니다. 네이버·Bing은 선택한 탭에서 사이트와 URL을 순차 조회합니다.</p><button class="inspection-text-button" id="continue-api-only" data-scope="${escape(run.scope)}">탭 없이 API 조회만 계속</button></div>` : ''}
+      ${run.phase === 'awaiting_tabs' ? `<div class="inspection-tab-footer"><p>탭이 하나면 자동 선택합니다. 네이버·Bing은 선택한 탭에서 사이트와 URL을 순차 조회합니다.</p><button class="inspection-text-button" id="continue-api-only" data-scope="${escapeHtml(run.scope)}">탭 없이 API 조회만 계속</button></div>` : ''}
     </details>`
         : ''
     }
