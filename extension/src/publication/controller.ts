@@ -1,5 +1,5 @@
 import { PageSubmissionSkipped, submitPageBatch } from '../batch.ts';
-import { ApiError } from '../errors.ts';
+import { ApiError, isUncertainFailure } from '../errors.ts';
 import { createWorkTabController } from '../tabs/controller.ts';
 import type { WorkTabController, WorkTabState } from '../tabs/controller';
 import { runNaverCollectionAutomation } from '../engines/naver/collection-automation.ts';
@@ -273,7 +273,7 @@ function notifyFailureResult(error: unknown, page: PageRead): PageCreateResult {
   const apiError = error instanceof ApiError ? error : null;
 
   // 서버가 명확히 거절했는지, 아니면 전달됐는지조차 모르는지 구분합니다.
-  const uncertain = apiError === null || apiError.status === 0 || apiError.status >= 500;
+  const uncertain = isUncertainFailure(error);
 
   let errorCode: string;
   if (apiError?.kind === 'timeout') {

@@ -1,4 +1,4 @@
-import { ApiError } from '../errors.ts';
+import { ApiError, isUncertainFailure } from '../errors.ts';
 import {
   buildClientInspectionTasks,
   collectClientInspectionTargets,
@@ -226,12 +226,14 @@ export function createClientInspectionController(
         message: newer ? `더 최신의 서버 상태를 유지했습니다 · ${status}` : `GUI 관측 DB 저장 확인 · ${status}`,
       });
     } catch (error: unknown) {
-      const uncertain = !(error instanceof ApiError) || error.status === 0 || error.status >= 500;
+      const uncertain = isUncertainFailure(error);
+      // 불확실하지 않은 실패는 항상 ApiError이므로 서버가 준 메시지를 그대로 보여줍니다.
+      const detail = error instanceof ApiError ? error.message : '';
       updateTask(id, {
         status: 'save_failed',
         message: uncertain
           ? 'GUI 조회 성공 · DB 저장 응답 미확인. 자동 재시도하지 않습니다.'
-          : `GUI 조회 성공 · DB 저장 실패: ${error.message}`,
+          : `GUI 조회 성공 · DB 저장 실패: ${detail}`,
       });
       throw new GuiInspectionSaveError('GUI 결과 저장을 확인하지 못해 해당 엔진의 후속 조회를 중단했습니다.');
     }

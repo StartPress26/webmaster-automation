@@ -1,5 +1,6 @@
 import { ApiError } from './api.ts';
 import type { Article, PageCreateResult, PageOutcome } from './types';
+import { isUncertainFailure } from './errors.ts';
 
 export class PageSubmissionSkipped extends Error {}
 
@@ -38,7 +39,7 @@ export async function submitPageBatch(
         report(outcomes);
         continue;
       }
-      const ambiguous = !(error instanceof ApiError) || error.status === 0 || error.status >= 500;
+      const ambiguous = isUncertainFailure(error);
       outcomes = [
         ...outcomes,
         {

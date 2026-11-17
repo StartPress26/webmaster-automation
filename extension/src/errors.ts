@@ -126,6 +126,12 @@ export function asAppError(value: unknown, operation: Operation = 'read'): ApiEr
   );
 }
 
+// 요청이 서버에 닿았는지조차 알 수 없는 실패인지 판단합니다.
+// ApiError가 아니거나(네트워크·예상 밖 예외), 상태 0(전송 실패·타임아웃), 5xx 응답이면 불확실로 봅니다.
+export function isUncertainFailure(error: unknown): boolean {
+  return !(error instanceof ApiError) || error.status === 0 || error.status >= 500;
+}
+
 // 저장·전송 결과가 확정되지 않은 요청인지 보수적으로 판단합니다.
 export function uncertainWrite(error: ApiError): boolean {
   return (
