@@ -43,7 +43,7 @@ const CONFIRM_BUTTON_LABEL = '확인';
 
 // "색인 완료 아니오" 배지와 "최종 업데이트 YYYY. M. D." 문구
 const NOT_INDEXED_BADGE = /^색인\s*완료\s*(아니오|아니요)$/;
-const LAST_UPDATED_TEXT = /^최종\s*업데이트\s*\d{2,4}\.\s*\d{1,2}\.\s*\d{1,2}\.?$/;
+export const NAVER_LAST_UPDATED_TEXT = /^최종\s*업데이트\s*\d{2,4}\.\s*\d{1,2}\.\s*\d{1,2}\.?$/;
 
 // 수집 요청 내역 표의 헤더(열 이름을 |로 이어 비교)
 const HISTORY_TABLE_HEADERS = 'No|URL|등록일';
@@ -393,7 +393,7 @@ export function readNaverVisibleObservation(
     return { ok: false, code: 'result_conflict' };
   }
 
-  const updated = buttonTexts.find((text): boolean => LAST_UPDATED_TEXT.test(text));
+  const updated = buttonTexts.find((text): boolean => NAVER_LAST_UPDATED_TEXT.test(text));
 
   return {
     ok: true,
