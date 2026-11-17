@@ -19,6 +19,9 @@ import { defaultApiBase } from './runtime.ts';
 import type { ClientDashboard, SitemapSubmission } from './types';
 export { ApiError, errorDetail } from './errors.ts';
 
+// 글 저장·알림 응답에서 허용하는 submission.status 값
+export const VALID_SUBMISSION_STATUSES: readonly string[] = ['accepted', 'key_pending', 'failed', 'unknown', 'skipped'];
+
 export interface ApiClient {
   readonly listAuthAccounts: () => Promise<readonly AuthAccountRead[]>;
   readonly getDashboard: (clientId: string) => Promise<ClientDashboard>;
@@ -282,7 +285,7 @@ export function createApi(
         result.page.client_id !== page.client_id || result.page.parent_site_id !== id ||
         result.page.target_type !== 'page' || result.page.is_active !== true ||
         !result.submission ||
-        !['accepted', 'key_pending', 'failed', 'unknown', 'skipped'].includes(result.submission.status)
+        !VALID_SUBMISSION_STATUSES.includes(result.submission.status)
       ) throw new ApiError(0, '기존 글 알림 응답의 대상과 접수 결과를 확인하지 못했습니다.', {
         code: 'INVALID_RESPONSE', operation: 'submit',
       });
@@ -299,7 +302,7 @@ export function createApi(
       if (
         !result?.page?.id ||
         !result?.submission ||
-        !['accepted', 'key_pending', 'failed', 'unknown', 'skipped'].includes(
+        !VALID_SUBMISSION_STATUSES.includes(
           result.submission.status,
         )
       ) {
