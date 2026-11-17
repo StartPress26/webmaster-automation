@@ -7,10 +7,12 @@ import {
   naverPageState,
   selectNaverSite,
 } from './observation';
+import { openNaverBoard, openNaverCollection, requestNaverCollection, selectNaverCollectionSite } from './collection';
 
 const documentToken = crypto.randomUUID();
 let active: { readonly requestId: string; readonly abort: AbortController } | null = null;
 let cancelledOperations: readonly string[] = [];
+let collectionOperations: readonly string[] = [];
 
 // 같은 확장의 관리 페이지인지 확인하며 잘못된 발신 URL은 거부합니다.
 function trustedSender(sender: chrome.runtime.MessageSender): boolean {
@@ -29,7 +31,7 @@ function trustedSender(sender: chrome.runtime.MessageSender): boolean {
   }
 }
 
-// 같은 확장의 명시적 검사·사이트 선택 명령만 처리하며 수집 요청은 제공하지 않습니다.
+// 같은 확장의 명시적 검사·사이트 선택·수집 요청을 구분해 처리합니다.
 function handleObservation(
   message: unknown,
   sender: chrome.runtime.MessageSender,
@@ -77,6 +79,11 @@ function handleObservation(
     if (cancelledOperations.includes(request.requestId))
       throw new NaverAutomationError('cancelled');
     if (active) throw new NaverAutomationError('busy');
+    if (request.action === 'open_board') {
+      openNaverBoard(document, location.href);
+      sendResponse({ requestId: request.requestId, ok: true });
+      return false;
+    }
     if (typeof request.siteUrl !== 'string') throw new NaverAutomationError('invalid_response');
 
     if (request.action === 'select_site') {
@@ -85,12 +92,31 @@ function handleObservation(
       return false;
     }
 
-    if (request.action !== 'inspect_url' || typeof request.targetUrl !== 'string') return false;
+    if (
+      !['inspect_url', 'request_collection', 'open_collection', 'select_collection_site'].includes(String(request.action)) ||
+      (!['open_collection', 'select_collection_site'].includes(String(request.action)) && typeof request.targetUrl !== 'string')
+    )
+      return false;
+
+    if (request.action === 'request_collection') {
+      if (collectionOperations.includes(request.requestId))
+        throw new NaverAutomationError('receipt_unconfirmed');
+      if (collectionOperations.length >= 64) throw new NaverAutomationError('busy');
+      collectionOperations = [...collectionOperations, request.requestId];
+    }
 
     const operation = { requestId: request.requestId, abort: new AbortController() };
 
     active = operation;
-    void inspectNaverUrl(document, request.siteUrl, request.targetUrl, operation.abort.signal)
+    const targetUrl = typeof request.targetUrl === 'string' ? request.targetUrl : '';
+    const execution = request.action === 'select_collection_site'
+      ? selectNaverCollectionSite(document, request.siteUrl, operation.abort.signal)
+      : request.action === 'open_collection'
+        ? openNaverCollection(document, request.siteUrl, operation.abort.signal)
+      : request.action === 'request_collection'
+        ? requestNaverCollection(document, request.siteUrl, targetUrl, operation.abort.signal)
+        : inspectNaverUrl(document, request.siteUrl, targetUrl, operation.abort.signal);
+    void execution
       .then((value): void => {
         sendResponse({ requestId: request.requestId, ok: true, value });
       })

@@ -28,7 +28,7 @@ export interface NaverAutomationClient {
 }
 
 // 기존에 허용한 네이버 탭 하나만 사용하며 창이나 탭 포커스는 바꾸지 않습니다.
-function browserClient(): NaverAutomationClient {
+export function browserClient(): NaverAutomationClient {
   if (!globalThis.chrome?.tabs) throw new NaverAutomationError('wrong_page');
 
   return {
@@ -39,7 +39,7 @@ function browserClient(): NaverAutomationClient {
 }
 
 // 취소·응답 제한 시간을 두고 작업 ID가 일치하는 고정 명령 응답만 받습니다.
-async function command(
+export async function command(
   client: NaverAutomationClient,
   tabId: number,
   payload: Record<string, unknown>,
@@ -49,9 +49,15 @@ async function command(
 
   const requestId = crypto.randomUUID();
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let acknowledgedFailure = false;
+  let cancelRequest: ((reason: NaverAutomationError) => void) | undefined;
+  const cancellation = new Promise<never>((_, reject): void => {
+    if (payload.action === 'request_collection') cancelRequest = reject;
+  });
 
-  // 취소 시 현재 DOM 조회에만 중단 신호를 전달하고 이동·재조회는 하지 않습니다.
+  // 취소는 현재 DOM 작업에만 전달하며 수집 요청을 다시 보내지 않습니다.
   const abort = (): void => {
+    cancelRequest?.(new NaverAutomationError('cancelled'));
     void client
       .send(tabId, {
         type: NAVER_AUTOMATION_MESSAGE,
@@ -72,6 +78,7 @@ async function command(
           reject(new NaverAutomationError('timeout'));
         }, 18000);
       }),
+      cancellation,
     ]);
 
     if (signal.aborted) throw new NaverAutomationError('cancelled');
@@ -91,7 +98,10 @@ async function command(
         'busy',
         'timeout',
         'cancelled',
+        'receipt_unconfirmed',
+        'script_unavailable',
       ];
+      acknowledgedFailure = codes.includes(String(result.code));
       throw new NaverAutomationError(
         codes.includes(String(result.code))
           ? (result.code as NaverAutomationCode)
@@ -100,6 +110,13 @@ async function command(
     }
 
     return result.value;
+  } catch (error: unknown) {
+    // 전송 뒤 응답이 끊긴 수집 요청은 미접수로 단정하거나 자동 재전송하지 않습니다.
+    if (payload.action === 'request_collection' && !acknowledgedFailure)
+      throw new NaverAutomationError('receipt_unconfirmed');
+    if (!(error instanceof NaverAutomationError))
+      throw new NaverAutomationError('script_unavailable');
+    throw error;
   } finally {
     clearTimeout(timer);
     signal.removeEventListener('abort', abort);
@@ -107,7 +124,7 @@ async function command(
 }
 
 // 네이버 문서가 예상 경로·사이트로 준비될 때까지 상태 조회만 반복합니다.
-async function waitPage(
+export async function waitPage(
   client: NaverAutomationClient,
   tabId: number,
   route: NaverPageState['route'],
@@ -134,7 +151,7 @@ async function waitPage(
         try {
           snapshot = await command(client, tabId, { action: 'state' }, signal);
         } catch (error: unknown) {
-          if (error instanceof NaverAutomationError) throw error;
+          if (error instanceof NaverAutomationError && error.code !== 'script_unavailable') throw error;
         }
 
         if (snapshot && typeof snapshot === 'object') {
@@ -161,7 +178,7 @@ async function waitPage(
 }
 
 // 탭의 현재 호스트를 검사한 뒤 허용된 사이트 목록·검사 화면으로만 이동합니다.
-async function navigate(
+export async function navigate(
   client: NaverAutomationClient,
   tabId: number,
   url: string,

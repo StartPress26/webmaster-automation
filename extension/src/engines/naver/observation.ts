@@ -6,7 +6,7 @@ export const NAVER_BOARD_URL = 'https://searchadvisor.naver.com/console/board';
 export const NAVER_NO_RESULT_MESSAGE = 'URL 검사 결과가 없습니다.';
 
 export interface NaverPageState {
-  readonly route: 'board' | 'summary' | 'inspection' | 'auth' | 'other';
+  readonly route: 'board' | 'summary' | 'inspection' | 'collection' | 'auth' | 'other';
   readonly siteUrl: string | null;
   readonly ready: boolean;
   readonly documentToken: string;
@@ -32,6 +32,8 @@ export type NaverAutomationCode =
   | 'busy'
   | 'timeout'
   | 'cancelled'
+  | 'receipt_unconfirmed'
+  | 'script_unavailable'
   | 'invalid_response';
 
 export class NaverAutomationError extends Error {
@@ -48,6 +50,10 @@ export class NaverAutomationError extends Error {
       busy: '네이버 탭에서 다른 조회가 진행 중입니다.',
       timeout: '새 네이버 결과나 화면 전환을 확인하지 못해 중단했습니다. 자동 재조회하지 않습니다.',
       cancelled: '네이버 자동 조회를 취소했습니다.',
+      receipt_unconfirmed:
+        '수집 요청이 전송됐을 수 있으나 접수 여부를 확인하지 못했습니다. 요청 내역을 직접 확인하세요. 자동 재요청하지 않습니다.',
+      script_unavailable:
+        '네이버 작업 스크립트와 연결되지 않아 수집 요청을 시작하지 못했습니다. 확장을 새로고침했다면 네이버 탭도 새로고침한 뒤 실행하세요.',
       invalid_response: '네이버 자동 조회 응답의 대상·판정·작업 ID를 확인하지 못했습니다.',
     };
 
@@ -222,6 +228,25 @@ function inspectionInputs(document: Document): readonly HTMLInputElement[] {
   );
 }
 
+// 실제 확인한 헤더를 가진 표시 중인 수집 요청 내역 표 하나만 반환합니다.
+export function naverCollectionHistoryTable(document: Document): HTMLTableElement | null {
+  const tables = Array.from(document.querySelectorAll<HTMLTableElement>('table')).filter(
+    (table): boolean =>
+      isNaverElementVisible(table, document) &&
+      Array.from(table.querySelectorAll('thead th'))
+        .map((cell): string => cell.textContent?.replace(/\s+/g, ' ').trim() ?? '')
+        .join('|') === 'No|URL|등록일',
+  );
+  return tables.length === 1 ? tables[0] ?? null : null;
+}
+
+// 화면이 이전 내역을 불러오는 중이면 접수 비교의 기준 상태로 사용하지 않습니다.
+export function isNaverCollectionHistoryLoading(document: Document): boolean {
+  return Array.from(document.querySelectorAll('[aria-busy="true"], [role="progressbar"]')).some(
+    (element): boolean => isNaverElementVisible(element, document),
+  );
+}
+
 // 인증 화면의 DOM은 읽지 않고 경로로 먼저 중단합니다.
 export function naverPageState(
   document: Document,
@@ -244,14 +269,19 @@ export function naverPageState(
         ? 'summary'
         : url.pathname === '/console/site/check/inspection'
           ? 'inspection'
-          : 'other';
+          : url.pathname === '/console/site/request/crawl'
+            ? 'collection'
+            : 'other';
   const siteUrl = canonicalNaverTarget(url.searchParams.get('site') ?? '');
   const ready =
     document.readyState !== 'loading' &&
     (route === 'board'
       ? !!document.querySelector('table, [role="table"]')
-      : route === 'inspection'
-        ? inspectionInputs(document).length === 1 && confirmationButtons(document).length === 1
+      : route === 'inspection' || route === 'collection'
+        ? inspectionInputs(document).length === 1 &&
+          confirmationButtons(document).length === 1 &&
+          (route !== 'collection' ||
+            (!!naverCollectionHistoryTable(document) && !isNaverCollectionHistoryLoading(document)))
         : route === 'summary' && !!siteUrl);
 
   return { route, siteUrl, ready, documentToken };
