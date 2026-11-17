@@ -1,7 +1,29 @@
 import { publicationBusy } from './controller.ts';
 import type { PublicationState } from './controller';
 import { renderWorkTabPanel } from '../tabs/view.ts';
+import type { WorkTabPanelOptions } from '../tabs/view';
+import type { WorkTabState } from '../tabs/controller';
 import { escapeHtml } from '../html.ts';
+
+// 발행 화면용 탭 패널 설정. 색인 조회 패널과 id 접두사·data 속성·문구를 구분합니다.
+const PUBLICATION_TAB_PANEL: WorkTabPanelOptions = {
+  idPrefix: 'publication-tab-naver',
+  formAttribute: 'data-publication-tab',
+  refreshAttribute: 'data-refresh-publication-tab',
+  readyMessage: '선택한 탭의 주소와 로딩 상태를 확인했습니다.',
+  selectLabel: '수집 요청에 사용할 탭',
+};
+
+// 공용 탭 컨트롤러의 "조회" 안내 문구를 발행 화면에 맞게 "수집 요청"으로 바꿉니다.
+function publicationTabMessage(message: string): string {
+  return message.replaceAll('조회에 사용할 탭', '수집 요청에 사용할 탭');
+}
+
+// 네이버 수집 요청에 쓸 작업 탭 패널을 발행 화면 설정으로 그립니다.
+function renderPublicationTabPanel(tab: WorkTabState, scope: string): string {
+  const adjusted = { ...tab, message: publicationTabMessage(tab.message) };
+  return renderWorkTabPanel(adjusted, scope, '네이버', PUBLICATION_TAB_PANEL);
+}
 
 // 검증된 기존 글과 선택된 요청 경로를 명시하고 승인 전에는 후속 요청을 실행하지 않습니다.
 export function renderPublicationDuplicateModal(state: PublicationState): string {
@@ -33,12 +55,7 @@ export function renderPublication(state: PublicationState, siteId: string): stri
       <p class="publication-message" role="status">${escapeHtml(state.input?.siteName ?? '선택한 사이트')}의 발행 작업이 진행 중입니다. 해당 사이트에서 탭 선택과 처리 결과를 확인하세요.</p>
     </section>` : '';
   }
-  const tabPanel = state.tab ? renderWorkTabPanel(state.tab, state.scope, '네이버')
-    .replaceAll('data-work-tab-engine="naver"', 'data-publication-tab="naver"')
-    .replaceAll('data-refresh-work-tab="naver"', 'data-refresh-publication-tab="naver"')
-    .replaceAll('work-tab-naver', 'publication-tab-naver')
-    .replaceAll('탭 준비됨. GUI 조회·저장은 아직 실행하지 않았습니다.', '선택한 탭의 주소와 로딩 상태를 확인했습니다.')
-    .replaceAll('조회에 사용할 탭', '수집 요청에 사용할 탭') : '';
+  const tabPanel = state.tab ? renderPublicationTabPanel(state.tab, state.scope) : '';
   const labels: Readonly<Record<PublicationState['guiResults'][number]['status'], string>> = {
     queued: '요청 대기', requesting: '접수 확인 중', accepted: '접수 확인',
     unconfirmed: '접수 여부 미확인', blocked: '요청 안 함', cancelled: '취소 · 요청 안 함',
