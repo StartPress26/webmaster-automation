@@ -113,7 +113,7 @@ const emptyProperty: Property = {
 };
 let clients: readonly Client[] = demo ? initialClients : [];
 let properties: readonly Property[] = demo ? initialProperties : [];
-let inspections: readonly Inspection[] = initialInspections;
+const inspections: readonly Inspection[] = initialInspections;
 let activities: readonly Activity[] = [];
 let state: AppState = {
   view: 'dashboard',
@@ -1149,9 +1149,8 @@ async function verifySavedPages(): Promise<void> {
   } catch (error: unknown) {
     outcomesError = asAppError(error);
   } finally {
-    pending = false;
-    render();
     setPending(false);
+    render();
   }
 }
 
@@ -1874,9 +1873,6 @@ function bindEvents(): void {
     .querySelector<HTMLFormElement>('#notification-form')
     ?.addEventListener('submit', notifyPublication);
   app.querySelector<HTMLFormElement>('#client-form')?.addEventListener('submit', addClient);
-  app.querySelector<HTMLButtonElement>('#reload-data')?.addEventListener('click', (): void => {
-    void loadWorkspace();
-  });
   app
     .querySelector<HTMLButtonElement>('#reload-inspection-targets')
     ?.addEventListener('click', (): void => {
