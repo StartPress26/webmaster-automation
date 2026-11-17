@@ -1,6 +1,7 @@
 import type { WorkTabState } from './controller';
 import type { WorkTab } from './client';
 import { escapeHtml } from '../html.ts';
+import { engineSymbol } from '../engines/labels.ts';
 
 // 선택 상태를 중첩 카드 대신 엔진별 작업 행과 정렬된 입력 폼으로 표시합니다.
 export function renderWorkTabPanel(state: WorkTabState, scope: string, engineName: string): string {
@@ -17,7 +18,7 @@ export function renderWorkTabPanel(state: WorkTabState, scope: string, engineNam
         : '탭 확인 필요';
 
   return `<section class="work-tab-row" aria-labelledby="${prefix}-title">
-    <div class="work-tab-row-heading"><span class="engine-symbol ${state.engine}" aria-hidden="true">${state.engine === 'naver' ? 'N' : state.engine === 'google' ? 'G' : 'b'}</span><h3 id="${prefix}-title">${escapeHtml(engineName)} 작업 탭</h3><span class="work-tab-state ${selected ? 'ready' : 'waiting'}">${status}</span></div>
+    <div class="work-tab-row-heading"><span class="engine-symbol ${state.engine}" aria-hidden="true">${engineSymbol(state.engine)}</span><h3 id="${prefix}-title">${escapeHtml(engineName)} 작업 탭</h3><span class="work-tab-state ${selected ? 'ready' : 'waiting'}">${status}</span></div>
     <div class="work-tab-body"><div class="work-tab-description">
       <p id="${prefix}-message" role="status">${selected ? '탭 준비됨. GUI 조회·저장은 아직 실행하지 않았습니다.' : escapeHtml(state.message)}</p>
       ${selected ? `<p class="work-tab-selected-title">${escapeHtml(selected.title || '제목 없음')}</p><p class="work-tab-url" title="${escapeHtml(selected.url)}">${escapeHtml(selected.url)}</p>` : ''}

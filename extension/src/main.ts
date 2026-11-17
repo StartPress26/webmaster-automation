@@ -38,6 +38,7 @@ import type {
   InspectionRead,
 } from './types';
 import { isPlainHttpUrl } from './url.ts';
+import { ENGINE_NAMES, engineSymbol } from './engines/labels.ts';
 
 type Icon =
   | 'dashboard'
@@ -97,7 +98,6 @@ const statusNames: Record<IndexStatus, string> = {
   crawled: '크롤링됨',
   not_indexed: '색인되지 않음',
 };
-const engineNames: Record<Engine, string> = { google: 'Google', naver: '네이버', bing: 'Bing' };
 const demo = new URLSearchParams(window.location.search).get('mode') === 'demo';
 const api = createApi();
 const emptyProperty: Property = {
@@ -378,7 +378,7 @@ function navigation(view: View, name: Icon): string {
 
 // 예시 상태임을 명시한 검색엔진 선택 탭을 표시합니다.
 function engines(): string {
-  return `<div class="engine-tabs" role="group" aria-label="조회할 검색엔진">${(['google', 'naver', 'bing'] as const).map((engine: Engine): string => `<button data-engine="${engine}" class="engine-tab ${state.engine === engine ? 'active' : ''}" aria-pressed="${state.engine === engine}"><span class="engine-symbol ${engine}">${engine === 'google' ? 'G' : engine === 'naver' ? 'N' : 'b'}</span>${engineNames[engine]}</button>`).join('')}</div>`;
+  return `<div class="engine-tabs" role="group" aria-label="조회할 검색엔진">${(['google', 'naver', 'bing'] as const).map((engine: Engine): string => `<button data-engine="${engine}" class="engine-tab ${state.engine === engine ? 'active' : ''}" aria-pressed="${state.engine === engine}"><span class="engine-symbol ${engine}">${engineSymbol(engine)}</span>${ENGINE_NAMES[engine]}</button>`).join('')}</div>`;
 }
 
 // 색인 상태 요약과 필터 가능한 URL 목록을 표시합니다.
@@ -429,7 +429,7 @@ function sitemapForm(): string {
       ? sitemapFeedback
       : null;
   const suggestion = site.siteUrl ? new URL('sitemap.xml', site.siteUrl).href : '';
-  return `<section id="sitemap-panel" class="report sitemap-panel" ${sitemapOpen && state.engine !== 'naver' ? '' : 'hidden'} aria-labelledby="sitemap-title"><div class="report-header"><div><h2 id="sitemap-title">${engineNames[state.engine]} 사이트맵 제출</h2><p>선택한 글과 관계없이 ${escapeHtml(site.name)} 사이트 전체에 제출합니다.</p></div><button class="icon-button" id="close-sitemap" aria-label="사이트맵 제출 닫기">${icon('close')}</button></div><form id="sitemap-form" class="sitemap-form"><label for="sitemap-url">사이트맵 URL</label><div class="sitemap-input-row"><input id="sitemap-url" name="sitemapUrl" type="url" required maxlength="2048" value="${escapeHtml(suggestion)}" placeholder="https://example.com/sitemap.xml" aria-describedby="sitemap-help"><button class="button primary" type="submit">${engineNames[state.engine]}에 제출${demo ? ' · 예시' : ''}</button></div><p id="sitemap-help" class="field-help">실제 사이트맵 주소를 확인하세요. 새 글이 사이트맵에 먼저 반영되어 있어야 하며, 접수 성공이 색인 완료를 의미하지 않습니다.</p>${feedback ? `<p class="sitemap-feedback ${feedback.failed ? 'inspection-error' : ''}" role="${feedback.failed ? 'alert' : 'status'}">${escapeHtml(feedback.message)}</p>` : ''}</form></section>`;
+  return `<section id="sitemap-panel" class="report sitemap-panel" ${sitemapOpen && state.engine !== 'naver' ? '' : 'hidden'} aria-labelledby="sitemap-title"><div class="report-header"><div><h2 id="sitemap-title">${ENGINE_NAMES[state.engine]} 사이트맵 제출</h2><p>선택한 글과 관계없이 ${escapeHtml(site.name)} 사이트 전체에 제출합니다.</p></div><button class="icon-button" id="close-sitemap" aria-label="사이트맵 제출 닫기">${icon('close')}</button></div><form id="sitemap-form" class="sitemap-form"><label for="sitemap-url">사이트맵 URL</label><div class="sitemap-input-row"><input id="sitemap-url" name="sitemapUrl" type="url" required maxlength="2048" value="${escapeHtml(suggestion)}" placeholder="https://example.com/sitemap.xml" aria-describedby="sitemap-help"><button class="button primary" type="submit">${ENGINE_NAMES[state.engine]}에 제출${demo ? ' · 예시' : ''}</button></div><p id="sitemap-help" class="field-help">실제 사이트맵 주소를 확인하세요. 새 글이 사이트맵에 먼저 반영되어 있어야 하며, 접수 성공이 색인 완료를 의미하지 않습니다.</p>${feedback ? `<p class="sitemap-feedback ${feedback.failed ? 'inspection-error' : ''}" role="${feedback.failed ? 'alert' : 'status'}">${escapeHtml(feedback.message)}</p>` : ''}</form></section>`;
 }
 
 // 선택한 메인페이지 또는 글의 검사 대상을 반환합니다.
@@ -469,9 +469,9 @@ function apiInspectionView(): string {
     <section class="report"><div class="report-header"><div><h2>검사 대상</h2><p>대상 선택은 저장 상태만 읽습니다. 전체 조회는 고객사 전체 색인 조회 버튼으로 실행합니다.</p></div><button class="button secondary" id="reload-inspection-targets">${icon('refresh')}대상 목록 새로고침</button></div>
     <div class="inspection-controls"><label for="inspection-target-select">메인페이지 / 글</label><select id="inspection-target-select">${inspectionTargets.length ? inspectionTargets.map((item: InspectionTarget): string => `<option value="${escapeHtml(item.id)}" ${item.id === inspectionTargetId ? 'selected' : ''}>${item.type === 'site' ? '메인페이지' : '글'} · ${escapeHtml(item.name)}${item.active ? '' : ' (비활성)'} — ${escapeHtml(item.url)}</option>`).join('') : '<option value="">사이트를 먼저 등록하거나 선택하세요</option>'}</select><p class="small muted">${escapeHtml(target?.url ?? '')}</p></div>
     ${targetsError ? errorPanel(targetsError, '글 목록을 불러오지 못했습니다', 'targets') : ''}
-    <div class="inspection-body"><div class="report-header"><h2>${failure ? '최근 조회 오류' : `저장된 ${engineNames[state.engine]} 상태`}</h2>${failure ? '' : '<button class="button secondary" id="read-inspection">저장 결과 다시 읽기</button>'}</div>
+    <div class="inspection-body"><div class="report-header"><h2>${failure ? '최근 조회 오류' : `저장된 ${ENGINE_NAMES[state.engine]} 상태`}</h2>${failure ? '' : '<button class="button secondary" id="read-inspection">저장 결과 다시 읽기</button>'}</div>
     ${inspectionLoading || targetsLoading ? '<p role="status">저장된 결과를 불러오는 중…</p>' : ''}
-    ${failure ? errorPanel(failure, `${engineNames[state.engine]} ${failure.operation === 'read' ? '저장 결과를 읽지 못했습니다' : '상태를 조회하지 못했습니다'}`, 'saved') : ''}
+    ${failure ? errorPanel(failure, `${ENGINE_NAMES[state.engine]} ${failure.operation === 'read' ? '저장 결과를 읽지 못했습니다' : '상태를 조회하지 못했습니다'}`, 'saved') : ''}
     ${observation && (!failure || observation.last_checked_at) ? `<div class="detail-result ${!failure && observation.index_status === 'indexed' ? 'indexed' : ''}">${icon(!failure && observation.index_status === 'indexed' ? 'check' : 'info')}<div><h3>${inspectionStatusNames[observation.index_status]}</h3><p>${failure ? '이전 성공 관측 결과입니다. 이번 조회의 성공을 의미하지 않습니다.' : '검색엔진에서 확인해 DB에 저장한 요약 상태입니다.'}</p></div></div><dl class="property-facts"><div><dt>마지막 성공 관측</dt><dd>${escapeHtml(inspectionTime(observation.last_checked_at))}</dd></div></dl>` : failure ? '<p class="previous-result-note">마지막 성공 결과: 없음 · 이번 오류로 미색인 여부를 판단하지 않습니다.</p>' : inspectionLoading || targetsLoading ? '' : '<div class="empty-state">아직 저장된 조회 결과가 없습니다.<p>조회 기록이 없다는 것은 미색인을 의미하지 않습니다.</p></div>'}
     <div class="inline-note">${escapeHtml(explanation)}</div>
     <p class="field-help">이 API는 크롤링 시각·제출 이력의 상세 필드를 제공하지 않습니다. 확인되지 않은 단계를 완료로 표시하지 않습니다.</p></div></section>`;
@@ -589,7 +589,7 @@ function detailView(): string {
   const indexed = row.status === 'indexed';
   const crawled = row.crawledAt !== null;
 
-  return `<div class="modal-backdrop" id="detail-backdrop"><section class="detail-dialog" role="dialog" aria-modal="true" aria-labelledby="detail-heading" tabindex="-1"><header class="detail-header"><h2 id="detail-heading">URL 검사 결과</h2><button class="icon-button" id="close-detail" aria-label="상세 결과 닫기">${icon('close')}</button></header><div class="detail-body"><div class="detail-result ${indexed ? 'indexed' : row.status}">${icon(indexed ? 'check' : 'info')}<div><h3>${statusNames[row.status]}</h3><p>${indexed ? '이 URL의 색인 등록이 확인되었습니다.' : row.status === 'not_indexed' ? '이 관측에서는 색인이 확인되지 않았습니다.' : '최종 색인 결과가 아직 확인되지 않았습니다.'}</p></div></div><p class="detail-url">${escapeHtml(property().origin + row.path)}</p><ol class="inspection-steps"><li><span class="step-mark">?</span><strong>URL 제출</strong><span>접수 기록 미확인</span></li><li><span class="step-mark">${row.status === 'waiting' ? '•' : '?'}</span><strong>수집 대기</strong><span>${row.status === 'waiting' ? '현재 예시 상태' : '대기 이력 미확인'}</span></li><li class="${crawled ? 'observed' : ''}"><span class="step-mark">${crawled ? '✓' : '?'}</span><strong>크롤링</strong><span>${crawled ? escapeHtml(row.crawledAt ?? '') : '아직 확인되지 않음'}</span></li><li class="${indexed ? 'observed' : ''}"><span class="step-mark">${indexed ? '✓' : '?'}</span><strong>색인 여부</strong><span>${indexed ? '색인됨' : row.status === 'not_indexed' ? '색인되지 않음' : '아직 확인되지 않음'}</span></li></ol><dl class="property-facts"><div><dt>검색엔진</dt><dd>${engineNames[row.engine]}</dd></div><div><dt>마지막 확인</dt><dd>${escapeHtml(row.checkedAt)}</dd></div><div><dt>데이터</dt><dd>미리보기 예시</dd></div></dl><div class="inline-note">단계는 항상 순서대로 관측되는 것이 아닙니다. 제출 이력이 없어도 크롤링·색인이 확인될 수 있습니다.</div></div></section></div>`;
+  return `<div class="modal-backdrop" id="detail-backdrop"><section class="detail-dialog" role="dialog" aria-modal="true" aria-labelledby="detail-heading" tabindex="-1"><header class="detail-header"><h2 id="detail-heading">URL 검사 결과</h2><button class="icon-button" id="close-detail" aria-label="상세 결과 닫기">${icon('close')}</button></header><div class="detail-body"><div class="detail-result ${indexed ? 'indexed' : row.status}">${icon(indexed ? 'check' : 'info')}<div><h3>${statusNames[row.status]}</h3><p>${indexed ? '이 URL의 색인 등록이 확인되었습니다.' : row.status === 'not_indexed' ? '이 관측에서는 색인이 확인되지 않았습니다.' : '최종 색인 결과가 아직 확인되지 않았습니다.'}</p></div></div><p class="detail-url">${escapeHtml(property().origin + row.path)}</p><ol class="inspection-steps"><li><span class="step-mark">?</span><strong>URL 제출</strong><span>접수 기록 미확인</span></li><li><span class="step-mark">${row.status === 'waiting' ? '•' : '?'}</span><strong>수집 대기</strong><span>${row.status === 'waiting' ? '현재 예시 상태' : '대기 이력 미확인'}</span></li><li class="${crawled ? 'observed' : ''}"><span class="step-mark">${crawled ? '✓' : '?'}</span><strong>크롤링</strong><span>${crawled ? escapeHtml(row.crawledAt ?? '') : '아직 확인되지 않음'}</span></li><li class="${indexed ? 'observed' : ''}"><span class="step-mark">${indexed ? '✓' : '?'}</span><strong>색인 여부</strong><span>${indexed ? '색인됨' : row.status === 'not_indexed' ? '색인되지 않음' : '아직 확인되지 않음'}</span></li></ol><dl class="property-facts"><div><dt>검색엔진</dt><dd>${ENGINE_NAMES[row.engine]}</dd></div><div><dt>마지막 확인</dt><dd>${escapeHtml(row.checkedAt)}</dd></div><div><dt>데이터</dt><dd>미리보기 예시</dd></div></dl><div class="inline-note">단계는 항상 순서대로 관측되는 것이 아닙니다. 제출 이력이 없어도 크롤링·색인이 확인될 수 있습니다.</div></div></section></div>`;
 }
 
 // 전체 관리 화면과 현재 선택한 작업 페이지를 표시합니다.
@@ -1619,7 +1619,7 @@ async function submitSitemap(event: SubmitEvent): Promise<void> {
     sitemapFeedback = {
       siteId: site.id,
       engine,
-      message: `${engineNames[engine]} 사이트맵 제출 접수 완료. 수집·색인 반영에는 시간이 걸릴 수 있습니다.`,
+      message: `${ENGINE_NAMES[engine]} 사이트맵 제출 접수 완료. 수집·색인 반영에는 시간이 걸릴 수 있습니다.`,
       failed: false,
     };
   } catch (error: unknown) {

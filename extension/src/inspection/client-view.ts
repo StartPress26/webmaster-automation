@@ -4,8 +4,8 @@ import type { ClientInspectionTask } from './client-plan';
 import { renderWorkTabPanel } from '../tabs/view.ts';
 import { renderNaverPreview } from '../engines/naver/view.ts';
 import { escapeHtml } from '../html.ts';
+import { ENGINE_NAMES, engineSymbol } from '../engines/labels.ts';
 
-const engineNames = { google: 'Google', naver: '네이버', bing: 'Bing' } as const;
 const statusNames: Readonly<Record<ClientInspectionTask['status'], string>> = {
   queued: '조회 대기',
   running: '조회 중',
@@ -54,7 +54,7 @@ function observationDetails(task: ClientInspectionTask): string {
 // 작업 결과는 저장 성공과 실제 색인 확인 여부가 구분되도록 표시합니다.
 function taskRow(task: ClientInspectionTask): string {
   return `<tr><td><span class="inspection-result-site">${escapeHtml(task.target.siteName)} · ${task.target.id === task.target.siteId ? '메인 사이트' : '개별 글'}</span><span class="inspection-result-url">${escapeHtml(task.target.url)}</span></td>
-    <td><span class="inspection-engine-name"><span class="engine-symbol ${task.engine}" aria-hidden="true">${task.engine === 'naver' ? 'N' : task.engine === 'google' ? 'G' : 'b'}</span>${engineNames[task.engine]}${task.engine === 'bing' ? ` ${task.route.toUpperCase()}` : ''}</span></td>
+    <td><span class="inspection-engine-name"><span class="engine-symbol ${task.engine}" aria-hidden="true">${engineSymbol(task.engine)}</span>${ENGINE_NAMES[task.engine]}${task.engine === 'bing' ? ` ${task.route.toUpperCase()}` : ''}</span></td>
     <td><span class="inspection-result-status ${task.status}">${statusNames[task.status]}</span></td><td class="inspection-result-message">${escapeHtml(task.message)}${observationDetails(task)}</td></tr>`;
 }
 
@@ -101,7 +101,7 @@ export function renderClientInspection(
     ? (['naver', 'bing'] as const)
         .map((engine): string => {
           const tab = run.tabs[engine];
-          return tab ? renderWorkTabPanel(tab, run.scope, engineNames[engine]) : '';
+          return tab ? renderWorkTabPanel(tab, run.scope, ENGINE_NAMES[engine]) : '';
         })
         .join('')
     : '';
