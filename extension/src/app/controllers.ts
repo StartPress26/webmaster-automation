@@ -1,5 +1,8 @@
 import { clientInspectionBusy, createClientInspectionController } from '../inspection/client-controller.ts';
 import { createPublicationController, publicationBusy } from '../publication/controller.ts';
+import { createFocusedNaverRunner } from '../focus/naver-runner.ts';
+import { naverFocusErrorMessage } from '../focus/messages.ts';
+import type { NaverFocusError } from '../focus/protocol.ts';
 import { applyAvailability } from './events.ts';
 import { loadDashboard, loadInspectionTargets, loadStoredInspections } from './loaders.ts';
 import { render } from './render.ts';
@@ -18,6 +21,14 @@ import type { Article, PageCreateResult, PageOutcome } from '../types.ts';
 const FINISHED_PHASES: readonly PublicationState['phase'][] = ['finished', 'cancelled', 'failed'];
 // 저장이 확인된 것으로 보는 글 상태
 const CONFIRMED_SAVE_STATUSES: readonly PageOutcome['saveStatus'][] = ['saved', 'existing'];
+
+// 작업 오류와 연결 해제 오류가 함께 나면 두 안내를 모두 보존합니다.
+let focusCleanupWarning: string | undefined;
+
+// 원래 발행 오류를 바꾸지 않고 연결 해제 실패 안내를 완료 시점까지 보관합니다.
+function rememberFocusCleanupError(error: NaverFocusError): void {
+  focusCleanupWarning = naverFocusErrorMessage(error);
+}
 
 // ─────────────────────────────────────────────────────────────
 // 발행 결과 반영 (순수 계산)
@@ -82,6 +93,7 @@ function isPublicationBlocked(): boolean {
 
 // 새 글 발행(저장 + IndexNow + 네이버 GUI 수집 요청)
 export const publications = createPublicationController({
+  runner: createFocusedNaverRunner(rememberFocusCleanupError),
   submit: (input, article): Promise<PageCreateResult> =>
     input.demo ? Promise.resolve(demoSubmitResult(article)) : api.addPage(input.siteId, article, input.notify),
   blocked: isPublicationBlocked,
@@ -108,15 +120,32 @@ function recordPublicationOutcomes(input: PublicationInput, results: readonly Pa
 
 // 발행이 끝났을 때 한 번만 이력·안내를 남기고, 저장된 글 목록을 다시 읽습니다.
 function recordPublicationFinished(run: PublicationState): void {
+  const cleanupWarning = focusCleanupWarning;
+  focusCleanupWarning = undefined;
+
   store.completedPublicationScope = run.scope;
   const savedCount = run.outcomes.filter((item): boolean => item.saveStatus === 'saved').length;
   addActivity(`글 ${savedCount}개 저장 결과 확인`);
+  if (cleanupWarning) {
+    addActivity(cleanupWarning);
+  }
   store.dashboardData = null;
 
   // 다른 사이트 화면에는 시작 사이트의 완료 안내를 섞지 않습니다.
   if (property().id !== run.siteId) return;
-  const noticeTone = run.phase === 'finished' ? 'info' : 'warning';
-  store.state = { ...store.state, notice: run.message, noticeTone };
+  const completedWithoutWarning = run.phase === 'finished' && !cleanupWarning;
+  let noticeTone: 'info' | 'warning' = 'warning';
+  let notice = run.message;
+
+  if (completedWithoutWarning) {
+    noticeTone = 'info';
+  }
+
+  if (cleanupWarning) {
+    notice = `${run.message} ${cleanupWarning}`;
+  }
+
+  store.state = { ...store.state, notice, noticeTone };
   if (!demo) void loadInspectionTargets();
 }
 

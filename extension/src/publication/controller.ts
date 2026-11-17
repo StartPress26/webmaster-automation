@@ -9,6 +9,8 @@ import type { Article, PageCreateResult, PageOutcome, PageRead } from '../types'
 import type { ClientInspectionTarget } from '../inspection/client-plan';
 import { checkPublicationNaverTab, listPublicationNaverTabs } from './tabs.ts';
 import { VALID_SUBMISSION_STATUSES } from '../api.ts';
+import { NaverFocusError } from '../focus/protocol.ts';
+import { naverFocusErrorMessage } from '../focus/messages.ts';
 
 // ─────────────────────────────────────────────────────────────
 // 타입 정의
@@ -210,6 +212,9 @@ function toGuiTarget(outcome: PageOutcome, input: PublicationInput): ClientInspe
 
 // 실행 중 예외가 났을 때 화면에 보여줄 메시지를 고릅니다.
 function failureMessage(error: unknown): string {
+  if (error instanceof NaverFocusError) {
+    return naverFocusErrorMessage(error);
+  }
   if (error instanceof NaverAutomationError) {
     return error.message;
   }
@@ -311,7 +316,12 @@ export function createPublicationController(dependencies: PublicationDependencie
     check: checkPublicationNaverTab,
     available: (): boolean => Boolean(globalThis.chrome?.tabs),
   });
-  const runner = dependencies.runner ?? runNaverCollectionAutomation;
+
+  // 네이버 GUI 실행 함수: 바깥에서 넘겨주면 그것을 쓰고, 없으면 기본 함수를 씁니다.
+  let runner = runNaverCollectionAutomation;
+  if (dependencies.runner) {
+    runner = dependencies.runner;
+  }
 
   // 실행 중인 GUI 자동화를 취소할 때 쓰는 신호
   let abort = new AbortController();

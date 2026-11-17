@@ -1,4 +1,7 @@
-// 확장 프로그램의 서비스 워커. 도구 모음 아이콘 클릭에만 반응합니다.
+import { installNaverFocusHost } from './focus/host.ts';
+
+// 관리 화면이 닫혀도 네이버 작업의 디버거 연결을 정리할 수 있게 등록합니다.
+installNaverFocusHost(chrome);
 
 // 도구 모음 아이콘을 누르면 설치된 확장 프로그램의 관리 화면을 엽니다.
 async function openManagementPage(): Promise<void> {

@@ -4,6 +4,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { build } from 'vite';
+import { createFocusRuntime } from './helpers/focus-session-port.mjs';
 
 const bundle = await build({
   configFile: false,
@@ -16,8 +17,10 @@ const sites = [{ id: 'a1', client_id: 'a', name: 'A 블로그', url: 'https://a.
 const summary = { indexed: 0, not_indexed: 0, crawled: 0, submitted: 0, failed: 0, unknown: 0, error_count: 0, last_checked_at: null };
 
 // 발행 화면에서 탭·저장·수집 명령의 실제 연결 순서를 외부 호출 없이 기록합니다.
-async function publicationWorkspace({ count = 1, startPath = '/console/board', submission = 'skipped', indexNow = false, requestError = false, onRequest, apiOverride } = {}) {
+async function publicationWorkspace({ count = 1, startPath = '/console/board', submission = 'skipped', indexNow = false, requestError = false, onRequest, apiOverride, acquireError, cleanupError } = {}) {
   const events = [];
+  const focusEvents = [];
+  const runtime = createFocusRuntime(focusEvents, { acquireError, cleanupError });
   const tabUrls = Object.fromEntries(Array.from({ length: count }, (_, index) => [index + 1, `https://searchadvisor.naver.com${startPath}`]));
   let queries = 0;
   const app = await workspace((url, options) => {
@@ -34,7 +37,7 @@ async function publicationWorkspace({ count = 1, startPath = '/console/board', s
       }));
     }
     return undefined;
-  }, '', { tabs: {
+  }, '', { runtime, tabs: {
     query: async () => {
       queries += 1;
       return Object.entries(tabUrls).map(([id, url]) => ({ id: Number(id), url, title: `네이버 ${id}`, status: 'complete' }));
@@ -67,8 +70,71 @@ async function publicationWorkspace({ count = 1, startPath = '/console/board', s
   } });
   app.navigate('notify');
   await waitFor(() => app.document.querySelector('#naver-gui-enabled'));
-  return { ...app, events, queryCount: () => queries };
+  return { ...app, events, focusEvents, queryCount: () => queries };
 }
+
+test('발행 GUI는 포커스 연결 뒤에 실행하고 접수 확인 뒤 연결을 해제한다', async () => {
+  const app = await publicationWorkspace();
+
+  try {
+    submitPublication(app, { gui: true });
+    await waitFor(() => app.document.querySelector('#publication-progress')?.dataset.phase === 'finished');
+
+    assert.deepEqual(app.focusEvents, ['acquire', 'release']);
+    assert.equal(app.events.filter(([action]) => action === 'request_collection').length, 1);
+  } finally {
+    app.dom.window.close();
+  }
+});
+
+test('포커스 연결 실패는 GUI 전송 전에 중단하고 고정 안내를 표시한다', async () => {
+  const app = await publicationWorkspace({ acquireError: 'attach_failed' });
+
+  try {
+    submitPublication(app, { gui: true });
+    await waitFor(() => app.document.querySelector('#publication-progress')?.dataset.phase === 'failed');
+
+    assert.deepEqual(app.focusEvents, ['acquire']);
+    assert.equal(app.events.some(([action]) => action === 'request_collection'), false);
+    assert.match(app.document.querySelector('#publication-progress').textContent, /개발자 도구/);
+    assert.doesNotMatch(app.document.querySelector('#publication-progress').textContent, /attach_failed/);
+  } finally {
+    app.dom.window.close();
+  }
+});
+
+test('접수 후 연결 해제 실패는 접수를 유지하고 자동 재전송하지 않는다', async () => {
+  const app = await publicationWorkspace({ cleanupError: 'cleanup_unconfirmed' });
+
+  try {
+    submitPublication(app, { gui: true });
+    await waitFor(() => app.document.querySelector('#publication-progress')?.dataset.phase === 'failed');
+
+    assert.match(app.document.querySelector('#publication-progress tbody tr').textContent, /접수 확인/);
+    const notice = app.document.querySelector('.success-notice').textContent;
+    assert.match(notice, /연결 해제/);
+    // 같은 안내가 두 번 붙지 않아야 합니다.
+    assert.equal(notice.split('연결 해제를 확인하지 못했습니다').length - 1, 1);
+    assert.equal(app.events.filter(([action]) => action === 'request_collection').length, 1);
+  } finally {
+    app.dom.window.close();
+  }
+});
+
+test('접수 불명과 연결 해제 실패가 겹쳐도 두 안내와 원래 요청 결과를 보존한다', async () => {
+  const app = await publicationWorkspace({ requestError: true, cleanupError: 'cleanup_unconfirmed' });
+
+  try {
+    submitPublication(app, { gui: true });
+    await waitFor(() => app.document.querySelector('#publication-progress')?.dataset.phase === 'failed');
+
+    assert.match(app.document.querySelector('#publication-progress').textContent, /접수 여부 미확인/);
+    assert.match(app.document.querySelector('.success-notice').textContent, /연결 해제/);
+    assert.equal(app.events.filter(([action]) => action === 'request_collection').length, 1);
+  } finally {
+    app.dom.window.close();
+  }
+});
 
 // 현재 렌더된 발행 폼에 제목·URL·선택 사항을 넣고 제출합니다.
 function submitPublication(app, { gui = false, notify: notifyEnabled = false, urls = ['https://a.example/new-post'] } = {}) {
