@@ -8,28 +8,12 @@ import {
   selectNaverSite,
 } from './observation';
 import { openNaverBoard, openNaverCollection, requestNaverCollection, selectNaverCollectionSite } from './collection';
+import { isValidRequestId, trustedSender } from '../shared/content-guard';
 
 const documentToken = crypto.randomUUID();
 let active: { readonly requestId: string; readonly abort: AbortController } | null = null;
 let cancelledOperations: readonly string[] = [];
 let collectionOperations: readonly string[] = [];
-
-// 같은 확장의 관리 페이지인지 확인하며 잘못된 발신 URL은 거부합니다.
-function trustedSender(sender: chrome.runtime.MessageSender): boolean {
-  if (sender.id !== chrome.runtime.id || !sender.url) return false;
-
-  try {
-    const senderUrl = new URL(sender.url);
-    const managementUrl = new URL(chrome.runtime.getURL('index.html'));
-    return (
-      senderUrl.protocol === managementUrl.protocol &&
-      senderUrl.host === managementUrl.host &&
-      senderUrl.pathname === managementUrl.pathname
-    );
-  } catch {
-    return false;
-  }
-}
 
 // 같은 확장의 명시적 검사·사이트 선택·수집 요청을 구분해 처리합니다.
 function handleObservation(
@@ -41,7 +25,7 @@ function handleObservation(
   if (!message || typeof message !== 'object') return false;
 
   const request = message as Record<string, unknown>;
-  if (typeof request.requestId !== 'string' || !/^[a-zA-Z0-9-]{1,80}$/.test(request.requestId))
+  if (!isValidRequestId(request.requestId))
     return false;
 
   if (request.type === NAVER_READ_MESSAGE) {
@@ -66,8 +50,7 @@ function handleObservation(
 
     if (request.action === 'cancel') {
       if (
-        typeof request.operationId === 'string' &&
-        /^[a-zA-Z0-9-]{1,80}$/.test(request.operationId)
+        isValidRequestId(request.operationId)
       )
         cancelledOperations = [...cancelledOperations.slice(-63), request.operationId];
       if (request.operationId === active?.requestId) active?.abort.abort();
