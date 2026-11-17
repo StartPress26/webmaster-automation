@@ -1,7 +1,5 @@
 import './styles.css';
-import { initialClients, initialInspections, initialProperties } from './mocks/data';
 import { validateIndexNowSettings } from './indexnow';
-import { createApi } from './api';
 import { createPublicationController, publicationBusy } from './publication/controller';
 import type { PublicationInput } from './publication/controller';
 import { renderPublication, renderPublicationDuplicateModal } from './publication/view';
@@ -16,12 +14,9 @@ import { renderClientInspection } from './inspection/client-view';
 import { ApiError, asAppError, presentError, uncertainWrite } from './errors';
 import { captureFormDrafts, restoreFormDrafts } from './forms';
 import { clientProperties, clientSelection, dashboardContent, demoDashboard } from './dashboard';
-import type { ClientDashboard } from './types';
-import type { FormDrafts } from './forms';
 import { escapeHtml } from './html.ts';
 import type {
   Activity,
-  AuthAccountRead,
   AppState,
   Client,
   Engine,
@@ -39,6 +34,7 @@ import type {
   InspectionRead,
 } from './types';
 import { isPlainHttpUrl } from './url.ts';
+import { api, app, demo, inspections, store } from './app/store.ts';
 import { ENGINE_NAMES, engineSymbol } from './engines/labels.ts';
 
 type Icon =
@@ -99,8 +95,6 @@ const statusNames: Record<IndexStatus, string> = {
   crawled: '크롤링됨',
   not_indexed: '색인되지 않음',
 };
-const demo = new URLSearchParams(window.location.search).get('mode') === 'demo';
-const api = createApi();
 const emptyProperty: Property = {
   id: '',
   clientId: '',
@@ -111,52 +105,8 @@ const emptyProperty: Property = {
   active: false,
   indexNow: null,
 };
-let clients: readonly Client[] = demo ? initialClients : [];
-let properties: readonly Property[] = demo ? initialProperties : [];
-const inspections: readonly Inspection[] = initialInspections;
-let activities: readonly Activity[] = [];
-let state: AppState = {
-  view: 'dashboard',
-  clientId: demo ? 'otter' : '',
-  propertyId: demo ? 'otter-site' : '',
-  engine: 'google',
-  filter: 'all',
-  route: 'direct',
-  selectedId: null,
-  mobileNav: false,
-  notice: '',
-};
-let dashboardData: ClientDashboard | null = null;
-let dashboardLoading = false;
-let dashboardError: ApiError | null = null;
-let dashboardVersion = 0;
-let loading = !demo;
-let loadError: ApiError | null = null;
-let authAccounts: readonly AuthAccountRead[] = [];
-let authAccountsLoading = false;
-let authAccountsError: ApiError | null = null;
-let accountEditor: {
-  readonly siteId: string;
-  readonly clientId: string;
-  readonly formId: string;
-  readonly original: SiteAuthAccounts;
-} | null = null;
-let accountEditorError: ApiError | null = null;
-let settingsLoading = false;
-let settingsError: ApiError | null = null;
-let settingsRequest = 0;
-let pending = false;
-let outcomes: readonly PageOutcome[] = [];
-let outcomeHistory: ReadonlyMap<string, readonly PageOutcome[]> = new Map();
-let outcomesError: ApiError | null = null;
-let uncertainSaves: ReadonlySet<string> = new Set();
-let inspectionTargets: readonly InspectionTarget[] = [];
-let inspectionTargetId = '';
-let storedInspections: readonly InspectionRead[] = [];
-let inspectionLoading = false;
-let inspectionError: ApiError | null = null;
 const clientInspections = createClientInspectionController(api, (): void => {
-  if (state.view === 'inspect' || state.view === 'dashboard') render();
+  if (store.state.view === 'inspect' || store.state.view === 'dashboard') render();
   else applyAvailability();
 });
 const publications = createPublicationController({
@@ -166,37 +116,13 @@ const publications = createPublicationController({
         submission: { status: 'skipped', error_code: 'DEMO_MODE', upstream_http_status: null },
       })
     : api.addPage(input.siteId, article, input.notify),
-  blocked: (): boolean => pending || clientInspectionBusy(clientInspections.getState()) ||
+  blocked: (): boolean => store.pending || clientInspectionBusy(clientInspections.getState()) ||
     !!clientInspections.getState().naverPreview?.loading,
   report: recordPublicationOutcomes,
   changed: publicationChanged,
   listPages: api.listPages,
   notifyExisting: (input, page): Promise<PageCreateResult> => api.notifyPage(input.siteId, page),
 });
-let completedPublicationScope = '';
-let duplicateFocusKey = '';
-let duplicateReturnFocusId = 'submit-pages';
-let targetsLoading = false;
-let targetsError: ApiError | null = null;
-let targetsVersion = 0;
-let observationVersion = 0;
-let notificationDraft = '';
-let notificationTitles = '';
-let notifyEnabled = true;
-let naverGuiEnabled = false;
-let requestText = '';
-let formDrafts: FormDrafts = new Map();
-let renderedScope = '';
-let sitemapOpen = false;
-let sitemapFeedback: {
-  readonly siteId: string;
-  readonly engine: Engine;
-  readonly message: string;
-  readonly failed: boolean;
-} | null = null;
-const root = document.querySelector<HTMLDivElement>('#app');
-if (!root) throw new Error('화면을 표시할 요소가 없습니다.');
-const app: HTMLDivElement = root;
 
 // 지정한 아이콘의 접근성 장식용 마크업을 반환합니다.
 function icon(name: Icon, className = ''): string {
@@ -206,29 +132,29 @@ function icon(name: Icon, className = ''): string {
 // 현재 선택한 사이트를 반환합니다.
 function property(): Property {
   return (
-    properties.find(
-      (item: Property): boolean => item.id === state.propertyId && item.clientId === state.clientId,
+    store.properties.find(
+      (item: Property): boolean => item.id === store.state.propertyId && item.clientId === store.state.clientId,
     ) ?? emptyProperty
   );
 }
 
 // 현재 고객사와 담당자 정보를 반환합니다.
 function selectedClient(): Client | undefined {
-  return clients.find((item: Client): boolean => item.id === state.clientId);
+  return store.clients.find((item: Client): boolean => item.id === store.state.clientId);
 }
 
 // 발행·검사 화면에서 현재 고객사 소속 블로그만 선택하게 합니다.
 function sitePicker(): string {
-  if (state.view !== 'inspect' && state.view !== 'notify') return '';
-  const sites = clientProperties(properties, state.clientId);
-  return `<section class="site-context"><label for="property-select">${state.view === 'inspect' ? '결과를 볼 블로그' : '관리할 블로그'}</label><select id="property-select">${sites.length ? sites.map((site): string => `<option value="${escapeHtml(site.id)}" ${site.id === state.propertyId ? 'selected' : ''}>${escapeHtml(site.name)} · ${escapeHtml(site.siteUrl)}${site.active ? '' : ' (비활성)'}</option>`).join('') : '<option value="">등록된 블로그 없음</option>'}</select>${sites.length ? '' : '<button class="button secondary" data-view="register">사이트 등록</button>'}</section>`;
+  if (store.state.view !== 'inspect' && store.state.view !== 'notify') return '';
+  const sites = clientProperties(store.properties, store.state.clientId);
+  return `<section class="site-context"><label for="property-select">${store.state.view === 'inspect' ? '결과를 볼 블로그' : '관리할 블로그'}</label><select id="property-select">${sites.length ? sites.map((site): string => `<option value="${escapeHtml(site.id)}" ${site.id === store.state.propertyId ? 'selected' : ''}>${escapeHtml(site.name)} · ${escapeHtml(site.siteUrl)}${site.active ? '' : ' (비활성)'}</option>`).join('') : '<option value="">등록된 블로그 없음</option>'}</select>${sites.length ? '' : '<button class="button secondary" data-view="register">사이트 등록</button>'}</section>`;
 }
 
 // 현재 고객사 전체 실행 영역을 페이지 제목 아래에 일관되게 배치합니다.
 function clientInspectionPanel(): string {
   return renderClientInspection(
     clientInspections.getState(),
-    state.clientId,
+    store.state.clientId,
     selectedClient()?.name ?? '',
     demo,
   );
@@ -240,60 +166,60 @@ function dashboardView(): string {
   const heading = `<div class="page-heading"><div><h1>${escapeHtml(client?.name ?? '고객사')} · 대시보드</h1><p>담당자: ${escapeHtml(client?.manager || '미지정')} · 선택한 고객사의 블로그 전체 현황</p></div>${client ? '<button class="button secondary" id="reload-dashboard">통계 새로고침</button>' : ''}</div>${clientInspectionPanel()}`;
   if (!client)
     return `${heading}<section class="report empty-state">선택할 고객사가 없습니다.<p>고객사 관리에서 첫 고객사를 추가하세요.</p><button class="button primary" data-view="clients">고객사 관리</button></section>`;
-  if (dashboardLoading)
+  if (store.dashboardLoading)
     return `${heading}<section class="report empty-state" role="status">고객사 통계를 불러오는 중…</section>`;
-  if (dashboardError)
-    return `${heading}${errorPanel(dashboardError, '고객사 통계를 불러오지 못했습니다')}`;
+  if (store.dashboardError)
+    return `${heading}${errorPanel(store.dashboardError, '고객사 통계를 불러오지 못했습니다')}`;
 
-  const data = demo ? demoDashboard(client, properties, inspections) : dashboardData;
+  const data = demo ? demoDashboard(client, store.properties, inspections) : store.dashboardData;
 
   return `${heading}${data && data.client.id === client.id ? dashboardContent(data) : '<section class="report empty-state">통계 새로고침으로 저장된 현황을 확인하세요.</section>'}`;
 }
 
 // 고객사 전환 중 늦게 도착한 이전 고객사의 통계 응답은 무시합니다.
 async function loadDashboard(): Promise<void> {
-  const version = ++dashboardVersion;
-  const id = state.clientId;
+  const version = ++store.dashboardVersion;
+  const id = store.state.clientId;
 
-  dashboardData = null;
-  dashboardError = null;
-  dashboardLoading = !demo && !!id;
+  store.dashboardData = null;
+  store.dashboardError = null;
+  store.dashboardLoading = !demo && !!id;
 
-  if (state.view === 'dashboard') render();
+  if (store.state.view === 'dashboard') render();
 
   if (demo || !id) return;
 
   try {
     const result = await api.getDashboard(id);
 
-    if (version === dashboardVersion && id === state.clientId) {
+    if (version === store.dashboardVersion && id === store.state.clientId) {
       if (result.client.id !== id) throw new ApiError(0, '요청한 고객사와 통계 응답이 다릅니다.');
-      dashboardData = result;
+      store.dashboardData = result;
     }
   } catch (error: unknown) {
-    if (version === dashboardVersion && id === state.clientId) dashboardError = asAppError(error);
+    if (version === store.dashboardVersion && id === store.state.clientId) store.dashboardError = asAppError(error);
   } finally {
-    if (version === dashboardVersion && id === state.clientId) {
-      dashboardLoading = false;
-      if (state.view === 'dashboard') render();
+    if (version === store.dashboardVersion && id === store.state.clientId) {
+      store.dashboardLoading = false;
+      if (store.state.view === 'dashboard') render();
     }
   }
 }
 
 // 선택 블로그의 초안·결과를 분리하고 이전 설정 요청을 무효화합니다.
 function selectProperty(id: string): void {
-  if (id && !clientProperties(properties, state.clientId).some((site): boolean => site.id === id))
+  if (id && !clientProperties(store.properties, store.state.clientId).some((site): boolean => site.id === id))
     return;
 
-  notificationDraft = '';
-  notificationTitles = '';
-  naverGuiEnabled = false;
-  requestText = '';
-  outcomes = outcomeHistory.get(id) ?? [];
-  outcomesError = null;
-  settingsError = null;
-  settingsLoading = false;
-  ++settingsRequest;
+  store.notificationDraft = '';
+  store.notificationTitles = '';
+  store.naverGuiEnabled = false;
+  store.requestText = '';
+  store.outcomes = store.outcomeHistory.get(id) ?? [];
+  store.outcomesError = null;
+  store.settingsError = null;
+  store.settingsLoading = false;
+  ++store.settingsRequest;
   update({ propertyId: id, filter: 'all', selectedId: null, notice: '' });
   void loadSettings();
   void loadInspectionTargets();
@@ -301,18 +227,18 @@ function selectProperty(id: string): void {
 
 // 고객사를 바꾸면 소속 블로그로 선택을 제한하고 통계를 다시 읽습니다.
 function selectClient(id: string): void {
-  if (!clients.some((client): boolean => client.id === id)) return;
+  if (!store.clients.some((client): boolean => client.id === id)) return;
 
-  if (id !== state.clientId) {
-    activities = [];
-    accountEditor = null;
-    accountEditorError = null;
+  if (id !== store.state.clientId) {
+    store.activities = [];
+    store.accountEditor = null;
+    store.accountEditorError = null;
   }
 
-  state = { ...state, ...clientSelection(properties, id), notice: '' };
-  dashboardData = null;
-  dashboardError = null;
-  selectProperty(state.propertyId);
+  store.state = { ...store.state, ...clientSelection(store.properties, id), notice: '' };
+  store.dashboardData = null;
+  store.dashboardError = null;
+  selectProperty(store.state.propertyId);
   void loadDashboard();
 }
 
@@ -336,22 +262,22 @@ function currentRows(): readonly Inspection[] {
   if (!demo) return [];
   return inspections.filter(
     (item: Inspection): boolean =>
-      item.propertyId === state.propertyId && item.engine === state.engine,
+      item.propertyId === store.state.propertyId && item.engine === store.state.engine,
   );
 }
 
 // 작업 결과를 예시 실행 이력에 추가합니다.
 function addActivity(label: string): void {
-  activities = [{ label, time: now() }, ...activities].slice(0, 8);
+  store.activities = [{ label, time: now() }, ...store.activities].slice(0, 8);
 }
 
 // 상태를 새 객체로 교체하고 화면을 다시 표시합니다.
 function update(patch: Partial<AppState>): void {
-  if (patch.view && patch.view !== state.view) {
-    accountEditor = null;
-    accountEditorError = null;
+  if (patch.view && patch.view !== store.state.view) {
+    store.accountEditor = null;
+    store.accountEditorError = null;
   }
-  state = { ...state, ...('notice' in patch ? { noticeTone: 'success' as const } : {}), ...patch };
+  store.state = { ...store.state, ...('notice' in patch ? { noticeTone: 'success' as const } : {}), ...patch };
   render();
 }
 
@@ -374,12 +300,12 @@ function errorPanel(
 
 // 왼쪽 메뉴의 한 항목을 표시합니다.
 function navigation(view: View, name: Icon): string {
-  return `<button class="nav-item ${state.view === view ? 'active' : ''}" data-view="${view}" ${state.view === view ? 'aria-current="page"' : ''}>${icon(name)}<span>${viewTitles[view]}</span></button>`;
+  return `<button class="nav-item ${store.state.view === view ? 'active' : ''}" data-view="${view}" ${store.state.view === view ? 'aria-current="page"' : ''}>${icon(name)}<span>${viewTitles[view]}</span></button>`;
 }
 
 // 예시 상태임을 명시한 검색엔진 선택 탭을 표시합니다.
 function engines(): string {
-  return `<div class="engine-tabs" role="group" aria-label="조회할 검색엔진">${(['google', 'naver', 'bing'] as const).map((engine: Engine): string => `<button data-engine="${engine}" class="engine-tab ${state.engine === engine ? 'active' : ''}" aria-pressed="${state.engine === engine}"><span class="engine-symbol ${engine}">${engineSymbol(engine)}</span>${ENGINE_NAMES[engine]}</button>`).join('')}</div>`;
+  return `<div class="engine-tabs" role="group" aria-label="조회할 검색엔진">${(['google', 'naver', 'bing'] as const).map((engine: Engine): string => `<button data-engine="${engine}" class="engine-tab ${store.state.engine === engine ? 'active' : ''}" aria-pressed="${store.state.engine === engine}"><span class="engine-symbol ${engine}">${engineSymbol(engine)}</span>${ENGINE_NAMES[engine]}</button>`).join('')}</div>`;
 }
 
 // 색인 상태 요약과 필터 가능한 URL 목록을 표시합니다.
@@ -397,7 +323,7 @@ function inspectionView(): string {
 
   const rows = currentRows();
   const visible = rows.filter(
-    (row: Inspection): boolean => state.filter === 'all' || row.status === state.filter,
+    (row: Inspection): boolean => store.state.filter === 'all' || row.status === store.state.filter,
   );
 
   return `<div class="page-heading"><div><h1>색인 상태 확인</h1><p>검색엔진이 내 사이트의 페이지를 어떻게 보고 있는지 확인하세요.</p></div>${inspectionActions()}</div>
@@ -408,8 +334,8 @@ function inspectionView(): string {
     ${sitemapForm()}
     <section class="report" aria-labelledby="report-title">
       <div class="report-header"><div><h2 id="report-title">페이지 색인 상태</h2><p>선택한 사이트의 URL별 관측 결과</p></div><span class="muted small">${icon('clock')}<span id="last-updated">${escapeHtml(rows[0]?.checkedAt ?? '조회 기록 없음')}</span></span></div>
-      <div class="status-summary">${(['indexed', 'waiting', 'crawled', 'not_indexed'] as const).map((status: IndexStatus): string => `<button class="summary-cell ${status} ${state.filter === status ? 'selected' : ''}" data-filter="${status}" aria-pressed="${state.filter === status}"><span class="summary-label"><span class="status-dot"></span>${statusNames[status]}</span><strong>${rows.filter((row: Inspection): boolean => row.status === status).length}<span>페이지</span></strong></button>`).join('')}</div>
-      <div class="table-toolbar"><button class="filter-reset ${state.filter === 'all' ? 'chosen' : ''}" data-filter="all">${state.filter === 'all' ? '전체 페이지' : `${statusNames[state.filter]} · 전체 보기`}<span>${visible.length}</span></button><span class="muted small">URL을 선택하면 상세 상태를 확인할 수 있습니다</span></div>
+      <div class="status-summary">${(['indexed', 'waiting', 'crawled', 'not_indexed'] as const).map((status: IndexStatus): string => `<button class="summary-cell ${status} ${store.state.filter === status ? 'selected' : ''}" data-filter="${status}" aria-pressed="${store.state.filter === status}"><span class="summary-label"><span class="status-dot"></span>${statusNames[status]}</span><strong>${rows.filter((row: Inspection): boolean => row.status === status).length}<span>페이지</span></strong></button>`).join('')}</div>
+      <div class="table-toolbar"><button class="filter-reset ${store.state.filter === 'all' ? 'chosen' : ''}" data-filter="all">${store.state.filter === 'all' ? '전체 페이지' : `${statusNames[store.state.filter]} · 전체 보기`}<span>${visible.length}</span></button><span class="muted small">URL을 선택하면 상세 상태를 확인할 수 있습니다</span></div>
       <div class="table-scroll"><table class="url-table"><thead><tr><th scope="col">페이지 URL</th><th scope="col">색인 상태</th><th scope="col">마지막 크롤링</th><th scope="col"><span class="visually-hidden">상세 보기</span></th></tr></thead><tbody>${visible.map((row: Inspection): string => `<tr><td><button class="url-button" data-inspect="${row.id}"><span>${escapeHtml(property().origin + row.path)}</span><span class="url-title">${escapeHtml(row.title)}</span></button></td><td><span class="status-pill ${row.status}"><span class="status-dot"></span>${statusNames[row.status]}</span></td><td class="date-cell">${escapeHtml(row.crawledAt ?? '아직 확인되지 않음')}</td><td><button class="icon-button" data-inspect="${row.id}" aria-label="${escapeHtml(row.path)} 상세 보기">${icon('chevron')}</button></td></tr>`).join('')}</tbody></table></div>
       ${visible.length === 0 ? '<div class="empty-state">이 조건의 조회 기록이 없습니다.<p>다른 검색엔진이나 상태를 선택해 보세요.</p></div>' : ''}
       <div class="table-footer"><span>예시 관측 데이터</span><span>${visible.length}개 페이지</span></div>
@@ -419,33 +345,33 @@ function inspectionView(): string {
 
 // 저장 결과 필터의 사이트·엔진에 맞는 별도 사이트맵 제출 버튼을 표시합니다.
 function inspectionActions(): string {
-  return `<div class="inspection-actions"><button class="button secondary" id="toggle-sitemap" aria-expanded="${sitemapOpen && state.engine !== 'naver'}" aria-controls="sitemap-panel" ${state.engine === 'naver' ? 'title="사이트맵 제출은 Google과 Bing만 지원합니다."' : ''}>${icon('send')}사이트맵 제출</button></div>`;
+  return `<div class="inspection-actions"><button class="button secondary" id="toggle-sitemap" aria-expanded="${store.sitemapOpen && store.state.engine !== 'naver'}" aria-controls="sitemap-panel" ${store.state.engine === 'naver' ? 'title="사이트맵 제출은 Google과 Bing만 지원합니다."' : ''}>${icon('send')}사이트맵 제출</button></div>`;
 }
 
 // 메인 사이트와 선택한 검색엔진을 명시하고 공개 사이트맵 주소를 입력받습니다.
 function sitemapForm(): string {
   const site = property();
   const feedback =
-    sitemapFeedback?.siteId === site.id && sitemapFeedback.engine === state.engine
-      ? sitemapFeedback
+    store.sitemapFeedback?.siteId === site.id && store.sitemapFeedback.engine === store.state.engine
+      ? store.sitemapFeedback
       : null;
   const suggestion = site.siteUrl ? new URL('sitemap.xml', site.siteUrl).href : '';
-  return `<section id="sitemap-panel" class="report sitemap-panel" ${sitemapOpen && state.engine !== 'naver' ? '' : 'hidden'} aria-labelledby="sitemap-title"><div class="report-header"><div><h2 id="sitemap-title">${ENGINE_NAMES[state.engine]} 사이트맵 제출</h2><p>선택한 글과 관계없이 ${escapeHtml(site.name)} 사이트 전체에 제출합니다.</p></div><button class="icon-button" id="close-sitemap" aria-label="사이트맵 제출 닫기">${icon('close')}</button></div><form id="sitemap-form" class="sitemap-form"><label for="sitemap-url">사이트맵 URL</label><div class="sitemap-input-row"><input id="sitemap-url" name="sitemapUrl" type="url" required maxlength="2048" value="${escapeHtml(suggestion)}" placeholder="https://example.com/sitemap.xml" aria-describedby="sitemap-help"><button class="button primary" type="submit">${ENGINE_NAMES[state.engine]}에 제출${demo ? ' · 예시' : ''}</button></div><p id="sitemap-help" class="field-help">실제 사이트맵 주소를 확인하세요. 새 글이 사이트맵에 먼저 반영되어 있어야 하며, 접수 성공이 색인 완료를 의미하지 않습니다.</p>${feedback ? `<p class="sitemap-feedback ${feedback.failed ? 'inspection-error' : ''}" role="${feedback.failed ? 'alert' : 'status'}">${escapeHtml(feedback.message)}</p>` : ''}</form></section>`;
+  return `<section id="sitemap-panel" class="report sitemap-panel" ${store.sitemapOpen && store.state.engine !== 'naver' ? '' : 'hidden'} aria-labelledby="sitemap-title"><div class="report-header"><div><h2 id="sitemap-title">${ENGINE_NAMES[store.state.engine]} 사이트맵 제출</h2><p>선택한 글과 관계없이 ${escapeHtml(site.name)} 사이트 전체에 제출합니다.</p></div><button class="icon-button" id="close-sitemap" aria-label="사이트맵 제출 닫기">${icon('close')}</button></div><form id="sitemap-form" class="sitemap-form"><label for="sitemap-url">사이트맵 URL</label><div class="sitemap-input-row"><input id="sitemap-url" name="sitemapUrl" type="url" required maxlength="2048" value="${escapeHtml(suggestion)}" placeholder="https://example.com/sitemap.xml" aria-describedby="sitemap-help"><button class="button primary" type="submit">${ENGINE_NAMES[store.state.engine]}에 제출${demo ? ' · 예시' : ''}</button></div><p id="sitemap-help" class="field-help">실제 사이트맵 주소를 확인하세요. 새 글이 사이트맵에 먼저 반영되어 있어야 하며, 접수 성공이 색인 완료를 의미하지 않습니다.</p>${feedback ? `<p class="sitemap-feedback ${feedback.failed ? 'inspection-error' : ''}" role="${feedback.failed ? 'alert' : 'status'}">${escapeHtml(feedback.message)}</p>` : ''}</form></section>`;
 }
 
 // 선택한 메인페이지 또는 글의 검사 대상을 반환합니다.
 function inspectionTarget(): InspectionTarget | undefined {
-  return inspectionTargets.find(
-    (target: InspectionTarget): boolean => target.id === inspectionTargetId,
+  return store.inspectionTargets.find(
+    (target: InspectionTarget): boolean => target.id === store.inspectionTargetId,
   );
 }
 
 // 전체 실행과 구분되는 개별 URL의 저장 관측 결과를 표시합니다.
 function apiInspectionView(): string {
   const target = inspectionTarget();
-  const observation = storedInspections.find(
+  const observation = store.storedInspections.find(
     (item: InspectionRead): boolean =>
-      item.site_id === inspectionTargetId && item.engine === state.engine,
+      item.site_id === store.inspectionTargetId && item.engine === store.state.engine,
   );
   const previousError = observation?.error_message
     ? new ApiError(0, observation.error_message, {
@@ -453,11 +379,11 @@ function apiInspectionView(): string {
         operation: 'inspect',
       })
     : null;
-  const failure = inspectionError ?? previousError;
+  const failure = store.inspectionError ?? previousError;
   const explanation =
-    state.engine === 'naver'
+    store.state.engine === 'naver'
       ? '고객사 전체 조회에서 네이버 사이트·URL별 GUI 검사를 수행하고 최신 결과를 저장합니다.'
-      : state.engine === 'bing'
+      : store.state.engine === 'bing'
         ? 'Bing은 API로 크롤링 상태, GUI로 색인 상태를 조회합니다. 같은 대상의 가장 최근 관측을 표시합니다.'
         : 'Google URL Inspection API로 저장된 색인 상태를 조회합니다. URL 제출이나 색인 요청은 실행하지 않습니다.';
 
@@ -468,12 +394,12 @@ function apiInspectionView(): string {
     ${engines()}
     ${sitemapForm()}
     <section class="report"><div class="report-header"><div><h2>검사 대상</h2><p>대상 선택은 저장 상태만 읽습니다. 전체 조회는 고객사 전체 색인 조회 버튼으로 실행합니다.</p></div><button class="button secondary" id="reload-inspection-targets">${icon('refresh')}대상 목록 새로고침</button></div>
-    <div class="inspection-controls"><label for="inspection-target-select">메인페이지 / 글</label><select id="inspection-target-select">${inspectionTargets.length ? inspectionTargets.map((item: InspectionTarget): string => `<option value="${escapeHtml(item.id)}" ${item.id === inspectionTargetId ? 'selected' : ''}>${item.type === 'site' ? '메인페이지' : '글'} · ${escapeHtml(item.name)}${item.active ? '' : ' (비활성)'} — ${escapeHtml(item.url)}</option>`).join('') : '<option value="">사이트를 먼저 등록하거나 선택하세요</option>'}</select><p class="small muted">${escapeHtml(target?.url ?? '')}</p></div>
-    ${targetsError ? errorPanel(targetsError, '글 목록을 불러오지 못했습니다', 'targets') : ''}
-    <div class="inspection-body"><div class="report-header"><h2>${failure ? '최근 조회 오류' : `저장된 ${ENGINE_NAMES[state.engine]} 상태`}</h2>${failure ? '' : '<button class="button secondary" id="read-inspection">저장 결과 다시 읽기</button>'}</div>
-    ${inspectionLoading || targetsLoading ? '<p role="status">저장된 결과를 불러오는 중…</p>' : ''}
-    ${failure ? errorPanel(failure, `${ENGINE_NAMES[state.engine]} ${failure.operation === 'read' ? '저장 결과를 읽지 못했습니다' : '상태를 조회하지 못했습니다'}`, 'saved') : ''}
-    ${observation && (!failure || observation.last_checked_at) ? `<div class="detail-result ${!failure && observation.index_status === 'indexed' ? 'indexed' : ''}">${icon(!failure && observation.index_status === 'indexed' ? 'check' : 'info')}<div><h3>${inspectionStatusNames[observation.index_status]}</h3><p>${failure ? '이전 성공 관측 결과입니다. 이번 조회의 성공을 의미하지 않습니다.' : '검색엔진에서 확인해 DB에 저장한 요약 상태입니다.'}</p></div></div><dl class="property-facts"><div><dt>마지막 성공 관측</dt><dd>${escapeHtml(inspectionTime(observation.last_checked_at))}</dd></div></dl>` : failure ? '<p class="previous-result-note">마지막 성공 결과: 없음 · 이번 오류로 미색인 여부를 판단하지 않습니다.</p>' : inspectionLoading || targetsLoading ? '' : '<div class="empty-state">아직 저장된 조회 결과가 없습니다.<p>조회 기록이 없다는 것은 미색인을 의미하지 않습니다.</p></div>'}
+    <div class="inspection-controls"><label for="inspection-target-select">메인페이지 / 글</label><select id="inspection-target-select">${store.inspectionTargets.length ? store.inspectionTargets.map((item: InspectionTarget): string => `<option value="${escapeHtml(item.id)}" ${item.id === store.inspectionTargetId ? 'selected' : ''}>${item.type === 'site' ? '메인페이지' : '글'} · ${escapeHtml(item.name)}${item.active ? '' : ' (비활성)'} — ${escapeHtml(item.url)}</option>`).join('') : '<option value="">사이트를 먼저 등록하거나 선택하세요</option>'}</select><p class="small muted">${escapeHtml(target?.url ?? '')}</p></div>
+    ${store.targetsError ? errorPanel(store.targetsError, '글 목록을 불러오지 못했습니다', 'targets') : ''}
+    <div class="inspection-body"><div class="report-header"><h2>${failure ? '최근 조회 오류' : `저장된 ${ENGINE_NAMES[store.state.engine]} 상태`}</h2>${failure ? '' : '<button class="button secondary" id="read-inspection">저장 결과 다시 읽기</button>'}</div>
+    ${store.inspectionLoading || store.targetsLoading ? '<p role="status">저장된 결과를 불러오는 중…</p>' : ''}
+    ${failure ? errorPanel(failure, `${ENGINE_NAMES[store.state.engine]} ${failure.operation === 'read' ? '저장 결과를 읽지 못했습니다' : '상태를 조회하지 못했습니다'}`, 'saved') : ''}
+    ${observation && (!failure || observation.last_checked_at) ? `<div class="detail-result ${!failure && observation.index_status === 'indexed' ? 'indexed' : ''}">${icon(!failure && observation.index_status === 'indexed' ? 'check' : 'info')}<div><h3>${inspectionStatusNames[observation.index_status]}</h3><p>${failure ? '이전 성공 관측 결과입니다. 이번 조회의 성공을 의미하지 않습니다.' : '검색엔진에서 확인해 DB에 저장한 요약 상태입니다.'}</p></div></div><dl class="property-facts"><div><dt>마지막 성공 관측</dt><dd>${escapeHtml(inspectionTime(observation.last_checked_at))}</dd></div></dl>` : failure ? '<p class="previous-result-note">마지막 성공 결과: 없음 · 이번 오류로 미색인 여부를 판단하지 않습니다.</p>' : store.inspectionLoading || store.targetsLoading ? '' : '<div class="empty-state">아직 저장된 조회 결과가 없습니다.<p>조회 기록이 없다는 것은 미색인을 의미하지 않습니다.</p></div>'}
     <div class="inline-note">${escapeHtml(explanation)}</div>
     <p class="field-help">이 API는 크롤링 시각·제출 이력의 상세 필드를 제공하지 않습니다. 확인되지 않은 단계를 완료로 표시하지 않습니다.</p></div></section>`;
 }
@@ -482,7 +408,7 @@ function apiInspectionView(): string {
 function registrationView(): string {
   return `<div class="page-heading"><div><h1>사이트 등록</h1><p>새 도메인을 등록하고 검색엔진 연결을 준비하세요.</p></div></div>
     <div class="form-layout"><section class="report form-report"><div class="report-header"><div><h2>새 도메인 등록</h2><p>고객사와 사이트 정보를 입력하세요.</p></div>${icon('globe')}</div>
-      <form id="registration-form" class="work-form">${clients.length ? '' : '<div class="inline-note">먼저 왼쪽 고객사 관리에서 고객사를 등록하세요.</div>'}<label>고객사 <span class="required">*</span><input value="${escapeHtml(selectedClient()?.name ?? '')}" readonly required aria-label="현재 선택한 고객사"><span class="field-help">왼쪽 위에서 고객사를 변경할 수 있습니다.</span></label>
+      <form id="registration-form" class="work-form">${store.clients.length ? '' : '<div class="inline-note">먼저 왼쪽 고객사 관리에서 고객사를 등록하세요.</div>'}<label>고객사 <span class="required">*</span><input value="${escapeHtml(selectedClient()?.name ?? '')}" readonly required aria-label="현재 선택한 고객사"><span class="field-help">왼쪽 위에서 고객사를 변경할 수 있습니다.</span></label>
       <label>사이트 이름 <span class="required">*</span><input name="siteName" required maxlength="100" placeholder="예: 오터스튜디오 공식 사이트"></label>
       <label>도메인 URL <span class="required">*</span><input name="origin" type="url" required placeholder="https://example.com"><span class="field-help">글 주소가 아닌 사이트의 루트 주소를 입력하세요.</span></label>
       <fieldset><legend>사이트 소유 구분</legend><div class="radio-row"><label class="radio-label"><input type="radio" name="ownership" value="client" checked>고객사 사이트</label><label class="radio-label"><input type="radio" name="ownership" value="internal">우리 팀 사이트</label></div></fieldset>
@@ -497,12 +423,12 @@ function registrationView(): string {
 function authAccountOptions(
   engine: 'google' | 'bing', selected: string | null = null, formId = 'registration-form',
 ): string {
-  const scope = `${state.clientId}:${state.view}:${state.propertyId}:${state.route}`;
-  const previous = formDrafts.get(`${scope}:${formId}`)?.[`${engine}AccountEmail`] ?? selected;
+  const scope = `${store.state.clientId}:${store.state.view}:${store.state.propertyId}:${store.state.route}`;
+  const previous = store.formDrafts.get(`${scope}:${formId}`)?.[`${engine}AccountEmail`] ?? selected;
   const missing = typeof previous === 'string' && previous &&
-    !authAccounts.some((account): boolean => account.email === previous)
+    !store.authAccounts.some((account): boolean => account.email === previous)
     ? `<option value="${escapeHtml(previous)}" selected>${escapeHtml(previous)} · 목록에서 찾을 수 없음</option>` : '';
-  return `<option value="" ${previous ? '' : 'selected'}>연결 안 함</option>` + missing + authAccounts.map((account): string =>
+  return `<option value="" ${previous ? '' : 'selected'}>연결 안 함</option>` + missing + store.authAccounts.map((account): string =>
     `<option value="${escapeHtml(account.email)}" ${account.email === previous ? 'selected' : ''}>${escapeHtml(account.email)} · ${account[`${engine}_configured`] ? '참조 등록됨' : '참조 미등록'}</option>`,
   ).join('');
 }
@@ -511,9 +437,9 @@ function authAccountOptions(
 function authAccountFields(values?: SiteAuthAccounts, formId = 'registration-form'): string {
   return `<fieldset class="auth-account-fields"><legend>검색엔진 계정 <span class="muted small">선택</span></legend>
     <button type="button" class="button secondary" id="refresh-auth-accounts">계정 목록 새로고침</button>
-    ${authAccountsLoading ? '<p class="field-help" role="status">인증 계정 목록을 불러오는 중…</p>' : ''}
-    ${authAccountsError ? errorPanel(authAccountsError, '인증 계정 목록을 불러오지 못했습니다') : ''}
-    ${!authAccountsLoading && !authAccountsError && !authAccounts.length ? `<p class="field-help">${demo ? '예시 모드에서는 인증 계정을 연결하지 않습니다.' : '등록된 인증 계정이 없습니다. 연결 없이 사이트를 등록할 수 있습니다.'}</p>` : ''}
+    ${store.authAccountsLoading ? '<p class="field-help" role="status">인증 계정 목록을 불러오는 중…</p>' : ''}
+    ${store.authAccountsError ? errorPanel(store.authAccountsError, '인증 계정 목록을 불러오지 못했습니다') : ''}
+    ${!store.authAccountsLoading && !store.authAccountsError && !store.authAccounts.length ? `<p class="field-help">${demo ? '예시 모드에서는 인증 계정을 연결하지 않습니다.' : '등록된 인증 계정이 없습니다. 연결 없이 사이트를 등록할 수 있습니다.'}</p>` : ''}
     <div class="two-fields"><label>Google 계정<select name="googleAccountEmail">${authAccountOptions('google', values?.google_account_email, formId)}</select></label>
     <label>Bing 계정<select name="bingAccountEmail">${authAccountOptions('bing', values?.bing_account_email, formId)}</select></label></div>
     <p class="field-help">참조 등록 여부는 실제 인증 성공 여부와 다릅니다. 사이트별 API 인증 적용은 아직 준비 중입니다.</p>
@@ -529,7 +455,7 @@ function indexNowFields(): string {
 function indexNowSettingsView(): string {
   const settings = property().indexNow;
   const configured = settings?.configured ?? false;
-  return `<section class="indexnow-settings" aria-label="사이트 IndexNow 설정"><div class="settings-heading"><div><h3>IndexNow 설정</h3><p>${settingsLoading ? '설정 조회 중…' : settingsError ? '현재 설정을 확인하지 못했습니다.' : configured ? '설정 저장됨 · 키 파일 설치 미확인' : '미설정 · 글 저장만 하거나 키 설정을 추가할 수 있습니다.'}</p></div><span class="status-pill ${configured && !settingsError ? 'crawled' : 'waiting'}">${settingsLoading ? '조회 중' : settingsError ? '확인 불가' : configured ? '설정 있음' : '미설정'}</span></div>${settingsError ? errorPanel(settingsError, 'IndexNow 설정을 읽지 못했습니다', 'settings') : ''}${configured ? `<dl class="settings-values"><div><dt>키</dt><dd>서버에 저장됨 · 원문은 조회하지 않습니다${settingsError ? ' · 이전에 읽은 설정' : ''}</dd></div><div><dt>키 파일</dt><dd>${escapeHtml(settings?.key_location ?? '')}</dd></div></dl>` : ''}<details id="indexnow-editor" ${configured && !settingsError ? '' : 'open'}><summary>${configured ? 'IndexNow 설정 변경' : 'IndexNow 설정 입력'}</summary><form class="work-form settings-form" id="indexnow-form">${indexNowFields()}<p class="field-help">키와 파일 URL을 함께 입력하세요. 형식 확인과 키 파일 설치·접수 확인은 서로 다릅니다.</p><div class="form-error" id="indexnow-error"></div><div><button class="button secondary" type="submit">${demo ? '예시 설정 저장' : '설정 저장'}</button></div></form></details></section>`;
+  return `<section class="indexnow-settings" aria-label="사이트 IndexNow 설정"><div class="settings-heading"><div><h3>IndexNow 설정</h3><p>${store.settingsLoading ? '설정 조회 중…' : store.settingsError ? '현재 설정을 확인하지 못했습니다.' : configured ? '설정 저장됨 · 키 파일 설치 미확인' : '미설정 · 글 저장만 하거나 키 설정을 추가할 수 있습니다.'}</p></div><span class="status-pill ${configured && !store.settingsError ? 'crawled' : 'waiting'}">${store.settingsLoading ? '조회 중' : store.settingsError ? '확인 불가' : configured ? '설정 있음' : '미설정'}</span></div>${store.settingsError ? errorPanel(store.settingsError, 'IndexNow 설정을 읽지 못했습니다', 'settings') : ''}${configured ? `<dl class="settings-values"><div><dt>키</dt><dd>서버에 저장됨 · 원문은 조회하지 않습니다${store.settingsError ? ' · 이전에 읽은 설정' : ''}</dd></div><div><dt>키 파일</dt><dd>${escapeHtml(settings?.key_location ?? '')}</dd></div></dl>` : ''}<details id="indexnow-editor" ${configured && !store.settingsError ? '' : 'open'}><summary>${configured ? 'IndexNow 설정 변경' : 'IndexNow 설정 입력'}</summary><form class="work-form settings-form" id="indexnow-form">${indexNowFields()}<p class="field-help">키와 파일 URL을 함께 입력하세요. 형식 확인과 키 파일 설치·접수 확인은 서로 다릅니다.</p><div class="form-error" id="indexnow-error"></div><div><button class="button secondary" type="submit">${demo ? '예시 설정 저장' : '설정 저장'}</button></div></form></details></section>`;
 }
 
 // 새 글의 처리 경로 선택과 URL 입력 화면을 표시합니다.
@@ -547,44 +473,44 @@ function notificationView(): string {
 
   return `<div class="page-heading"><div><h1>새 글 발행 알림</h1><p>등록된 사이트의 새 글을 검색엔진에 알리거나 후속 작업을 준비하세요.</p></div></div>
     ${property().id ? '' : '<div class="inline-note">먼저 사이트를 등록하거나 왼쪽에서 사이트를 선택하세요.</div>'}
-    <div class="route-options" role="group" aria-label="발행 알림 처리 방법">${routes.map((route): string => `<button class="route-option ${state.route === route.id ? 'selected' : ''}" data-route="${route.id}" aria-pressed="${state.route === route.id}">${icon(route.icon)}<strong>${route.title}</strong><span>${route.subtitle}</span>${state.route === route.id ? icon('check', 'route-check') : ''}</button>`).join('')}</div>
-    <div class="form-layout"><section class="report form-report"><div class="report-header"><div><h2>${routes.find((route): boolean => route.id === state.route)?.title}</h2><p>${escapeHtml(property().name)} · ${escapeHtml(property().origin)}</p></div></div>
-      ${state.route === 'direct' ? indexNowSettingsView() : ''}
-      <form id="notification-form" class="work-form"><label>글 제목 <span class="required">*</span><textarea name="titles" rows="2" required placeholder="새 글 제목을 입력하세요">${escapeHtml(notificationTitles)}</textarea><span class="field-help">여러 글은 URL과 같은 순서로 한 줄에 하나씩 제목을 입력하세요.</span></label><label>발행된 글 URL <span class="required">*</span><textarea name="urls" rows="5" required placeholder="${escapeHtml(property().origin)}/posts/new-article">${escapeHtml(notificationDraft)}</textarea><span class="field-help">URL을 한 줄에 하나씩 입력하세요. 선택한 사이트의 글만 처리합니다.</span></label>
-      ${state.route === 'direct' ? `<fieldset class="publication-options"><legend class="visually-hidden">발행 알림 방법</legend><div class="publication-option"><label class="radio-label"><input type="checkbox" name="notify" id="notify-enabled" aria-describedby="indexnow-notify-help" ${notifyEnabled ? 'checked' : ''}>글 저장과 함께 IndexNow 알림 전송</label><p class="field-help" id="indexnow-notify-help">IndexNow로 네이버·Bing에 알립니다. Google 일반 URL 제출과는 별개입니다.</p></div><div class="publication-option"><label class="radio-label"><input type="checkbox" name="naverGui" id="naver-gui-enabled" aria-describedby="naver-gui-help" ${naverGuiEnabled ? 'checked' : ''}>네이버 GUI로도 수집 요청</label><p class="field-help" id="naver-gui-help">로그인된 네이버 탭을 확인한 뒤 저장된 글을 웹 페이지 수집에 요청합니다. 접수 후 수집·색인은 별도로 확인하세요.</p></div></fieldset>` : state.route === 'link' ? '<div class="inline-note">우리 블로그의 글 편집·발행 작업을 준비합니다. 링크 추가가 고객사 URL의 직접 제출이나 색인을 보장하지는 않습니다.</div>' : '<label>요청 내용<textarea name="note" rows="2" placeholder="예: 신규 글 제출과 접수 결과 확인을 부탁드립니다."></textarea></label>'}
-      <div class="form-error" id="notification-error"></div><div class="form-footer"><span class="muted small">${state.route === 'direct' ? (demo ? '예시 실행 · 실제 전송 없음' : '글 저장과 알림 결과를 각각 확인하세요') : '문구 작성만 수행하며 외부 전달·발행은 하지 않습니다'}</span><button class="button primary" type="submit" id="submit-pages">${icon(state.route === 'direct' ? 'send' : state.route === 'link' ? 'link' : 'mail')}${state.route === 'direct' ? '글 저장 및 발행 알림' : state.route === 'link' ? '링크 추가 작업 준비' : '요청 문구 만들기'}</button></div></form>
-      ${state.route === 'direct' ? renderPublication(publications.getState(), property().id) : ''}
-      ${requestText ? `<div class="request-result"><h3>${state.route === 'request' ? '고객사에 전달할 요청 문구' : '링크 추가 작업 메모'}</h3><pre>${escapeHtml(requestText)}</pre><button class="button secondary" id="copy-request">문구 복사</button></div>` : ''}</section>
-      <aside class="context-column"><h3>사이트 처리 권한</h3><dl class="property-facts"><div><dt>고객사</dt><dd>${escapeHtml(clients.find((client: Client): boolean => client.id === property().clientId)?.name ?? '')}</dd></div><div><dt>소유 구분</dt><dd>${property().owned ? '우리 팀 사이트' : '고객사 사이트'}</dd></div><div><dt>접근 권한</dt><dd>실제 연결 시 확인 필요</dd></div></dl><div class="context-note">${icon('info')}<p>고객사 사이트는 권한과 운영 방식에 맞게 처리하세요. 요청 문구 작성과 실제 고객사 전달은 구분합니다.</p></div></aside></div>
+    <div class="route-options" role="group" aria-label="발행 알림 처리 방법">${routes.map((route): string => `<button class="route-option ${store.state.route === route.id ? 'selected' : ''}" data-route="${route.id}" aria-pressed="${store.state.route === route.id}">${icon(route.icon)}<strong>${route.title}</strong><span>${route.subtitle}</span>${store.state.route === route.id ? icon('check', 'route-check') : ''}</button>`).join('')}</div>
+    <div class="form-layout"><section class="report form-report"><div class="report-header"><div><h2>${routes.find((route): boolean => route.id === store.state.route)?.title}</h2><p>${escapeHtml(property().name)} · ${escapeHtml(property().origin)}</p></div></div>
+      ${store.state.route === 'direct' ? indexNowSettingsView() : ''}
+      <form id="notification-form" class="work-form"><label>글 제목 <span class="required">*</span><textarea name="titles" rows="2" required placeholder="새 글 제목을 입력하세요">${escapeHtml(store.notificationTitles)}</textarea><span class="field-help">여러 글은 URL과 같은 순서로 한 줄에 하나씩 제목을 입력하세요.</span></label><label>발행된 글 URL <span class="required">*</span><textarea name="urls" rows="5" required placeholder="${escapeHtml(property().origin)}/posts/new-article">${escapeHtml(store.notificationDraft)}</textarea><span class="field-help">URL을 한 줄에 하나씩 입력하세요. 선택한 사이트의 글만 처리합니다.</span></label>
+      ${store.state.route === 'direct' ? `<fieldset class="publication-options"><legend class="visually-hidden">발행 알림 방법</legend><div class="publication-option"><label class="radio-label"><input type="checkbox" name="notify" id="notify-enabled" aria-describedby="indexnow-notify-help" ${store.notifyEnabled ? 'checked' : ''}>글 저장과 함께 IndexNow 알림 전송</label><p class="field-help" id="indexnow-notify-help">IndexNow로 네이버·Bing에 알립니다. Google 일반 URL 제출과는 별개입니다.</p></div><div class="publication-option"><label class="radio-label"><input type="checkbox" name="naverGui" id="naver-gui-enabled" aria-describedby="naver-gui-help" ${store.naverGuiEnabled ? 'checked' : ''}>네이버 GUI로도 수집 요청</label><p class="field-help" id="naver-gui-help">로그인된 네이버 탭을 확인한 뒤 저장된 글을 웹 페이지 수집에 요청합니다. 접수 후 수집·색인은 별도로 확인하세요.</p></div></fieldset>` : store.state.route === 'link' ? '<div class="inline-note">우리 블로그의 글 편집·발행 작업을 준비합니다. 링크 추가가 고객사 URL의 직접 제출이나 색인을 보장하지는 않습니다.</div>' : '<label>요청 내용<textarea name="note" rows="2" placeholder="예: 신규 글 제출과 접수 결과 확인을 부탁드립니다."></textarea></label>'}
+      <div class="form-error" id="notification-error"></div><div class="form-footer"><span class="muted small">${store.state.route === 'direct' ? (demo ? '예시 실행 · 실제 전송 없음' : '글 저장과 알림 결과를 각각 확인하세요') : '문구 작성만 수행하며 외부 전달·발행은 하지 않습니다'}</span><button class="button primary" type="submit" id="submit-pages">${icon(store.state.route === 'direct' ? 'send' : store.state.route === 'link' ? 'link' : 'mail')}${store.state.route === 'direct' ? '글 저장 및 발행 알림' : store.state.route === 'link' ? '링크 추가 작업 준비' : '요청 문구 만들기'}</button></div></form>
+      ${store.state.route === 'direct' ? renderPublication(publications.getState(), property().id) : ''}
+      ${store.requestText ? `<div class="request-result"><h3>${store.state.route === 'request' ? '고객사에 전달할 요청 문구' : '링크 추가 작업 메모'}</h3><pre>${escapeHtml(store.requestText)}</pre><button class="button secondary" id="copy-request">문구 복사</button></div>` : ''}</section>
+      <aside class="context-column"><h3>사이트 처리 권한</h3><dl class="property-facts"><div><dt>고객사</dt><dd>${escapeHtml(store.clients.find((client: Client): boolean => client.id === property().clientId)?.name ?? '')}</dd></div><div><dt>소유 구분</dt><dd>${property().owned ? '우리 팀 사이트' : '고객사 사이트'}</dd></div><div><dt>접근 권한</dt><dd>실제 연결 시 확인 필요</dd></div></dl><div class="context-note">${icon('info')}<p>고객사 사이트는 권한과 운영 방식에 맞게 처리하세요. 요청 문구 작성과 실제 고객사 전달은 구분합니다.</p></div></aside></div>
     <div id="batch-results">${outcomeView()}</div>${activityView()}`;
 }
 
 // 선택한 고객사의 사이트별 계정 연결을 읽기 전용으로 표시합니다.
 function siteAccountsView(): string {
-  const sites = clientProperties(properties, state.clientId);
+  const sites = clientProperties(store.properties, store.state.clientId);
   return `<section class="report"><div class="report-header"><h2>사이트별 계정 연결</h2></div><div class="table-scroll"><table class="client-table"><thead><tr><th>사이트</th><th>Google</th><th>Bing</th><th>네이버 · 참고용</th><th>작업</th></tr></thead><tbody>${sites.map((site): string => {
-    const editor = accountEditor?.siteId === site.id && accountEditor.clientId === state.clientId ? accountEditor : null;
+    const editor = store.accountEditor?.siteId === site.id && store.accountEditor.clientId === store.state.clientId ? store.accountEditor : null;
     return `<tr><td>${escapeHtml(site.name)}</td><td>${escapeHtml(site.googleAccountEmail ?? '미연결')}</td><td>${escapeHtml(site.bingAccountEmail ?? '미연결')}</td><td>${escapeHtml(site.naverAccountEmail ?? '미입력')}</td><td><button type="button" class="button secondary" data-edit-accounts="${escapeHtml(site.id)}" aria-expanded="${!!editor}">계정 변경</button></td></tr>
-      ${editor ? `<tr><td colspan="5"><form id="${escapeHtml(editor.formId)}" data-account-editor class="work-form"><h3>${escapeHtml(site.name)} 계정 변경</h3><p class="field-help">${escapeHtml(site.siteUrl)}</p>${authAccountFields(editor.original, editor.formId)}<div id="account-editor-error">${accountEditorError ? errorPanel(accountEditorError, '사이트 계정을 변경하지 못했습니다') : ''}</div><div><button type="submit" class="button primary" id="save-site-accounts">저장</button> <button type="button" class="button secondary" id="cancel-site-accounts">취소</button></div></form></td></tr>` : ''}`;
+      ${editor ? `<tr><td colspan="5"><form id="${escapeHtml(editor.formId)}" data-account-editor class="work-form"><h3>${escapeHtml(site.name)} 계정 변경</h3><p class="field-help">${escapeHtml(site.siteUrl)}</p>${authAccountFields(editor.original, editor.formId)}<div id="account-editor-error">${store.accountEditorError ? errorPanel(store.accountEditorError, '사이트 계정을 변경하지 못했습니다') : ''}</div><div><button type="submit" class="button primary" id="save-site-accounts">저장</button> <button type="button" class="button secondary" id="cancel-site-accounts">취소</button></div></form></td></tr>` : ''}`;
   }).join('') || '<tr><td colspan="5">등록된 사이트가 없습니다.</td></tr>'}</tbody></table></div></section>`;
 }
 
 // 고객사 목록과 신규 고객사 입력 화면을 표시합니다.
 function clientsView(): string {
   return `<div class="page-heading"><div><h1>고객사 관리</h1><p>팀에서 관리하는 고객사와 연결된 사이트를 확인하세요.</p></div></div>${siteAccountsView()}
-    <section class="report"><div class="report-header"><h2>고객사 목록 <span class="count">${clients.length}</span></h2></div><div class="table-scroll"><table class="client-table"><thead><tr><th>고객사</th><th>담당자</th><th>등록된 사이트</th></tr></thead><tbody>${clients.map((client: Client): string => `<tr><td><strong>${escapeHtml(client.name)}</strong></td><td>${escapeHtml(client.manager || '미지정')}</td><td>${properties.filter((item: Property): boolean => item.clientId === client.id).length}개</td></tr>`).join('')}</tbody></table></div></section>
+    <section class="report"><div class="report-header"><h2>고객사 목록 <span class="count">${store.clients.length}</span></h2></div><div class="table-scroll"><table class="client-table"><thead><tr><th>고객사</th><th>담당자</th><th>등록된 사이트</th></tr></thead><tbody>${store.clients.map((client: Client): string => `<tr><td><strong>${escapeHtml(client.name)}</strong></td><td>${escapeHtml(client.manager || '미지정')}</td><td>${store.properties.filter((item: Property): boolean => item.clientId === client.id).length}개</td></tr>`).join('')}</tbody></table></div></section>
     <section class="report form-report"><div class="report-header"><h2>고객사 추가</h2></div><form id="client-form" class="work-form"><div class="two-fields"><label>고객사 이름 *<input name="clientName" required maxlength="100" placeholder="고객사 이름"></label><label>담당자<input name="manager" maxlength="100" placeholder="선택 입력"></label></div><div class="form-error" id="client-error"></div><div class="form-footer"><span class="muted small">${demo ? '예시 목록에 추가됩니다' : '고객사 정보를 DB에 저장합니다'}</span><button class="button primary" type="submit">${icon('plus')}고객사 추가</button></div></form></section>`;
 }
 
 // 로컬 미리보기에서 실행한 작업만 이력으로 표시합니다.
 function activityView(): string {
-  if (activities.length === 0) return '';
-  return `<section class="report"><div class="report-header"><h2>이번 화면의 작업 이력</h2></div><ul class="activity-list">${activities.map((activity: Activity): string => `<li>${icon('check')}<span>${escapeHtml(activity.label)}</span><time>${escapeHtml(activity.time)}</time></li>`).join('')}</ul></section>`;
+  if (store.activities.length === 0) return '';
+  return `<section class="report"><div class="report-header"><h2>이번 화면의 작업 이력</h2></div><ul class="activity-list">${store.activities.map((activity: Activity): string => `<li>${icon('check')}<span>${escapeHtml(activity.label)}</span><time>${escapeHtml(activity.time)}</time></li>`).join('')}</ul></section>`;
 }
 
 // 선택한 URL의 실제 관측과 미확인 단계를 구분한 상세 화면을 표시합니다.
 function detailView(): string {
-  const row = inspections.find((item: Inspection): boolean => item.id === state.selectedId);
+  const row = inspections.find((item: Inspection): boolean => item.id === store.state.selectedId);
   if (!row) return '';
 
   const indexed = row.status === 'indexed';
@@ -597,13 +523,13 @@ function detailView(): string {
 function render(): void {
   const modalFocusId = app.querySelector('#duplicate-dialog')?.contains(document.activeElement)
     ? (document.activeElement as HTMLElement).id : '';
-  if (!duplicateFocusKey && publications.getState().duplicate)
-    duplicateReturnFocusId = (document.activeElement as HTMLElement | null)?.id || 'submit-pages';
-  if (renderedScope) formDrafts = captureFormDrafts(app, renderedScope, formDrafts);
+  if (!store.duplicateFocusKey && publications.getState().duplicate)
+    store.duplicateReturnFocusId = (document.activeElement as HTMLElement | null)?.id || 'submit-pages';
+  if (store.renderedScope) store.formDrafts = captureFormDrafts(app, store.renderedScope, store.formDrafts);
 
-  const scope = `${state.clientId}:${state.view}:${state.propertyId}:${state.route}`;
+  const scope = `${store.state.clientId}:${store.state.view}:${store.state.propertyId}:${store.state.route}`;
   const privateInputs =
-    renderedScope === scope
+    store.renderedScope === scope
       ? Array.from(
           app.querySelectorAll<HTMLInputElement>(
             'input[name="indexnowKey"], input[name="indexnowLocation"]',
@@ -611,10 +537,10 @@ function render(): void {
         ).map((element) => ({ formId: element.form?.id, element }))
       : [];
 
-  document.title = `StartPress · ${viewTitles[state.view]}`;
-  app.innerHTML = `<header class="app-header"><button class="icon-button menu-toggle" id="menu-toggle" aria-label="왼쪽 메뉴 열기 또는 닫기" aria-expanded="${window.matchMedia('(max-width:760px)').matches ? state.mobileNav : !state.mobileNav}">${icon('menu')}</button><a class="brand" href="#inspect" aria-label="StartPress 홈"><span class="brand-symbol"><span></span><span></span><span></span></span><span>StartPress <span class="brand-subtitle">Console</span></span></a><form class="global-search" id="url-search"><label class="visually-hidden" for="url-inspect">선택한 사이트의 URL 검사</label>${icon('search')}<input id="url-inspect" type="url" placeholder="${escapeHtml(property().origin)} 내 URL 검사" required autocomplete="off"><kbd>URL 검사</kbd></form><div class="header-end"><a class="mode-switch" href="${demo ? '/' : '/?mode=demo'}">${demo ? 'API 모드로' : '예시 모드'}</a><span class="user-avatar" aria-label="StartPress 팀">S</span></div></header>
-    <aside class="sidebar ${state.mobileNav ? 'open' : ''}"><label class="property-picker"><span class="property-symbol">${icon('users')}</span><span class="visually-hidden">관리할 고객사 선택</span><select id="client-select">${clients.length ? clients.map((client: Client): string => `<option value="${escapeHtml(client.id)}" ${client.id === state.clientId ? 'selected' : ''}>${escapeHtml(client.name)}</option>`).join('') : '<option value="">등록된 고객사 없음</option>'}</select></label><div class="sidebar-client">담당자: ${escapeHtml(selectedClient()?.manager || '미지정')}<span>${clientProperties(properties, state.clientId).length}개 블로그</span></div>${navigation('dashboard', 'dashboard')}<div class="nav-divider"></div><div class="nav-section-label">검색엔진 관리</div><nav aria-label="검색엔진 관리">${navigation('register', 'globe')}${navigation('notify', 'send')}${navigation('inspect', 'inspect')}</nav><div class="nav-divider"></div><div class="nav-section-label">워크스페이스</div><nav aria-label="워크스페이스">${navigation('clients', 'users')}</nav><div class="sidebar-bottom"><span class="team-symbol">SP</span><div>StartPress 팀<span>사이트 운영 워크스페이스</span></div></div></aside>
-    <main class="main-content"><div class="breadcrumb"><span>${state.view === 'clients' ? '워크스페이스' : escapeHtml(selectedClient()?.name ?? '고객사를 선택하세요')}</span>${icon('chevron')}<span>${viewTitles[state.view]}</span></div><div class="preview-notice">${icon('info')}<span>${demo ? '예시 모드입니다. 실제 검색엔진 요청이나 DB 저장은 하지 않습니다.' : 'API 연결 모드입니다. 사용 전 SSH 터널을 연결해 주세요. 고객사·사이트·글 저장은 DB에 반영되며, 발행 알림 선택에 따라 실제 IndexNow 알림과 네이버 GUI 수집 요청을 실행합니다.'}</span></div>${loading ? '<div class="connection-notice" role="status">서버에서 고객사와 사이트를 불러오는 중…</div>' : loadError ? errorPanel(loadError, '고객사·사이트 목록을 불러오지 못했습니다', 'workspace') : ''}${state.notice ? `<div class="success-notice ${state.noticeTone ?? 'success'}" role="status">${icon(state.noticeTone && state.noticeTone !== 'success' ? 'info' : 'check')}<span>${escapeHtml(state.notice)}</span><button class="icon-button" id="dismiss-notice" aria-label="안내 닫기">${icon('close')}</button></div>` : ''}${state.view === 'notify' ? sitePicker() : ''}${state.view === 'dashboard' ? dashboardView() : state.view === 'inspect' ? inspectionView() : state.view === 'register' ? registrationView() : state.view === 'notify' ? notificationView() : clientsView()}<footer class="page-footer"><span>StartPress Console</span><span>${demo ? '예시 데이터 · 새로고침하면 초기화' : 'API 연결 · 알림 결과와 이번 작업 이력은 이 화면에서만 유지'}</span></footer></main>${detailView()}${renderPublicationDuplicateModal(publications.getState())}<div class="visually-hidden" role="status" aria-live="polite" id="live-status"></div>`;
+  document.title = `StartPress · ${viewTitles[store.state.view]}`;
+  app.innerHTML = `<header class="app-header"><button class="icon-button menu-toggle" id="menu-toggle" aria-label="왼쪽 메뉴 열기 또는 닫기" aria-expanded="${window.matchMedia('(max-width:760px)').matches ? store.state.mobileNav : !store.state.mobileNav}">${icon('menu')}</button><a class="brand" href="#inspect" aria-label="StartPress 홈"><span class="brand-symbol"><span></span><span></span><span></span></span><span>StartPress <span class="brand-subtitle">Console</span></span></a><form class="global-search" id="url-search"><label class="visually-hidden" for="url-inspect">선택한 사이트의 URL 검사</label>${icon('search')}<input id="url-inspect" type="url" placeholder="${escapeHtml(property().origin)} 내 URL 검사" required autocomplete="off"><kbd>URL 검사</kbd></form><div class="header-end"><a class="mode-switch" href="${demo ? '/' : '/?mode=demo'}">${demo ? 'API 모드로' : '예시 모드'}</a><span class="user-avatar" aria-label="StartPress 팀">S</span></div></header>
+    <aside class="sidebar ${store.state.mobileNav ? 'open' : ''}"><label class="property-picker"><span class="property-symbol">${icon('users')}</span><span class="visually-hidden">관리할 고객사 선택</span><select id="client-select">${store.clients.length ? store.clients.map((client: Client): string => `<option value="${escapeHtml(client.id)}" ${client.id === store.state.clientId ? 'selected' : ''}>${escapeHtml(client.name)}</option>`).join('') : '<option value="">등록된 고객사 없음</option>'}</select></label><div class="sidebar-client">담당자: ${escapeHtml(selectedClient()?.manager || '미지정')}<span>${clientProperties(store.properties, store.state.clientId).length}개 블로그</span></div>${navigation('dashboard', 'dashboard')}<div class="nav-divider"></div><div class="nav-section-label">검색엔진 관리</div><nav aria-label="검색엔진 관리">${navigation('register', 'globe')}${navigation('notify', 'send')}${navigation('inspect', 'inspect')}</nav><div class="nav-divider"></div><div class="nav-section-label">워크스페이스</div><nav aria-label="워크스페이스">${navigation('clients', 'users')}</nav><div class="sidebar-bottom"><span class="team-symbol">SP</span><div>StartPress 팀<span>사이트 운영 워크스페이스</span></div></div></aside>
+    <main class="main-content"><div class="breadcrumb"><span>${store.state.view === 'clients' ? '워크스페이스' : escapeHtml(selectedClient()?.name ?? '고객사를 선택하세요')}</span>${icon('chevron')}<span>${viewTitles[store.state.view]}</span></div><div class="preview-notice">${icon('info')}<span>${demo ? '예시 모드입니다. 실제 검색엔진 요청이나 DB 저장은 하지 않습니다.' : 'API 연결 모드입니다. 사용 전 SSH 터널을 연결해 주세요. 고객사·사이트·글 저장은 DB에 반영되며, 발행 알림 선택에 따라 실제 IndexNow 알림과 네이버 GUI 수집 요청을 실행합니다.'}</span></div>${store.loading ? '<div class="connection-notice" role="status">서버에서 고객사와 사이트를 불러오는 중…</div>' : store.loadError ? errorPanel(store.loadError, '고객사·사이트 목록을 불러오지 못했습니다', 'workspace') : ''}${store.state.notice ? `<div class="success-notice ${store.state.noticeTone ?? 'success'}" role="status">${icon(store.state.noticeTone && store.state.noticeTone !== 'success' ? 'info' : 'check')}<span>${escapeHtml(store.state.notice)}</span><button class="icon-button" id="dismiss-notice" aria-label="안내 닫기">${icon('close')}</button></div>` : ''}${store.state.view === 'notify' ? sitePicker() : ''}${store.state.view === 'dashboard' ? dashboardView() : store.state.view === 'inspect' ? inspectionView() : store.state.view === 'register' ? registrationView() : store.state.view === 'notify' ? notificationView() : clientsView()}<footer class="page-footer"><span>StartPress Console</span><span>${demo ? '예시 데이터 · 새로고침하면 초기화' : 'API 연결 · 알림 결과와 이번 작업 이력은 이 화면에서만 유지'}</span></footer></main>${detailView()}${renderPublicationDuplicateModal(publications.getState())}<div class="visually-hidden" role="status" aria-live="polite" id="live-status"></div>`;
 
   for (const input of privateInputs) {
     const replacement = input.formId
@@ -629,15 +555,15 @@ function render(): void {
   }
 
   bindEvents();
-  restoreFormDrafts(app, scope, formDrafts);
+  restoreFormDrafts(app, scope, store.formDrafts);
 
   const notify = app.querySelector<HTMLInputElement>('#notify-enabled');
 
-  if (notify) notifyEnabled = notify.checked;
+  if (notify) store.notifyEnabled = notify.checked;
   const naverGui = app.querySelector<HTMLInputElement>('#naver-gui-enabled');
-  if (naverGui) naverGuiEnabled = naverGui.checked;
+  if (naverGui) store.naverGuiEnabled = naverGui.checked;
 
-  renderedScope = scope;
+  store.renderedScope = scope;
   applyAvailability();
   syncDuplicateModalFocus(modalFocusId);
 }
@@ -747,7 +673,7 @@ function showError(selector: string, error: unknown): void {
 
 // 다음 제출 전에 이전 필드 오류만 제거하며 작성한 값은 유지합니다.
 function clearFormErrors(form: HTMLFormElement): void {
-  state = { ...state, notice: '' };
+  store.state = { ...store.state, notice: '' };
   app.querySelector<HTMLElement>('.success-notice')?.remove();
   form
     .querySelectorAll<HTMLElement>('[data-field-error]')
@@ -766,7 +692,7 @@ function clearFormErrors(form: HTMLFormElement): void {
 function bindErrorActions(container: HTMLElement): void {
   container.querySelectorAll<HTMLButtonElement>('[data-error-action]').forEach((button): void => {
     button.addEventListener('click', (): void => {
-      if (pending || loading) return;
+      if (store.pending || store.loading) return;
 
       if (button.dataset.errorAction === 'workspace') void loadWorkspace();
 
@@ -803,26 +729,26 @@ function mapSite(item: SiteRead): Property {
 
 // 선택 대상의 저장 결과를 읽고 이전 대상에 대한 늦은 응답은 무시합니다.
 async function loadStoredInspections(): Promise<void> {
-  if (demo || !inspectionTargetId) return;
+  if (demo || !store.inspectionTargetId) return;
 
-  const version = ++observationVersion;
-  const id = inspectionTargetId;
+  const version = ++store.observationVersion;
+  const id = store.inspectionTargetId;
 
-  inspectionLoading = true;
-  inspectionError = null;
+  store.inspectionLoading = true;
+  store.inspectionError = null;
 
-  if (state.view === 'inspect') render();
+  if (store.state.view === 'inspect') render();
 
   try {
     const rows = await api.getInspections(id);
-    if (version === observationVersion && id === inspectionTargetId) storedInspections = rows;
+    if (version === store.observationVersion && id === store.inspectionTargetId) store.storedInspections = rows;
   } catch (error: unknown) {
-    if (version === observationVersion && id === inspectionTargetId)
-      inspectionError = asAppError(error);
+    if (version === store.observationVersion && id === store.inspectionTargetId)
+      store.inspectionError = asAppError(error);
   } finally {
-    if (version === observationVersion && id === inspectionTargetId) {
-      inspectionLoading = false;
-      if (state.view === 'inspect') render();
+    if (version === store.observationVersion && id === store.inspectionTargetId) {
+      store.inspectionLoading = false;
+      if (store.state.view === 'inspect') render();
     }
   }
 }
@@ -831,36 +757,36 @@ async function loadStoredInspections(): Promise<void> {
 async function loadInspectionTargets(): Promise<void> {
   if (demo) return;
 
-  const version = ++targetsVersion;
+  const version = ++store.targetsVersion;
 
-  ++observationVersion;
+  ++store.observationVersion;
 
   const site = property();
-  const oldTargetId = inspectionTargetId;
+  const oldTargetId = store.inspectionTargetId;
 
-  inspectionTargetId = site.id;
-  storedInspections = [];
-  inspectionLoading = false;
-  targetsLoading = true;
-  targetsError = null;
-  inspectionError = null;
-  inspectionTargets = site.id
+  store.inspectionTargetId = site.id;
+  store.storedInspections = [];
+  store.inspectionLoading = false;
+  store.targetsLoading = true;
+  store.targetsError = null;
+  store.inspectionError = null;
+  store.inspectionTargets = site.id
     ? [{ id: site.id, name: site.name, url: site.siteUrl, active: site.active, type: 'site' }]
     : [];
 
-  if (state.view === 'inspect') render();
+  if (store.state.view === 'inspect') render();
 
   if (!site.id) {
-    targetsLoading = false;
-    if (state.view === 'inspect') render();
+    store.targetsLoading = false;
+    if (store.state.view === 'inspect') render();
     return;
   }
 
   try {
     const pages = await api.listPages(site.id);
-    if (version !== targetsVersion || site.id !== state.propertyId) return;
-    inspectionTargets = [
-      ...inspectionTargets,
+    if (version !== store.targetsVersion || site.id !== store.state.propertyId) return;
+    store.inspectionTargets = [
+      ...store.inspectionTargets,
       ...pages.map(
         (page): InspectionTarget => ({
           id: page.id,
@@ -871,53 +797,53 @@ async function loadInspectionTargets(): Promise<void> {
         }),
       ),
     ];
-    inspectionTargetId = inspectionTargets.some(
+    store.inspectionTargetId = store.inspectionTargets.some(
       (target: InspectionTarget): boolean => target.id === oldTargetId,
     )
       ? oldTargetId
       : site.id;
   } catch (error: unknown) {
-    if (version === targetsVersion && site.id === state.propertyId)
-      targetsError = asAppError(error);
+    if (version === store.targetsVersion && site.id === store.state.propertyId)
+      store.targetsError = asAppError(error);
   } finally {
-    if (version === targetsVersion && site.id === state.propertyId) {
-      targetsLoading = false;
-      if (state.view === 'inspect') render();
+    if (version === store.targetsVersion && site.id === store.state.propertyId) {
+      store.targetsLoading = false;
+      if (store.state.view === 'inspect') render();
     }
   }
 
-  if (version === targetsVersion && site.id === state.propertyId) await loadStoredInspections();
+  if (version === store.targetsVersion && site.id === store.state.propertyId) await loadStoredInspections();
 }
 
 // 현재 사이트의 설정을 조회하고 이전 사이트의 늦은 응답은 무시합니다.
 async function loadSettings(): Promise<void> {
   if (demo || !property().id) return;
 
-  const version = ++settingsRequest;
+  const version = ++store.settingsRequest;
   const id = property().id;
 
-  settingsLoading = true;
-  settingsError = null;
+  store.settingsLoading = true;
+  store.settingsError = null;
 
-  if (state.view === 'notify') {
+  if (store.state.view === 'notify') {
     capturePublicationDraft();
     render();
   }
 
   try {
     const settings = await api.getSettings(id);
-    if (version !== settingsRequest || id !== state.propertyId) return;
-    properties = properties.map(
+    if (version !== store.settingsRequest || id !== store.state.propertyId) return;
+    store.properties = store.properties.map(
       (item: Property): Property => (item.id === id ? { ...item, indexNow: settings } : item),
     );
   } catch (error: unknown) {
-    if (version !== settingsRequest || id !== state.propertyId) return;
-    settingsError = asAppError(error);
+    if (version !== store.settingsRequest || id !== store.state.propertyId) return;
+    store.settingsError = asAppError(error);
   } finally {
-    if (version === settingsRequest && id === state.propertyId) {
+    if (version === store.settingsRequest && id === store.state.propertyId) {
       capturePublicationDraft();
-      settingsLoading = false;
-      if (state.view === 'notify') render();
+      store.settingsLoading = false;
+      if (store.state.view === 'notify') render();
       else applyAvailability();
     }
   }
@@ -925,26 +851,26 @@ async function loadSettings(): Promise<void> {
 
 // 계정 목록 조회 실패를 빈 목록과 구분하고 등록 폼의 다른 입력은 보존합니다.
 async function loadAuthAccounts(): Promise<void> {
-  if (demo || authAccountsLoading) return;
-  authAccountsLoading = true;
-  authAccountsError = null;
-  if (state.view === 'register' || (state.view === 'clients' && accountEditor)) render();
+  if (demo || store.authAccountsLoading) return;
+  store.authAccountsLoading = true;
+  store.authAccountsError = null;
+  if (store.state.view === 'register' || (store.state.view === 'clients' && store.accountEditor)) render();
   try {
-    authAccounts = await api.listAuthAccounts();
+    store.authAccounts = await api.listAuthAccounts();
   } catch (error: unknown) {
-    authAccountsError = asAppError(error);
+    store.authAccountsError = asAppError(error);
   } finally {
-    authAccountsLoading = false;
-    if (state.view === 'register' || (state.view === 'clients' && accountEditor)) render();
+    store.authAccountsLoading = false;
+    if (store.state.view === 'register' || (store.state.view === 'clients' && store.accountEditor)) render();
   }
 }
 
 // 고객사와 메인 사이트 목록을 서버에서 읽고 실패 시 예시 데이터로 대체하지 않습니다.
 async function loadWorkspace(): Promise<void> {
-  if (loading && clients.length > 0) return;
+  if (store.loading && store.clients.length > 0) return;
 
-  loading = true;
-  loadError = null;
+  store.loading = true;
+  store.loadError = null;
   render();
 
   try {
@@ -952,29 +878,29 @@ async function loadWorkspace(): Promise<void> {
     const siteLists = await Promise.all(
       result.map((item): Promise<readonly SiteRead[]> => api.listSites(item.id)),
     );
-    clients = result.map(
+    store.clients = result.map(
       (item): Client => ({ id: item.id, name: item.name, manager: item.manager_name ?? '' }),
     );
-    properties = siteLists.flat().map(mapSite);
+    store.properties = siteLists.flat().map(mapSite);
 
-    const clientId = clients.some((item): boolean => item.id === state.clientId)
-      ? state.clientId
-      : (clients[0]?.id ?? '');
+    const clientId = store.clients.some((item): boolean => item.id === store.state.clientId)
+      ? store.state.clientId
+      : (store.clients[0]?.id ?? '');
 
-    state = { ...state, ...clientSelection(properties, clientId, state.propertyId) };
+    store.state = { ...store.state, ...clientSelection(store.properties, clientId, store.state.propertyId) };
   } catch (error: unknown) {
-    loadError = asAppError(error);
+    store.loadError = asAppError(error);
   } finally {
-    loading = false;
+    store.loading = false;
     render();
   }
 
-  if (!loadError) await Promise.all([loadSettings(), loadInspectionTargets(), loadDashboard()]);
+  if (!store.loadError) await Promise.all([loadSettings(), loadInspectionTargets(), loadDashboard()]);
 }
 
 // 네트워크 처리 중 입력과 중복 실행을 막고 폼 자체는 보존합니다.
 function setPending(value: boolean): void {
-  pending = value;
+  store.pending = value;
   app.setAttribute('aria-busy', String(value));
   applyAvailability();
 }
@@ -986,15 +912,15 @@ function applyAvailability(): void {
       HTMLButtonElement | HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement
     >('button, input, select, textarea')
     .forEach((element): void => {
-      element.disabled = pending || loading;
+      element.disabled = store.pending || store.loading;
     });
 
-  if (pending || loading) return;
+  if (store.pending || store.loading) return;
 
   const run = clientInspections.getState();
   const refresh = app.querySelector<HTMLButtonElement>('#refresh-index');
 
-  if (refresh) refresh.disabled = demo || !state.clientId || clientInspectionBusy(run) || publicationBusy(publications.getState());
+  if (refresh) refresh.disabled = demo || !store.state.clientId || clientInspectionBusy(run) || publicationBusy(publications.getState());
 
   const cancel = app.querySelector<HTMLButtonElement>('#cancel-client-inspection');
 
@@ -1009,7 +935,7 @@ function applyAvailability(): void {
       !SETTLED_RUN_PHASES.includes(run.phase);
 
   const noSite = !property().id || !property().active;
-  const noSitemap = noSite || state.engine === 'naver';
+  const noSitemap = noSite || store.state.engine === 'naver';
 
   app
     .querySelectorAll<
@@ -1030,47 +956,47 @@ function applyAvailability(): void {
       HTMLInputElement | HTMLButtonElement
     >('#indexnow-form input, #indexnow-form button')
     .forEach((element): void => {
-      element.disabled = noSite || settingsLoading;
+      element.disabled = noSite || store.settingsLoading;
     });
 
   const registration = app.querySelector<HTMLButtonElement>(
     '#registration-form button[type="submit"]',
   );
 
-  if (registration) registration.disabled = !state.clientId || authAccountsLoading || !!authAccountsError;
+  if (registration) registration.disabled = !store.state.clientId || store.authAccountsLoading || !!store.authAccountsError;
   app.querySelectorAll<HTMLSelectElement>(
     '[name="googleAccountEmail"], [name="bingAccountEmail"]',
   ).forEach((select): void => {
-    select.disabled = demo || authAccountsLoading || !!authAccountsError;
+    select.disabled = demo || store.authAccountsLoading || !!store.authAccountsError;
   });
   const refreshAccounts = app.querySelector<HTMLButtonElement>('#refresh-auth-accounts');
-  if (refreshAccounts) refreshAccounts.disabled = demo || authAccountsLoading;
+  if (refreshAccounts) refreshAccounts.disabled = demo || store.authAccountsLoading;
   const editForm = app.querySelector<HTMLFormElement>('[data-account-editor]');
   const editSave = app.querySelector<HTMLButtonElement>('#save-site-accounts');
-  if (editSave) editSave.disabled = demo || authAccountsLoading || !!authAccountsError ||
-    !editForm || !accountEditor || !Object.keys(accountChanges(editForm, accountEditor.original)).length;
+  if (editSave) editSave.disabled = demo || store.authAccountsLoading || !!store.authAccountsError ||
+    !editForm || !store.accountEditor || !Object.keys(accountChanges(editForm, store.accountEditor.original)).length;
   app.querySelectorAll<HTMLButtonElement>('[data-edit-accounts]').forEach((button): void => {
     button.disabled = demo;
   });
 
   const search = app.querySelector<HTMLInputElement>('#url-inspect');
 
-  if (search) search.disabled = noSite || (!demo && targetsLoading);
+  if (search) search.disabled = noSite || (!demo && store.targetsLoading);
 
   if (!demo) {
     const targetSelect = app.querySelector<HTMLSelectElement>('#inspection-target-select');
-    if (targetSelect) targetSelect.disabled = targetsLoading || inspectionTargets.length === 0;
+    if (targetSelect) targetSelect.disabled = store.targetsLoading || store.inspectionTargets.length === 0;
     const read = app.querySelector<HTMLButtonElement>('#read-inspection');
-    if (read) read.disabled = !inspectionTargetId || inspectionLoading || targetsLoading;
+    if (read) read.disabled = !store.inspectionTargetId || store.inspectionLoading || store.targetsLoading;
   }
 
   const button = app.querySelector<HTMLButtonElement>('#submit-pages');
 
-  if (button && state.route === 'direct') {
+  if (button && store.state.route === 'direct') {
     button.disabled =
       noSite || publicationBusy(publications.getState()) || clientInspectionBusy(run) ||
-      (notifyEnabled && (settingsLoading || !!settingsError || !property().indexNow?.configured));
-    button.textContent = publicationBusy(publications.getState()) ? '발행 알림 처리 중…' : notifyEnabled || naverGuiEnabled ? '글 저장 및 발행 알림' : '글만 저장';
+      (store.notifyEnabled && (store.settingsLoading || !!store.settingsError || !property().indexNow?.configured));
+    button.textContent = publicationBusy(publications.getState()) ? '발행 알림 처리 중…' : store.notifyEnabled || store.naverGuiEnabled ? '글 저장 및 발행 알림' : '글만 저장';
   }
   if (publicationBusy(publications.getState())) {
     app.querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLButtonElement>(
@@ -1081,7 +1007,7 @@ function applyAvailability(): void {
 
 // 글 저장과 알림 접수 결과를 별도 열로 표시합니다.
 function outcomeView(): string {
-  if (!outcomes.length) return '';
+  if (!store.outcomes.length) return '';
 
   const labels: Record<PageCreateResult['submission']['status'], string> = {
     accepted: '알림 접수됨',
@@ -1107,7 +1033,7 @@ function outcomeView(): string {
     DEMO_MODE: '예시 결과이며 실제 저장·전송은 하지 않았습니다.',
   };
 
-  return `<section class="report" aria-label="이번 글 처리 결과"><div class="report-header"><div><h2>글별 처리 결과</h2><p>저장과 알림 결과는 별개입니다. 새로고침하면 이번 실행 결과는 사라집니다.</p></div>${outcomes.some((item: PageOutcome): boolean => item.saveStatus === 'unknown') ? '<button class="button secondary" type="button" data-error-action="saves">글 저장 여부 확인</button>' : ''}</div>${outcomesError ? errorPanel(outcomesError, '글 저장 여부를 확인하지 못했습니다', 'saves') : ''}<div class="table-scroll"><table><thead><tr><th>글</th><th>DB 저장</th><th>알림 결과·다음 행동</th></tr></thead><tbody>${outcomes
+  return `<section class="report" aria-label="이번 글 처리 결과"><div class="report-header"><div><h2>글별 처리 결과</h2><p>저장과 알림 결과는 별개입니다. 새로고침하면 이번 실행 결과는 사라집니다.</p></div>${store.outcomes.some((item: PageOutcome): boolean => item.saveStatus === 'unknown') ? '<button class="button secondary" type="button" data-error-action="saves">글 저장 여부 확인</button>' : ''}</div>${store.outcomesError ? errorPanel(store.outcomesError, '글 저장 여부를 확인하지 못했습니다', 'saves') : ''}<div class="table-scroll"><table><thead><tr><th>글</th><th>DB 저장</th><th>알림 결과·다음 행동</th></tr></thead><tbody>${store.outcomes
     .map((item: PageOutcome): string => {
       const issue = item.error ? presentError(item.error, '처리 오류') : null;
       const reason = item.result?.submission.error_code
@@ -1120,15 +1046,15 @@ function outcomeView(): string {
 
 // 결과 불명인 글의 저장만 GET으로 확인하며 알림은 다시 전송하지 않습니다.
 async function verifySavedPages(): Promise<void> {
-  if (pending || !property().id) return;
+  if (store.pending || !property().id) return;
 
   setPending(true);
-  outcomesError = null;
+  store.outcomesError = null;
 
   try {
     const pages = demo ? [] : await api.listPages(property().id);
 
-    outcomes = outcomes.map((item: PageOutcome): PageOutcome => {
+    store.outcomes = store.outcomes.map((item: PageOutcome): PageOutcome => {
       if (item.saveStatus !== 'unknown') return item;
       const found = pages.some((page): boolean => page.url === item.article.url);
       return found
@@ -1145,9 +1071,9 @@ async function verifySavedPages(): Promise<void> {
               '현재 목록에서 확인되지 않았습니다. 아직 처리 중일 수 있으므로 미저장으로 단정하거나 다시 전송하지 않습니다.',
           };
     });
-    outcomeHistory = new Map([...outcomeHistory, [property().id, outcomes]]);
+    store.outcomeHistory = new Map([...store.outcomeHistory, [property().id, store.outcomes]]);
   } catch (error: unknown) {
-    outcomesError = asAppError(error);
+    store.outcomesError = asAppError(error);
   } finally {
     setPending(false);
     render();
@@ -1167,7 +1093,7 @@ function inspectUrl(event: SubmitEvent): void {
     const url = targetUrl(input.value.trim(), true);
 
     if (!demo) {
-      const target = inspectionTargets.find(
+      const target = store.inspectionTargets.find(
         (item: InspectionTarget): boolean => new URL(item.url).href === url.href,
       );
       if (!target)
@@ -1175,8 +1101,8 @@ function inspectUrl(event: SubmitEvent): void {
           '먼저 글을 DB에 등록하세요. 저장된 메인페이지·글 URL만 선택할 수 있습니다.',
         );
 
-      inspectionTargetId = target.id;
-      storedInspections = [];
+      store.inspectionTargetId = target.id;
+      store.storedInspections = [];
       update({ view: 'inspect', notice: '', mobileNav: false });
       void loadStoredInspections();
 
@@ -1219,16 +1145,16 @@ function accountChanges(form: HTMLFormElement, original: SiteAuthAccounts): Site
 // 편집 대상 사이트를 고정해 차이만 저장하고 실패 시 입력을 유지합니다.
 async function saveSiteAccounts(event: SubmitEvent): Promise<void> {
   event.preventDefault();
-  if (pending || demo || !accountEditor || authAccountsLoading || authAccountsError) return;
-  const editor = accountEditor;
+  if (store.pending || demo || !store.accountEditor || store.authAccountsLoading || store.authAccountsError) return;
+  const editor = store.accountEditor;
   const form = event.currentTarget as HTMLFormElement;
   const changes = accountChanges(form, editor.original);
   if (!Object.keys(changes).length) return;
-  accountEditorError = null;
+  store.accountEditorError = null;
   try {
     for (const key of ['google_account_email', 'bing_account_email'] as const) {
       const email = changes[key];
-      if (email && !authAccounts.some((account): boolean => account.email === email))
+      if (email && !store.authAccounts.some((account): boolean => account.email === email))
         throw new Error('목록에 없는 인증 계정입니다. 사용할 계정을 다시 선택하세요.');
     }
     setPending(true);
@@ -1236,16 +1162,16 @@ async function saveSiteAccounts(event: SubmitEvent): Promise<void> {
     if (saved.client_id !== editor.clientId) throw new ApiError(0, '계정 변경 응답의 고객사가 다릅니다.', {
       code: 'INVALID_RESPONSE', operation: 'save',
     });
-    properties = properties.map((site): Property => site.id === editor.siteId
+    store.properties = store.properties.map((site): Property => site.id === editor.siteId
       ? { ...mapSite(saved), indexNow: site.indexNow } : site);
-    if (accountEditor?.formId === editor.formId) {
-      accountEditor = null;
-      state = { ...state, notice: '사이트 계정 연결을 저장했습니다.', noticeTone: 'success' };
+    if (store.accountEditor?.formId === editor.formId) {
+      store.accountEditor = null;
+      store.state = { ...store.state, notice: '사이트 계정 연결을 저장했습니다.', noticeTone: 'success' };
     }
   } catch (error: unknown) {
-    if (accountEditor?.formId === editor.formId) accountEditorError = asAppError(error, 'save');
+    if (store.accountEditor?.formId === editor.formId) store.accountEditorError = asAppError(error, 'save');
   } finally {
-    pending = false;
+    store.pending = false;
     render();
   }
 }
@@ -1254,7 +1180,7 @@ async function saveSiteAccounts(event: SubmitEvent): Promise<void> {
 async function registerSite(event: SubmitEvent): Promise<void> {
   event.preventDefault();
 
-  if (pending || !state.clientId || authAccountsLoading || authAccountsError) return;
+  if (store.pending || !store.state.clientId || store.authAccountsLoading || store.authAccountsError) return;
 
   const form = event.currentTarget as HTMLFormElement;
 
@@ -1278,11 +1204,11 @@ async function registerSite(event: SubmitEvent): Promise<void> {
     const editable = String(data.get('editable') ?? '');
     for (const field of ['googleAccountEmail', 'bingAccountEmail']) {
       const email = String(data.get(field) ?? '');
-      if (email && !authAccounts.some((account): boolean => account.email === email))
+      if (email && !store.authAccounts.some((account): boolean => account.email === email))
         throw new Error('목록에 없는 인증 계정입니다. 사용할 계정을 다시 선택하세요.');
     }
     const payload = {
-      client_id: state.clientId,
+      client_id: store.state.clientId,
       name,
       url: url.href,
       owner_type:
@@ -1316,16 +1242,16 @@ async function registerSite(event: SubmitEvent): Promise<void> {
         }
       : mapSite(await api.addSite(payload));
 
-    properties = [...properties, site];
-    pending = false;
+    store.properties = [...store.properties, site];
+    store.pending = false;
     form.reset();
     addActivity(`${name} 사이트 정보 저장`);
-    dashboardData = null;
-    outcomes = [];
-    outcomesError = null;
-    notificationDraft = '';
-    notificationTitles = '';
-    requestText = '';
+    store.dashboardData = null;
+    store.outcomes = [];
+    store.outcomesError = null;
+    store.notificationDraft = '';
+    store.notificationTitles = '';
+    store.requestText = '';
     update({
       propertyId: site.id,
       notice: `${name}: ${demo ? '예시 목록' : 'DB'}에 사이트 정보를 저장했습니다. 검색엔진 등록·소유 확인을 완료한 것은 아닙니다.`,
@@ -1341,17 +1267,17 @@ async function registerSite(event: SubmitEvent): Promise<void> {
 
 // 화면을 다시 그리기 전에 글 제목과 URL 입력값을 보존합니다.
 function capturePublicationDraft(): void {
-  notificationDraft =
-    app.querySelector<HTMLTextAreaElement>('[name="urls"]')?.value ?? notificationDraft;
-  notificationTitles =
-    app.querySelector<HTMLTextAreaElement>('[name="titles"]')?.value ?? notificationTitles;
+  store.notificationDraft =
+    app.querySelector<HTMLTextAreaElement>('[name="urls"]')?.value ?? store.notificationDraft;
+  store.notificationTitles =
+    app.querySelector<HTMLTextAreaElement>('[name="titles"]')?.value ?? store.notificationTitles;
 }
 
 // 기존 사이트의 예시 설정을 저장하되 설치 검증은 수행하지 않습니다.
 async function saveIndexNowSettings(event: SubmitEvent): Promise<void> {
   event.preventDefault();
 
-  if (pending || !property().id) return;
+  if (store.pending || !property().id) return;
 
   const form = event.currentTarget as HTMLFormElement;
 
@@ -1374,12 +1300,12 @@ async function saveIndexNowSettings(event: SubmitEvent): Promise<void> {
       ? { configured: true, key_location: indexNow.keyLocation }
       : await api.putSettings(property().id, indexNow);
 
-    properties = properties.map(
+    store.properties = store.properties.map(
       (item: Property): Property =>
-        item.id === state.propertyId ? { ...item, indexNow: settings } : item,
+        item.id === store.state.propertyId ? { ...item, indexNow: settings } : item,
     );
-    settingsError = null;
-    pending = false;
+    store.settingsError = null;
+    store.pending = false;
     form.reset();
     update({
       notice: `${demo ? '예시 설정' : 'IndexNow 설정'}을 저장했습니다. 키 원문은 화면에 보관하지 않으며, 파일 설치·접수 확인은 별도입니다.`,
@@ -1394,27 +1320,27 @@ async function saveIndexNowSettings(event: SubmitEvent): Promise<void> {
 // 발행 시작 사이트의 결과만 갱신하고 저장 확인·불명 URL의 자동 재전송을 막습니다.
 function recordPublicationOutcomes(input: PublicationInput, results: readonly PageOutcome[]): void {
   const currentUrls = new Set(input.articles.map((article): string => article.url));
-  const previous = outcomeHistory.get(input.siteId) ?? [];
+  const previous = store.outcomeHistory.get(input.siteId) ?? [];
   const combined = [...results, ...previous.filter((item): boolean => !currentUrls.has(item.article.url))];
-  outcomeHistory = new Map([...outcomeHistory, [input.siteId, combined]]);
+  store.outcomeHistory = new Map([...store.outcomeHistory, [input.siteId, combined]]);
   const known = new Set(results.filter((item): boolean => ['saved', 'existing'].includes(item.saveStatus))
     .map((item): string => `${input.siteId}:${item.article.url}`));
-  uncertainSaves = new Set([...uncertainSaves].filter((key): boolean => !known.has(key)).concat(
+  store.uncertainSaves = new Set([...store.uncertainSaves].filter((key): boolean => !known.has(key)).concat(
     results.filter((item): boolean => item.saveStatus === 'unknown')
       .map((item): string => `${input.siteId}:${item.article.url}`)));
-  if (property().id === input.siteId) outcomes = combined;
+  if (property().id === input.siteId) store.outcomes = combined;
 }
 
 // 발행 진행을 다시 그리되 다른 사이트 화면에는 시작 사이트의 완료 안내를 섞지 않습니다.
 function publicationChanged(): void {
   const run = publications.getState();
   if (['finished', 'cancelled', 'failed'].includes(run.phase) &&
-      completedPublicationScope !== run.scope) {
-    completedPublicationScope = run.scope;
+      store.completedPublicationScope !== run.scope) {
+    store.completedPublicationScope = run.scope;
     addActivity(`글 ${run.outcomes.filter((item): boolean => item.saveStatus === 'saved').length}개 저장 결과 확인`);
-    dashboardData = null;
+    store.dashboardData = null;
     if (property().id === run.siteId) {
-      state = { ...state, notice: run.message,
+      store.state = { ...store.state, notice: run.message,
         noticeTone: run.phase === 'finished' ? 'info' : 'warning' };
       if (!demo) void loadInspectionTargets();
     }
@@ -1426,7 +1352,7 @@ function publicationChanged(): void {
 async function notifyPublication(event: SubmitEvent): Promise<void> {
   event.preventDefault();
 
-  if (pending || !property().id || !property().active || publicationBusy(publications.getState()) ||
+  if (store.pending || !property().id || !property().active || publicationBusy(publications.getState()) ||
       clientInspectionBusy(clientInspections.getState())) return;
 
   const form = event.currentTarget as HTMLFormElement;
@@ -1435,15 +1361,15 @@ async function notifyPublication(event: SubmitEvent): Promise<void> {
 
   const data = new FormData(form);
 
-  notificationDraft = String(data.get('urls') ?? '');
-  notificationTitles = String(data.get('titles') ?? '');
+  store.notificationDraft = String(data.get('urls') ?? '');
+  store.notificationTitles = String(data.get('titles') ?? '');
 
   try {
-    const titles = notificationTitles
+    const titles = store.notificationTitles
       .split(/\r?\n/)
       .map((line: string): string => line.trim())
       .filter(Boolean);
-    const urls = notificationDraft
+    const urls = store.notificationDraft
       .split(/\r?\n/)
       .map((line: string): string => line.trim())
       .filter(Boolean)
@@ -1461,9 +1387,9 @@ async function notifyPublication(event: SubmitEvent): Promise<void> {
       .map((article): string => `${article.name}\n${article.url}`)
       .join('\n\n');
 
-    if (state.route !== 'direct') {
-      requestText =
-        state.route === 'request'
+    if (store.state.route !== 'direct') {
+      store.requestText =
+        store.state.route === 'request'
           ? `${property().name} 담당자님께\n\n아래 신규 글의 검색엔진 제출과 접수 결과 확인을 부탁드립니다.\n\n${description}\n\n${String(data.get('note') ?? '').trim()}`.trim()
           : `우리 블로그에 소개할 고객사 글\n\n${description}\n\n후속 작업: 소개 글 작성 → 링크 추가 → 검토 → 발행`;
       update({
@@ -1472,19 +1398,19 @@ async function notifyPublication(event: SubmitEvent): Promise<void> {
       return;
     }
 
-    notifyEnabled = data.get('notify') === 'on';
+    store.notifyEnabled = data.get('notify') === 'on';
 
-    if (notifyEnabled && (!property().indexNow?.configured || settingsLoading || settingsError))
+    if (store.notifyEnabled && (!property().indexNow?.configured || store.settingsLoading || store.settingsError))
       throw new Error('IndexNow 설정을 확인하거나 알림 체크를 해제해 글만 저장하세요.');
 
     const id = property().id;
-    if (articles.some((article): boolean => uncertainSaves.has(`${id}:${article.url}`)))
+    if (articles.some((article): boolean => store.uncertainSaves.has(`${id}:${article.url}`)))
       throw new Error(
         '저장 여부가 불명확한 URL이 포함되어 있습니다. 아래 결과를 확인하고 해당 URL을 입력에서 제외하세요. 자동 재시도하지 않습니다.',
       );
 
-    requestText = '';
-    outcomesError = null;
+    store.requestText = '';
+    store.outcomesError = null;
     const site = property();
     await publications.start({
       clientId: site.clientId,
@@ -1492,7 +1418,7 @@ async function notifyPublication(event: SubmitEvent): Promise<void> {
       siteName: site.name,
       siteUrl: site.siteUrl,
       articles,
-      notify: notifyEnabled,
+      notify: store.notifyEnabled,
       gui: data.get('naverGui') === 'on',
       demo,
     });
@@ -1505,7 +1431,7 @@ async function notifyPublication(event: SubmitEvent): Promise<void> {
 async function addClient(event: SubmitEvent): Promise<void> {
   event.preventDefault();
 
-  if (pending) return;
+  if (store.pending) return;
 
   const form = event.currentTarget as HTMLFormElement;
 
@@ -1522,13 +1448,13 @@ async function addClient(event: SubmitEvent): Promise<void> {
       ? { id: crypto.randomUUID(), name, manager_name: String(data.get('manager') ?? '').trim() }
       : await api.addClient(name, String(data.get('manager') ?? '').trim());
 
-    clients = [
-      ...clients,
+    store.clients = [
+      ...store.clients,
       { id: result.id, name: result.name, manager: result.manager_name ?? '' },
     ];
-    pending = false;
+    store.pending = false;
     form.reset();
-    state = { ...state, view: 'dashboard' };
+    store.state = { ...store.state, view: 'dashboard' };
     selectClient(result.id);
     update({ notice: `${result.name}: ${demo ? '예시 목록' : 'DB'}에 고객사를 저장했습니다.` });
   } catch (error: unknown) {
@@ -1542,15 +1468,15 @@ async function addClient(event: SubmitEvent): Promise<void> {
 async function refreshClientInspections(): Promise<void> {
   if (
     demo ||
-    pending ||
-    loading ||
-    !state.clientId ||
+    store.pending ||
+    store.loading ||
+    !store.state.clientId ||
     clientInspectionBusy(clientInspections.getState()) ||
     publicationBusy(publications.getState())
   )
     return;
 
-  const clientId = state.clientId;
+  const clientId = store.state.clientId;
   const clientName = selectedClient()?.name ?? '';
 
   await clientInspections.start(clientId, clientName);
@@ -1560,7 +1486,7 @@ async function refreshClientInspections(): Promise<void> {
 // 탭 선택 대기 중에는 저장 결과를 갱신하지 않고 실행 종료 후 현재 고객사만 다시 읽습니다.
 async function refreshFinishedClientInspection(): Promise<void> {
   const run = clientInspections.getState();
-  if (!clientInspectionBusy(run) && state.clientId === run.clientId) {
+  if (!clientInspectionBusy(run) && store.state.clientId === run.clientId) {
     await Promise.all([loadDashboard(), loadStoredInspections()]);
   }
 }
@@ -1586,8 +1512,8 @@ async function submitSitemap(event: SubmitEvent): Promise<void> {
   event.preventDefault();
 
   const site = property();
-  const engine = state.engine;
-  if (pending || loading || !site.id || !site.active || engine === 'naver') return;
+  const engine = store.state.engine;
+  if (store.pending || store.loading || !site.id || !site.active || engine === 'naver') return;
 
   const form = event.currentTarget as HTMLFormElement;
   const input = form.querySelector<HTMLInputElement>('#sitemap-url');
@@ -1599,7 +1525,7 @@ async function submitSitemap(event: SubmitEvent): Promise<void> {
       throw new Error('선택한 사이트와 같은 도메인·프로토콜·포트의 사이트맵 URL을 입력하세요.');
 
     if (demo) {
-      sitemapFeedback = {
+      store.sitemapFeedback = {
         siteId: site.id,
         engine,
         message: '예시 모드입니다. 실제 사이트맵 제출은 실행하지 않았습니다.',
@@ -1616,7 +1542,7 @@ async function submitSitemap(event: SubmitEvent): Promise<void> {
     if (button) button.textContent = '제출 중…';
 
     await api.submitSitemap(site.id, engine, sitemapUrl.href);
-    sitemapFeedback = {
+    store.sitemapFeedback = {
       siteId: site.id,
       engine,
       message: `${ENGINE_NAMES[engine]} 사이트맵 제출 접수 완료. 수집·색인 반영에는 시간이 걸릴 수 있습니다.`,
@@ -1628,7 +1554,7 @@ async function submitSitemap(event: SubmitEvent): Promise<void> {
     const advice = uncertain
       ? '접수 여부를 확인하지 못했습니다. 자동 재전송하지 않습니다.'
       : presentError(failure, '').advice;
-    sitemapFeedback = {
+    store.sitemapFeedback = {
       siteId: site.id,
       engine,
       message: `${failure.message} ${advice}`,
@@ -1637,7 +1563,7 @@ async function submitSitemap(event: SubmitEvent): Promise<void> {
   } finally {
     setPending(false);
     render();
-    if (state.view === 'inspect' && state.propertyId === site.id && state.engine === engine)
+    if (store.state.view === 'inspect' && store.state.propertyId === site.id && store.state.engine === engine)
       app.querySelector<HTMLElement>('.sitemap-feedback')?.scrollIntoView?.({ block: 'nearest' });
   }
 }
@@ -1650,7 +1576,7 @@ function openDetail(id: string): void {
 
 // 상세 창을 닫고 해당 URL의 버튼으로 포커스를 복원합니다.
 function closeDetail(): void {
-  const id = state.selectedId;
+  const id = store.state.selectedId;
   update({ selectedId: null });
   if (id) app.querySelector<HTMLButtonElement>(`[data-inspect="${CSS.escape(id)}"]`)?.focus();
 }
@@ -1663,13 +1589,13 @@ function syncDuplicateModalFocus(previousFocusId: string): void {
   document.body.classList.toggle('has-publication-modal', !!dialog);
   if (dialog) {
     const key = dialog.dataset.confirmationId ?? '';
-    const restore = duplicateFocusKey === key && previousFocusId
+    const restore = store.duplicateFocusKey === key && previousFocusId
       ? dialog.querySelector<HTMLElement>(`#${CSS.escape(previousFocusId)}`) : null;
-    duplicateFocusKey = key;
+    store.duplicateFocusKey = key;
     (restore ?? dialog.querySelector<HTMLElement>('#cancel-duplicate') ?? dialog).focus();
-  } else if (duplicateFocusKey) {
-    duplicateFocusKey = '';
-    const button = app.querySelector<HTMLElement>(`#${CSS.escape(duplicateReturnFocusId)}:not(:disabled)`);
+  } else if (store.duplicateFocusKey) {
+    store.duplicateFocusKey = '';
+    const button = app.querySelector<HTMLElement>(`#${CSS.escape(store.duplicateReturnFocusId)}:not(:disabled)`);
     const progress = app.querySelector<HTMLElement>('#publication-progress');
     if (progress) progress.tabIndex = -1;
     (button ?? progress)?.focus();
@@ -1707,7 +1633,7 @@ function handleDialogKeyboard(event: KeyboardEvent): void {
     }
     return;
   }
-  if (!state.selectedId) return;
+  if (!store.state.selectedId) return;
 
   if (event.key === 'Escape') closeDetail();
 
@@ -1733,7 +1659,7 @@ function handleDialogKeyboard(event: KeyboardEvent): void {
 // 전달 문구를 복사하고 실패할 경우 선택 가능한 원문을 유지합니다.
 async function copyRequest(): Promise<void> {
   try {
-    await navigator.clipboard.writeText(requestText);
+    await navigator.clipboard.writeText(store.requestText);
     const button = app.querySelector<HTMLButtonElement>('#copy-request');
     if (button) button.textContent = '복사했습니다';
   } catch {
@@ -1759,10 +1685,10 @@ function bindEvents(): void {
   bindErrorActions(app);
   app.querySelectorAll<HTMLButtonElement>('[data-edit-accounts]').forEach((button): void => {
     button.addEventListener('click', (): void => {
-      if (pending || demo) return;
-      const site = properties.find((item): boolean => item.id === button.dataset.editAccounts && item.clientId === state.clientId);
+      if (store.pending || demo) return;
+      const site = store.properties.find((item): boolean => item.id === button.dataset.editAccounts && item.clientId === store.state.clientId);
       if (!site) return;
-      accountEditor = {
+      store.accountEditor = {
         siteId: site.id, clientId: site.clientId, formId: `site-accounts-${crypto.randomUUID()}`,
         original: {
           google_account_email: site.googleAccountEmail ?? null,
@@ -1770,7 +1696,7 @@ function bindEvents(): void {
           naver_account_email: site.naverAccountEmail ?? null,
         },
       };
-      accountEditorError = null;
+      store.accountEditorError = null;
       render();
       void loadAuthAccounts();
     });
@@ -1780,9 +1706,9 @@ function bindEvents(): void {
   accountForm?.addEventListener('input', (): void => { applyAvailability(); });
   accountForm?.addEventListener('change', (): void => { applyAvailability(); });
   app.querySelector<HTMLButtonElement>('#cancel-site-accounts')?.addEventListener('click', (): void => {
-    if (pending) return;
-    accountEditor = null;
-    accountEditorError = null;
+    if (store.pending) return;
+    store.accountEditor = null;
+    store.accountEditorError = null;
     render();
   });
   app.querySelector<HTMLButtonElement>('#refresh-auth-accounts')?.addEventListener('click', (): void => {
@@ -1794,18 +1720,18 @@ function bindEvents(): void {
       button.addEventListener('click', (): void => {
         capturePublicationDraft();
         update({ view: button.dataset.view as View, notice: '', mobileNav: false });
-        if (state.view === 'dashboard') void loadDashboard();
-        if (state.view === 'register') void loadAuthAccounts();
+        if (store.state.view === 'dashboard') void loadDashboard();
+        if (store.state.view === 'register') void loadAuthAccounts();
       });
     });
   app.querySelector<HTMLButtonElement>('#menu-toggle')?.addEventListener('click', (): void => {
-    state = { ...state, mobileNav: !state.mobileNav };
-    app.querySelector<HTMLElement>('.sidebar')?.classList.toggle('open', state.mobileNav);
+    store.state = { ...store.state, mobileNav: !store.state.mobileNav };
+    app.querySelector<HTMLElement>('.sidebar')?.classList.toggle('open', store.state.mobileNav);
     app
       .querySelector<HTMLButtonElement>('#menu-toggle')
       ?.setAttribute(
         'aria-expanded',
-        String(window.matchMedia('(max-width:760px)').matches ? state.mobileNav : !state.mobileNav),
+        String(window.matchMedia('(max-width:760px)').matches ? store.state.mobileNav : !store.state.mobileNav),
       );
   });
   app
@@ -1830,7 +1756,7 @@ function bindEvents(): void {
   });
   app.querySelectorAll<HTMLButtonElement>('[data-dashboard-site]').forEach((button): void => {
     button.addEventListener('click', (): void => {
-      state = { ...state, view: 'inspect', mobileNav: false };
+      store.state = { ...store.state, view: 'inspect', mobileNav: false };
       selectProperty(button.dataset.dashboardSite ?? '');
     });
   });
@@ -1838,7 +1764,7 @@ function bindEvents(): void {
     .querySelectorAll<HTMLButtonElement>('[data-engine]')
     .forEach((button: HTMLButtonElement): void => {
       button.addEventListener('click', (): void => {
-        if (inspectionError?.operation === 'inspect') inspectionError = null;
+        if (store.inspectionError?.operation === 'inspect') store.inspectionError = null;
         update({ engine: button.dataset.engine as Engine, filter: 'all', notice: '' });
       });
     });
@@ -1854,7 +1780,7 @@ function bindEvents(): void {
     .forEach((button: HTMLButtonElement): void => {
       button.addEventListener('click', (): void => {
         capturePublicationDraft();
-        requestText = '';
+        store.requestText = '';
         update({ route: button.dataset.route as NotifyRoute, notice: '' });
       });
     });
@@ -1884,20 +1810,20 @@ function bindEvents(): void {
   app
     .querySelector<HTMLSelectElement>('#inspection-target-select')
     ?.addEventListener('change', (event: Event): void => {
-      inspectionTargetId = (event.target as HTMLSelectElement).value;
-      storedInspections = [];
-      state = { ...state, notice: '' };
+      store.inspectionTargetId = (event.target as HTMLSelectElement).value;
+      store.storedInspections = [];
+      store.state = { ...store.state, notice: '' };
       void loadStoredInspections();
     });
   app
     .querySelector<HTMLInputElement>('#notify-enabled')
     ?.addEventListener('change', (event: Event): void => {
-      notifyEnabled = (event.target as HTMLInputElement).checked;
+      store.notifyEnabled = (event.target as HTMLInputElement).checked;
       applyAvailability();
     });
   app.querySelector<HTMLInputElement>('#naver-gui-enabled')
     ?.addEventListener('change', (event: Event): void => {
-      naverGuiEnabled = (event.target as HTMLInputElement).checked;
+      store.naverGuiEnabled = (event.target as HTMLInputElement).checked;
       applyAvailability();
     });
   app.querySelectorAll<HTMLFormElement>('[data-publication-tab]').forEach((form): void => {
@@ -1956,12 +1882,12 @@ function bindEvents(): void {
       );
     });
   app.querySelector<HTMLButtonElement>('#toggle-sitemap')?.addEventListener('click', (): void => {
-    sitemapOpen = !sitemapOpen;
+    store.sitemapOpen = !store.sitemapOpen;
     render();
-    if (sitemapOpen) app.querySelector<HTMLInputElement>('#sitemap-url')?.focus();
+    if (store.sitemapOpen) app.querySelector<HTMLInputElement>('#sitemap-url')?.focus();
   });
   app.querySelector<HTMLButtonElement>('#close-sitemap')?.addEventListener('click', (): void => {
-    sitemapOpen = false;
+    store.sitemapOpen = false;
     render();
     app.querySelector<HTMLButtonElement>('#toggle-sitemap')?.focus();
   });
@@ -1971,7 +1897,7 @@ function bindEvents(): void {
       void submitSitemap(event);
     });
   app.querySelector<HTMLButtonElement>('#dismiss-notice')?.addEventListener('click', (): void => {
-    state = { ...state, notice: '' };
+    store.state = { ...store.state, notice: '' };
     app.querySelector<HTMLElement>('.success-notice')?.remove();
   });
   app.querySelector<HTMLButtonElement>('#close-detail')?.addEventListener('click', closeDetail);
