@@ -1,5 +1,42 @@
 # 작업 인계 문서
 
+## 현재 인계 요약 — 2026-11-17 포커스 검토 보완·색인 조회 적용·커밋 완료 / Asia/Seoul
+
+**이 절과 맨 아래 `마지막 상태 — 최신 / 2026-11-17 포커스 커밋·push 완료`를 우선한다. 바로 아래 "포커스 모듈 적용·실제 연동 검증" 절의 미커밋·232 passed 설명은 이 절로 갱신됐다.**
+
+### 완료된 작업
+
+- [x] 포커스 모듈 커밋 전 검토와 보완 3건. ① 접수 성공 뒤 해제만 실패하면 해제 안내가 두 번 붙던 문제(`focus/client.ts`가 작업·해제 실패가 겹칠 때만 `onCleanupError` 호출). ② 작업 중 디버거 종료·주소 변경이 `네이버 자동 조회를 취소했습니다`로 표시되던 문제(`focus/naver-runner.ts`의 `actualFailure`가 사용자 취소가 아니면 `focusSignal.reason`으로 교체). ③ `focus/host.ts`의 `updated()`가 주소 없는 탭 변경을 모두 무시하던 문제(탭 주소를 볼 수 없으면 기존 22초 `startAuthTimer()` 시작). 각 회귀 테스트를 추가했고 수정 전 코드에서 실패함을 확인했다.
+- [x] 다른 세션(또는 사용자)이 작업 트리에 만든 **전체 색인 조회의 포커스 적용**(`inspection/client-controller.ts`에서 `runNaverAutomation`을 `withNaverFocus`로 감쌈)을 검토했다. 같은 취소 오표시 문제가 있어 `actualFailure`를 export해 적용했고, 네이버가 연결 준비 뒤 시작하면서 깨진 병렬 테스트 2개의 시작 순서 고정을 정렬 비교로 바꿨다. 조회 중 연결 종료 회귀 테스트를 추가했다.
+- [x] 작업 트리에 있던 백엔드 변경(네이버 GUI 저장 스키마에서 `not_indexed` 거부 검사 제거와 테스트)은 내용을 바꾸지 않고 별도 커밋으로 분리했다.
+- [x] 커밋·push: `a6bd04e` 포커스 세션 모듈, `9732b79` 발행 GUI 연결, `840c22b` 문서, `c51c6fc` 색인 조회 포커스 적용, `e0d0ed7` 네이버 not_indexed 저장 허용. 모두 `feat/naver-url-collection`에 push했고 원격과 일치한다. 공동 작성자 트레일러는 넣지 않았다. PR은 만들지 않았다.
+- [x] 최종 검증: 프론트 **237 passed**, 타입 검사·빌드·`git diff --check` 통과, 백엔드 단위 **696 passed**, `RUN_POSTGRES_TESTS=1`로 GUI 저장 통합 테스트 6개 통과(전체 통합 스위트는 이번에 돌리지 않음).
+
+### 알려진 한계와 주의사항
+
+- **③의 전제 미검증**: 호스트 권한이 없는 출처(`nid.naver.com`·외부 사이트)로 이동하면 Chrome이 `changeInfo.url`·`tab.url`을 주지 않는다는 것은 문서 기준 판단이다. 가짜 Chrome 테스트는 주소를 항상 넘긴다. 로그인 화면과 외부 사이트를 구분하지 못해 둘 다 `auth_required` 안내가 나오고, 외부 사이트에도 최대 22초 디버거가 남는다. 22초(`AUTH_TIMEOUT_MS`) 값의 근거 기록은 없다(화면 대기 18초보다 길게 잡은 것으로 추정).
+- ② 적용으로 연결 종료 시 요청 중이던 발행 GUI 행은 `blocked`가 아니라 `unconfirmed`(접수 여부 미확인)로 표시된다. 중복 제출을 피하는 쪽이라 유지했다.
+- **네이버 `not_indexed`는 서버만 허용한 상태다.** 확장의 네이버 판독은 `indexed`(색인 성공 문구)·`unknown`(`URL 검사 결과가 없습니다.`) 두 값만 만든다. `automation.ts`·`preview.ts`의 `hasConsistentJudgement`가 다른 값을 `invalid_response`로 버린다. 과거 결정상 "결과 없음"을 미색인으로 바꾸지 않는다.
+- 해제 불명확 뒤 다음 실행의 `busy` 안내("작업이 끝난 뒤 다시 실행")는 실제 해결책(확장 새로고침)과 맞지 않는다. 미수정.
+- `debugger` 권한은 스토어 업데이트 시 기존 사용자에게 새 권한 경고·비활성화를 일으킨다. 배포 시 고려한다.
+- 커밋 제외로 보존: `extension/vite.config.ts`(로컬 프록시 8000), `extension/startpress-extension.zip`. `.env`·`.secrets`·`dist`는 커밋하지 않는다.
+
+### 다음에 해야 할 작업
+
+1. **실제 Chrome 확인**: `npm run build` → 확장 Reload → 네이버 탭을 띄워 두고 다른 탭을 보면서 (a) 전체 색인 조회와 (b) 발행 GUI 수집 화면 준비가 `site_missing` 없이 되는지, (c) 작업 중 네이버 탭을 다른 사이트로 이동했을 때 ③이 22초 안에 끊는지 확인한다. 브라우저 작업 전 `.cursor/rules/bot-execution-records.mdc`를 읽고 비공개 기록을 남긴다.
+2. **네이버 미색인 판독(선택)**: 먼저 미색인 URL로 네이버 색인 상태 확인 화면을 실제로 관측해 판정 문구 원문과 `색인 완료 아니오` 배지(`observation.ts`의 `NOT_INDEXED_BADGE`)의 표시 방식을 기록한다. 그 뒤 `observation.ts`(상수·타입·`resultMarkers`·`indexStatusOf`·모순 검사), `automation.ts`·`preview.ts`의 `hasConsistentJudgement`, 테스트, 판정 규칙 문서를 고친다. 표시·집계 코드는 이미 `not_indexed`를 지원한다. **서버를 먼저 배포한 뒤 확장을 배포**해야 옛 서버의 422를 피한다.
+3. 실제 글 URL 입력·확인 버튼·접수는 여전히 미검증이다. 지정 글의 기존 요청 내역을 먼저 확인하고 반복 제출하지 않는다.
+4. 사용자 요청 시 PR 생성. 리뷰 후 병합·배포는 별도 요청.
+
+### 관련 파일
+
+- `extension/src/focus/{protocol,host,client,naver-runner,messages}.ts`: 포커스 세션(서비스워커 소유, Port 요청, `actualFailure`).
+- `extension/src/app/controllers.ts`, `extension/src/publication/controller.ts`: 발행 runner 주입·오류 안내.
+- `extension/src/inspection/client-controller.ts`: 색인 조회의 네이버 포커스 적용.
+- `extension/src/engines/naver/{observation,automation,preview}.ts`: 네이버 판정·응답 검증(미색인 작업 시 수정 대상).
+- `app/schemas/inspection.py`: GUI 저장 스키마.
+- `extension/tests/{naver-focus,client-inspection,workspace}.test.mjs`, `extension/tests/helpers/{focus-chrome,focus-session-port}.mjs`: 포커스 회귀.
+
 ## 현재 인계 요약 — 2026-11-17 포커스 모듈 적용·실제 연동 검증 / Asia/Seoul
 
 **이 절과 맨 아래 `마지막 상태 — 최신 / 2026-11-17 포커스 모듈 실연동 확인`을 우선한다. 아래 다른 세션의 가독성 리팩토링 인계는 보존했다. 그 기록의 중간 타입/테스트 실패·포커스 작업 진행 중 상태는 이제 아래 최종 검증 결과로 갱신됐다. 실제 글 URL 제출·접수·수집·색인 완료는 여전히 미검증이다.**
@@ -1582,3 +1619,12 @@ Notion은 요구사항·설계 자료다. 실제 구현·적용 여부는 이 �
 - 실제 URL 입력·제출·접수·수집·색인 완료는 미검증이다. 프론트232개·타입·빌드·diff 검사와 코드·보안 리뷰 통과. 백엔드는 수정하지 않았다.
 - 최신 기록: `.secrets/bot_runs/focus-integration-20261117T104325Z.jsonl`. 권한 미추가·CDP 미구현 및 다른 세션이 적은 중간 실패 상태보다 이 절을 우선한다. 커밋·push·PR·배포는 별도 요청 전 하지 않는다.
 - 커밋 전 검토에서 해제 안내 중복·연결 종료의 취소 오표시·주소 없는 탭 이동 미감지를 보완했다(최상단 절 참조). 프론트 236개 통과. 주소 없는 이동의 실제 Chrome 동작은 미검증이다. 이 보완을 포함해 `feat/naver-url-collection`에 커밋·push했으며 Vite 프록시·ZIP은 제외했다. PR·배포·버전 증가는 하지 않았다.
+
+
+## 마지막 상태 — 최신 / 2026-11-17 포커스 커밋·push 완료
+
+- 브랜치 `feat/naver-url-collection`, HEAD **`e0d0ed7`**, 원격과 일치. 포커스 모듈·발행 연결·검토 보완 3건·색인 조회 적용·네이버 `not_indexed` 서버 허용까지 커밋·push했다. PR 없음.
+- 프론트 237 passed, 백엔드 단위 696 passed, GUI 저장 통합 6 passed, 타입·빌드 통과. 실제 Chrome의 백그라운드 조회·주소 없는 이동 감지·실제 URL 접수는 미검증이다.
+- 작업 트리에는 커밋 제외 `extension/vite.config.ts`·ZIP과 이 인계 문서 갱신만 남는다.
+
+새 세션 시작 문구: **"docs/HANDOFF.md 최상단과 맨 아래 최신 상태부터 읽어줘. 포커스 에뮬레이션은 발행 GUI와 전체 색인 조회 모두에 적용돼 feat/naver-url-collection에 push됐어(e0d0ed7). 다음은 실제 Chrome에서 백그라운드 조회·수집 화면 준비와 주소 없는 탭 이동 감지를 확인하는 거야. 네이버 not_indexed는 서버만 허용했고 확장 판독은 아직이야. Vite 프록시·ZIP·비밀파일은 커밋하지 말고, 커밋·push·PR·배포는 요청 전 하지 마."**
