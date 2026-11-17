@@ -1,7 +1,12 @@
 import type { IndexStatus, Property, View } from '../types.ts';
 
-// 아이콘·화면 이름·상태 문구 등 바뀌지 않는 값
+// 아이콘·화면 이름·상태 문구 등 실행 중 바뀌지 않는 값
 
+// ─────────────────────────────────────────────────────────────
+// 아이콘
+// ─────────────────────────────────────────────────────────────
+
+// 화면에서 쓰는 아이콘 이름
 export type Icon =
   | 'dashboard'
   | 'menu'
@@ -22,7 +27,8 @@ export type Icon =
   | 'link'
   | 'mail';
 
-const iconPaths: Record<Icon, string> = {
+// 아이콘별 SVG 내부 도형 (24×24 좌표계)
+const ICON_PATHS: Readonly<Record<Icon, string>> = {
   dashboard:
     '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="11" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="18" width="7" height="3" rx="1"/>',
   menu: '<path d="M4 6h16M4 12h16M4 18h16"/>',
@@ -49,7 +55,17 @@ const iconPaths: Record<Icon, string> = {
   mail: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 6 9 7 9-7"/>',
 };
 
-export const viewTitles: Record<View, string> = {
+// 지정한 아이콘의 접근성 장식용(aria-hidden) SVG 마크업을 반환합니다.
+export function icon(name: Icon, className = ''): string {
+  return `<svg class="icon ${className}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON_PATHS[name]}</svg>`;
+}
+
+// ─────────────────────────────────────────────────────────────
+// 문구
+// ─────────────────────────────────────────────────────────────
+
+// 왼쪽 메뉴·브라우저 탭 제목에 쓰는 화면 이름
+export const viewTitles: Readonly<Record<View, string>> = {
   dashboard: '대시보드',
   inspect: '색인 상태 확인',
   register: '사이트 등록',
@@ -57,13 +73,22 @@ export const viewTitles: Record<View, string> = {
   clients: '고객사 관리',
 };
 
-export const statusNames: Record<IndexStatus, string> = {
+// 예시 모드 색인 상태의 표시 문구
+export const statusNames: Readonly<Record<IndexStatus, string>> = {
   indexed: '색인됨',
   waiting: '수집 대기',
   crawled: '크롤링됨',
   not_indexed: '색인되지 않음',
 };
 
+// 화면 폭이 이 이하이면 모바일 레이아웃 (styles.css의 미디어 쿼리와 같은 기준)
+export const MOBILE_MEDIA_QUERY = '(max-width:760px)';
+
+// ─────────────────────────────────────────────────────────────
+// 기본값
+// ─────────────────────────────────────────────────────────────
+
+// 선택된 사이트가 없을 때 쓰는 빈 사이트
 export const emptyProperty: Property = {
   id: '',
   clientId: '',
@@ -74,8 +99,3 @@ export const emptyProperty: Property = {
   active: false,
   indexNow: null,
 };
-
-// 지정한 아이콘의 접근성 장식용 마크업을 반환합니다.
-export function icon(name: Icon, className = ''): string {
-  return `<svg class="icon ${className}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${iconPaths[name]}</svg>`;
-}
