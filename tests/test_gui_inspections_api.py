@@ -42,33 +42,42 @@ def gui_api() -> Iterator[tuple[TestClient, AsyncMock]]:
 
 
 # 저장 결과를 응답으로 반환하고 검증된 요청을 서비스에 전달합니다.
-def test_gui_save_routes_validated_payload(gui_api: tuple[TestClient, AsyncMock]) -> None:
+@pytest.mark.parametrize("engine_name,index_status", [
+    ("bing", "indexed"),
+    ("naver", "not_indexed"),
+    ("naver", "crawled"),
+])
+def test_gui_save_routes_validated_payload(
+    gui_api: tuple[TestClient, AsyncMock], engine_name: str, index_status: str,
+) -> None:
     client, save = gui_api
     target_id = uuid4()
     now = datetime.now(timezone.utc)
     save.return_value = InspectionRead(
-        site_id=target_id, engine="bing", index_status="indexed",
+        site_id=target_id, engine=engine_name, index_status=index_status,
         last_checked_at=now, next_check_at=None, error_message=None,
     )
     response = client.post(f"/sites/{target_id}/gui-inspections", json={
-        "engine": "bing", "site_url": "https://example.com/",
-        "target_url": "https://example.com/post", "index_status": "indexed",
+        "engine": engine_name, "site_url": "https://example.com/",
+        "target_url": "https://example.com/post", "index_status": index_status,
         "queried_at": now.isoformat(), "observed_at": now.isoformat(),
     })
 
     assert response.status_code == 200
     assert response.json()["site_id"] == str(target_id)
+    assert response.json()["index_status"] == index_status
     save.assert_awaited_once()
     assert save.call_args.args[1] == target_id
-    assert save.call_args.args[2].engine == "bing"
+    assert save.call_args.args[2].engine == engine_name
+    assert save.call_args.args[2].index_status == index_status
 
 
 # 잘못된 엔진별 판정은 DB 서비스에 전달하지 않습니다.
 def test_gui_save_rejects_invalid_payload(gui_api: tuple[TestClient, AsyncMock]) -> None:
     client, save = gui_api
     response = client.post(f"/sites/{uuid4()}/gui-inspections", json={
-        "engine": "naver", "site_url": "https://example.com/",
-        "target_url": "https://example.com/post", "index_status": "not_indexed",
+        "engine": "bing", "site_url": "https://example.com/",
+        "target_url": "https://example.com/post", "index_status": "crawled",
         "queried_at": "2026-11-08T03:00:00Z", "observed_at": "2026-11-08T03:00:02Z",
     })
     assert response.status_code == 422

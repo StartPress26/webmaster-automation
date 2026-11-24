@@ -52,6 +52,21 @@ test('숨김·중복 결과·다중 입력·알 수 없는 판정은 색인 결�
   }
 });
 
+test('실제 화면의 수집·미색인 판정만 읽고 안내와 수집 요청은 제외한다', async () => {
+  const judgement = '문서가 성공적으로 수집됐습니다. 미색인 문서로 검색대상이 아닙니다.';
+  const dom = screen(`<input value="https://example.com/"><div>
+    <div>${judgement}</div>
+    <div>만약 페이지가 변경되었다면 최신 페이지 정보가 검색될 수 있게 수집 요청해보세요.</div>
+    <div><button>가이드</button></div><div><button>수집 요청</button></div>
+  </div>`);
+  try {
+    const preview = await readNaverPreview({ tabId: 1, engine: 'naver' }, [target], reader(dom));
+    assert.equal(preview.message, judgement);
+    assert.equal(preview.indexStatus, 'crawled');
+    assert.equal(preview.targetVerified, false);
+  } finally { dom.window.close(); }
+});
+
 test('인증·요약·다른 출처·사이트 미선택 화면은 읽지 않는다', () => {
   const dom = screen();
 
