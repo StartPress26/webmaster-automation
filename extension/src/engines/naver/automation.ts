@@ -1,11 +1,10 @@
 import {
   canonicalNaverTarget,
+  hasConsistentNaverJudgement,
   naverTargetInSite,
   NAVER_AUTOMATION_MESSAGE,
   NAVER_BOARD_URL,
-  NAVER_INDEXED_MESSAGE,
   NAVER_INSPECTION_PATH,
-  NAVER_NO_RESULT_MESSAGE,
   NAVER_ORIGIN,
   NaverAutomationError,
 } from './observation.ts';
@@ -95,13 +94,6 @@ function isReadyPage(
   return typeof value.documentToken === 'string';
 }
 
-// 판정과 문구가 짝이 맞는지 확인합니다. (색인됨 ↔ 색인 문구, 미확인 ↔ 결과 없음 문구)
-function hasConsistentJudgement(observation: Partial<NaverAutomationObservation>): boolean {
-  if (observation.indexStatus === 'indexed') return observation.message === NAVER_INDEXED_MESSAGE;
-  if (observation.indexStatus === 'unknown') return observation.message === NAVER_NO_RESULT_MESSAGE;
-  return false;
-}
-
 // 문자열이 해석 가능한 시각인지 확인합니다.
 function isTimestamp(value: unknown): value is string {
   return typeof value === 'string' && Number.isFinite(Date.parse(value));
@@ -118,7 +110,7 @@ function isVerifiedObservation(
   if (observation.siteUrl !== siteUrl) return false;
   if (observation.targetUrl !== targetUrl) return false;
   if (observation.targetVerified !== true) return false;
-  if (!hasConsistentJudgement(observation)) return false;
+  if (!hasConsistentNaverJudgement(observation.message, observation.indexStatus)) return false;
   if (!isTimestamp(observation.queriedAt)) return false;
   return isTimestamp(observation.readAt);
 }
@@ -142,14 +134,25 @@ function inspectionPageUrl(siteUrl: string): string {
 // 탭 통신
 // ─────────────────────────────────────────────────────────────
 
-// 기존에 허용한 네이버 탭 하나만 사용하며 창이나 탭 포커스는 바꾸지 않습니다.
+// 네이버 자동화가 Chrome 탭을 조회·이동하고 메시지를 보낼 수 있도록 연결합니다.
 export function browserClient(): NaverAutomationClient {
+  // 현재 실행 환경에서 Chrome 탭 API를 사용할 수 없으면 작업을 중단합니다.
+  // ?.는 chrome이 없을 때 tabs에 접근하지 않고 undefined를 반환합니다.
   if (!globalThis.chrome?.tabs) throw new NaverAutomationError('wrong_page');
 
+  // 네이버 자동화가 사용할 세 가지 탭 동작을 반환합니다.
   return {
+    // id로 Chrome 탭을 찾아 주소나 로딩 상태가 담긴 탭 객체를 가져옵니다.
     get: (id): Promise<chrome.tabs.Tab> => chrome.tabs.get(id),
+
+    // id에 해당하는 탭을 지정한 URL로 이동시킵니다.
+    // active 옵션을 넘기지 않으므로 해당 탭을 앞으로 가져오지 않습니다.
     navigate: (id, url): Promise<unknown> => chrome.tabs.update(id, { url }),
-    send: (id, message): Promise<unknown> => chrome.tabs.sendMessage(id, message, { frameId: 0 }),
+
+    // id에 해당하는 탭의 메인 프레임(frameId: 0)에 메시지를 보냅니다.
+    // 해당 프레임의 콘텐츠 스크립트가 응답하면 Promise로 그 응답을 받습니다.
+    send: (id, message): Promise<unknown> =>
+      chrome.tabs.sendMessage(id, message, { frameId: 0 }),
   };
 }
 

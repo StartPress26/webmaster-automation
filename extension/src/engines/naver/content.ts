@@ -5,7 +5,6 @@ import {
   NaverAutomationError,
   inspectNaverUrl,
   naverPageState,
-  selectNaverSite,
 } from './observation';
 import { openNaverBoard, openNaverCollection, requestNaverCollection, selectNaverCollectionSite } from './collection';
 import { isValidRequestId, trustedSender } from '../shared/content-guard';
@@ -23,9 +22,15 @@ const MAX_REMEMBERED_CANCELLATIONS = 64;
 const MAX_COLLECTION_OPERATIONS = 64;
 
 // 비동기로 실행되는 자동화 동작
-const OPERATION_ACTIONS: readonly string[] = ['inspect_url', 'request_collection', 'open_collection', 'select_collection_site'];
+const OPERATION_ACTIONS: readonly string[] = [
+  'inspect_url',
+  'request_collection',
+  'open_collection',
+  'select_collection_site',
+  'select_site',
+];
 // 그중 대상 URL(targetUrl)이 필요 없는 동작
-const SITE_ONLY_ACTIONS: readonly string[] = ['open_collection', 'select_collection_site'];
+const SITE_ONLY_ACTIONS: readonly string[] = ['open_collection', 'select_collection_site', 'select_site'];
 
 type Request = Record<string, unknown>;
 type SendResponse = (response: unknown) => void;
@@ -73,7 +78,10 @@ function handleCancel(request: Request, requestId: string, sendResponse: SendRes
 
 // 동작 이름에 맞는 자동화를 시작합니다.
 function startOperation(action: unknown, siteUrl: string, targetUrl: string, signal: AbortSignal): Promise<unknown> {
-  if (action === 'select_collection_site') return selectNaverCollectionSite(document, siteUrl, signal);
+  // 색인 조회(select_site)와 수집 요청(select_collection_site) 모두 사이트 링크가 나타날 때까지 기다립니다.
+  if (action === 'select_site' || action === 'select_collection_site') {
+    return selectNaverCollectionSite(document, siteUrl, signal);
+  }
   if (action === 'open_collection') return openNaverCollection(document, siteUrl, signal);
   if (action === 'request_collection') return requestNaverCollection(document, siteUrl, targetUrl, signal);
   return inspectNaverUrl(document, siteUrl, targetUrl, signal);
@@ -129,12 +137,6 @@ function handleAutomation(request: Request, requestId: string, sendResponse: Sen
   }
 
   if (typeof request.siteUrl !== 'string') throw new NaverAutomationError('invalid_response');
-
-  if (request.action === 'select_site') {
-    selectNaverSite(document, location.href, request.siteUrl);
-    sendResponse({ requestId, ok: true });
-    return false;
-  }
 
   // 알 수 없는 동작이거나, 대상 URL이 필요한데 없으면 응답하지 않습니다.
   const action = String(request.action);

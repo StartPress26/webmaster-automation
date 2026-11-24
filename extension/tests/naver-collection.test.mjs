@@ -402,3 +402,38 @@ test('수집 콘텐츠 명령은 발신자·문서 토큰·공유 잠금·이미
     assert.equal(clicks, 1);
   } finally { dom.window.close(); }
 });
+
+test('색인 조회의 select_site 명령도 목록 표가 먼저 보이면 사이트 링크를 기다린 뒤 한 번 선택한다', async () => {
+  const bundle = await build({ configFile: false, logLevel: 'silent', build: { write: false, lib: { entry: fileURLToPath(new URL('../src/engines/naver/content.ts', import.meta.url)), name: 'StartPressNaverReader', formats: ['iife'] } } });
+  const source = (Array.isArray(bundle) ? bundle : [bundle]).flatMap((item) => item.output).find((item) => item.type === 'chunk').code;
+  const dom = screen('', 'https://searchadvisor.naver.com/console/board');
+  const doc = dom.window.document;
+  // 실제 네이버처럼 빈 표가 먼저 그려지고 사이트 줄은 나중에 채워집니다.
+  doc.body.innerHTML = '<table><tbody></tbody></table>';
+  let handler;
+  dom.window.chrome = { runtime: { id: 'extension-id', getURL: () => 'chrome-extension://extension-id/index.html', onMessage: { addListener: (listener) => { handler = listener; } } } };
+  dom.window.eval(source);
+  const sender = { id: 'extension-id', url: 'chrome-extension://extension-id/index.html' };
+  let state;
+  handler({ type: NAVER_AUTOMATION_MESSAGE, requestId: 'state', action: 'state' }, sender, (value) => { state = value; });
+  let clicks = 0;
+
+  try {
+    const request = { type: NAVER_AUTOMATION_MESSAGE, requestId: 'select-1', action: 'select_site', documentToken: state.value.documentToken, siteUrl: site };
+    let response;
+    const pending = new Promise((resolve) => {
+      // 즉시 응답(false)이 아니라 나중에 응답(true)해야 합니다.
+      assert.equal(handler(request, sender, (value) => { response = value; resolve(value); }), true);
+    });
+    assert.equal(response, undefined);
+
+    setTimeout(() => {
+      doc.querySelector('tbody').innerHTML = `<tr><td><a href="#">${site}</a></td></tr>`;
+      doc.querySelector('a').onclick = (event) => { event.preventDefault(); clicks += 1; };
+    }, 20);
+
+    const result = await pending;
+    assert.equal(result.ok, true);
+    assert.equal(clicks, 1);
+  } finally { dom.window.close(); }
+});

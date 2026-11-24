@@ -8,7 +8,7 @@ from app.schemas.inspection import GuiInspectionCreate
 
 # 엔진별 지원 판정과 시간대가 있는 관측 결과를 허용합니다.
 @pytest.mark.parametrize("engine,status", [
-    ("naver", "indexed"), ("naver", "not_indexed"), ("naver", "unknown"),
+    ("naver", "indexed"), ("naver", "crawled"), ("naver", "not_indexed"), ("naver", "unknown"),
     ("bing", "indexed"), ("bing", "not_indexed"), ("bing", "unknown"),
 ])
 def test_gui_observation_accepts_supported_status(engine: str, status: str) -> None:
@@ -26,7 +26,7 @@ def test_gui_observation_accepts_supported_status(engine: str, status: str) -> N
 @pytest.mark.parametrize("patch", [
     {"engine": "google"},
     {"engine": "naver", "index_status": "submitted"},
-    {"index_status": "crawled"},
+    {"engine": "bing", "index_status": "crawled"},
     {"site_url": "ftp://example.com/"},
     {"target_url": "invalid"},
     {"queried_at": "2026-11-08T03:00:00"},

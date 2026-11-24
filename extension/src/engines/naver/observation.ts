@@ -22,10 +22,9 @@ export const NAVER_BOARD_URL = `${NAVER_ORIGIN}${NAVER_BOARD_PATH}`;
 // 네이버가 색인 상태 확인 화면에 표시하는 판정 문구 (글자 그대로 비교)
 export const NAVER_INDEXED_MESSAGE =
   '문서가 성공적으로 색인됐습니다. 해당 문서를 검색할 수 있습니다.';
+export const NAVER_CRAWLED_MESSAGE =
+  '문서가 성공적으로 수집됐습니다. 미색인 문서로 검색대상이 아닙니다.';
 export const NAVER_NO_RESULT_MESSAGE = 'URL 검사 결과가 없습니다.';
-
-// 사이트 목록에서 사이트 링크가 가리킬 수 있는 경로
-const SITE_LINK_PATHS: readonly string[] = [NAVER_BOARD_PATH, NAVER_SUMMARY_PATH];
 
 // 입력칸으로 인정하는 input 종류. 미리보기 읽기는 검색(search) 칸도 허용합니다.
 const INSPECTION_INPUT_TYPES: readonly string[] = ['text', 'url'];
@@ -68,12 +67,15 @@ export interface NaverPageState {
   readonly documentToken: string;
 }
 
+// URL 검사 화면에서 판독할 수 있는 세 가지 결과입니다.
+type NaverIndexStatus = 'indexed' | 'crawled' | 'unknown';
+
 // URL 검사 자동화로 확인한 결과. 입력한 URL과 화면의 사이트가 일치함을 검증했습니다.
 export interface NaverAutomationObservation {
   readonly kind: 'verified_gui';
   readonly siteUrl: string;
   readonly targetUrl: string;
-  readonly indexStatus: 'indexed' | 'unknown';
+  readonly indexStatus: NaverIndexStatus;
   readonly message: string;
   readonly queriedAt: string;
   readonly readAt: string;
@@ -99,7 +101,7 @@ export interface NaverVisibleObservation {
   readonly kind: 'visible_preview';
   readonly siteUrl: string;
   readonly inputUrl: string;
-  readonly indexStatus: 'indexed' | 'unknown';
+  readonly indexStatus: NaverIndexStatus;
   readonly message: string;
   readonly engineUpdatedText: string | null;
   readonly readAt: string;
@@ -120,10 +122,11 @@ export type NaverReadResult =
         | 'result_conflict';
     };
 
-// 검사 전에 화면에 있던 판정 요소와 그 문구
-interface PreviousMarker {
+// 화면에서 확인한 판정 요소와 읽은 시점의 문구·상태입니다.
+interface ResultMarker {
   readonly node: Element;
   readonly text: string;
+  readonly indexStatus: NaverIndexStatus;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -185,12 +188,6 @@ export function isNaverInspectionPage(value: string): boolean {
 // 실제 확인한 네이버 웹 페이지 수집 경로만 허용합니다.
 export function isNaverCollectionPage(value: string): boolean {
   return isNaverPath(value, NAVER_COLLECTION_PATH);
-}
-
-// 주소가 네이버 사이트 목록(board) 화면인지 확인합니다. 해석할 수 없는 주소는 예외를 던집니다.
-function isBoardPage(pageUrl: string): boolean {
-  const url = new URL(pageUrl);
-  return url.origin === NAVER_ORIGIN && url.pathname === NAVER_BOARD_PATH;
 }
 
 // 경로로 현재 화면 종류를 정합니다.
@@ -282,13 +279,29 @@ function hasChildWithSameText(element: Element, text: string): boolean {
   return Array.from(element.children).some((child): boolean => judgementText(child) === text);
 }
 
-// 판정 텍스트가 정확한 결과 영역 하나만 선택하고 부모·자식의 중복은 제외합니다.
-function resultMarkers(document: Document): readonly Element[] {
-  return Array.from(document.querySelectorAll(RESULT_CONTAINER_SELECTOR)).filter((element): boolean => {
+// 확인된 판정 문구만 상태로 변환합니다. 결과 없음과 인식하지 못한 문구를 구분합니다.
+function indexStatusOf(message: unknown): NaverIndexStatus | null {
+  if (message === NAVER_INDEXED_MESSAGE) return 'indexed';
+  if (message === NAVER_CRAWLED_MESSAGE) return 'crawled';
+  if (message === NAVER_NO_RESULT_MESSAGE) return 'unknown';
+  return null;
+}
+
+// 미리보기와 자동 조회 응답 모두 화면 판독과 같은 문구·상태 조합만 허용합니다.
+export function hasConsistentNaverJudgement(message: unknown, indexStatus: unknown): boolean {
+  const expectedStatus = indexStatusOf(message);
+  return expectedStatus !== null && expectedStatus === indexStatus;
+}
+
+// 판정 텍스트가 정확한 결과 영역만 선택하고 부모·자식의 중복은 제외합니다.
+function resultMarkers(document: Document): readonly ResultMarker[] {
+  return Array.from(document.querySelectorAll(RESULT_CONTAINER_SELECTOR)).flatMap((element): ResultMarker[] => {
     const text = judgementText(element);
-    if (![NAVER_INDEXED_MESSAGE, NAVER_NO_RESULT_MESSAGE].includes(text)) return false;
-    if (hasChildWithSameText(element, text)) return false;
-    return isNaverElementVisible(element, document);
+    const indexStatus = indexStatusOf(text);
+    if (indexStatus === null) return [];
+    if (hasChildWithSameText(element, text)) return [];
+    if (!isNaverElementVisible(element, document)) return [];
+    return [{ node: element, text, indexStatus }];
   });
 }
 
@@ -335,11 +348,6 @@ export function isNaverCollectionHistoryLoading(document: Document): boolean {
   );
 }
 
-// 판정 문구가 "색인됨" 문구와 같으면 indexed, 아니면 unknown입니다.
-function indexStatusOf(message: string): 'indexed' | 'unknown' {
-  return message === NAVER_INDEXED_MESSAGE ? 'indexed' : 'unknown';
-}
-
 // ─────────────────────────────────────────────────────────────
 // 화면 관측 미리보기 (입력 URL과의 연결은 검증하지 않음)
 // ─────────────────────────────────────────────────────────────
@@ -384,7 +392,7 @@ export function readNaverVisibleObservation(
   const marker = markers[0];
   if (markers.length !== 1 || !marker) return { ok: false, code: 'result_unrecognized' };
 
-  const message = judgementText(marker);
+  const message = marker.text;
   const buttonTexts = visibleButtonTexts(document);
 
   // "색인됨" 문구와 "색인 완료 아니오" 배지가 함께 보이면 서로 모순이므로 읽지 않습니다.
@@ -401,7 +409,7 @@ export function readNaverVisibleObservation(
       kind: 'visible_preview',
       siteUrl,
       inputUrl,
-      indexStatus: indexStatusOf(message),
+      indexStatus: marker.indexStatus,
       message,
       engineUpdatedText: updated ?? null,
       readAt,
@@ -446,38 +454,13 @@ export function naverPageState(
   return { route, siteUrl, ready, documentToken };
 }
 
-// 사이트 목록의 링크가 목표 사이트를 가리키는 안전한 네이버 내부 링크인지 확인합니다.
-function isSiteLink(link: HTMLAnchorElement, pageUrl: string, expected: string, document: Document): boolean {
-  const destination = new URL(link.href, pageUrl);
-  if (canonicalNaverTarget(link.textContent?.trim() ?? '') !== expected) return false;
-  if (!isNaverElementVisible(link, document)) return false;
-  if (destination.origin !== NAVER_ORIGIN) return false;
-  return SITE_LINK_PATHS.includes(destination.pathname);
-}
-
-// 사이트 목록의 URL과 링크 출처가 모두 맞는 항목 하나만 클릭합니다.
-export function selectNaverSite(document: Document, pageUrl: string, siteUrl: string): void {
-  if (!isBoardPage(pageUrl)) throw new NaverAutomationError('wrong_page');
-
-  const expected = canonicalNaverTarget(siteUrl);
-  if (!expected) throw new NaverAutomationError('invalid_response');
-
-  const links = Array.from(
-    document.querySelectorAll<HTMLAnchorElement>('table a, [role="table"] a'),
-  ).filter((link): boolean => isSiteLink(link, pageUrl, expected, document));
-
-  if (!links.length) throw new NaverAutomationError('site_missing');
-  if (links.length !== 1) throw new NaverAutomationError('ambiguous_control');
-
-  links[0]?.click();
-}
 
 // ─────────────────────────────────────────────────────────────
 // URL 검사 자동화
 // ─────────────────────────────────────────────────────────────
 
 // 검사 전에 있던 판정 요소가 모두 사라졌거나 숨겨졋는지 확인합니다. 이전 요소가 없으면 거짓입니다.
-function allPreviousHidden(previous: readonly PreviousMarker[], document: Document): boolean {
+function allPreviousHidden(previous: readonly ResultMarker[], document: Document): boolean {
   if (!previous.length) return false;
   return previous.every(
     (old): boolean => !old.node.isConnected || !isNaverElementVisible(old.node, document),
@@ -486,7 +469,7 @@ function allPreviousHidden(previous: readonly PreviousMarker[], document: Docume
 
 // 지금 보이는 판정 요소가 이전 결과가 아닌 새 결과라고 볼 수 있는지 판단합니다.
 function isFreshMarker(
-  previous: readonly PreviousMarker[],
+  previous: readonly ResultMarker[],
   marker: Element,
   cleared: boolean,
   document: Document,
@@ -510,15 +493,15 @@ function isFreshMarker(
 function verifiedObservation(
   siteUrl: string,
   targetUrl: string,
-  message: string,
+  marker: ResultMarker,
   queriedAt: string,
 ): NaverAutomationObservation {
   return {
     kind: 'verified_gui',
     siteUrl,
     targetUrl,
-    indexStatus: indexStatusOf(message),
-    message,
+    indexStatus: marker.indexStatus,
+    message: marker.text,
     queriedAt,
     readAt: new Date().toISOString(),
     targetVerified: true,
@@ -565,8 +548,7 @@ export async function inspectNaverUrl(
   if (signal.aborted) throw new NaverAutomationError('cancelled');
 
   // 3. 지금 화면의 판정 요소를 기억해 두고, 새 결과와 구분할 기준으로 씁니다.
-  const previous: readonly PreviousMarker[] = resultMarkers(document)
-    .map((node): PreviousMarker => ({ node, text: judgementText(node) }));
+  const previous = resultMarkers(document);
   const queriedAt = new Date().toISOString();
 
   await yieldMicrotask();
@@ -626,9 +608,9 @@ export async function inspectNaverUrl(
 
       const marker = markers[0];
       if (markers.length !== 1 || !marker) return;
-      if (!isFreshMarker(previous, marker, cleared, document)) return;
+      if (!isFreshMarker(previous, marker.node, cleared, document)) return;
 
-      finish(undefined, verifiedObservation(siteUrl!, targetUrl!, judgementText(marker), queriedAt));
+      finish(undefined, verifiedObservation(siteUrl!, targetUrl!, marker, queriedAt));
     }
 
     observer = new view!.MutationObserver(check);

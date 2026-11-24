@@ -1,9 +1,8 @@
 import {
   canonicalNaverTarget,
+  hasConsistentNaverJudgement,
   isNaverInspectionPage,
-  NAVER_INDEXED_MESSAGE,
   NAVER_LAST_UPDATED_TEXT,
-  NAVER_NO_RESULT_MESSAGE,
   NAVER_READ_MESSAGE,
 } from './observation.ts';
 import type { NaverVisibleObservation } from './observation';
@@ -89,13 +88,6 @@ async function sendReadRequest(
 // 응답 검증
 // ─────────────────────────────────────────────────────────────
 
-// 판정과 문구가 짝이 맞는지 확인합니다. (색인됨 ↔ 색인 문구, 미확인 ↔ 결과 없음 문구)
-function hasConsistentJudgement(value: Partial<NaverVisibleObservation>): boolean {
-  if (value.indexStatus === 'indexed') return value.message === NAVER_INDEXED_MESSAGE;
-  if (value.indexStatus === 'unknown') return value.message === NAVER_NO_RESULT_MESSAGE;
-  return false;
-}
-
 // 엔진 표시 업데이트 문구는 null이거나 "최종 업데이트 YYYY. M. D." 형식이어야 합니다.
 function hasValidUpdatedText(value: Partial<NaverVisibleObservation>): boolean {
   if (value.engineUpdatedText === null) return true;
@@ -107,7 +99,7 @@ function isValidObservation(value: Partial<NaverVisibleObservation> | undefined)
   if (!value) return false;
   if (value.kind !== 'visible_preview') return false;
   if (value.targetVerified !== false) return false;
-  if (!hasConsistentJudgement(value)) return false;
+  if (!hasConsistentNaverJudgement(value.message, value.indexStatus)) return false;
   if (typeof value.siteUrl !== 'string') return false;
   if (typeof value.inputUrl !== 'string') return false;
   if (typeof value.readAt !== 'string') return false;

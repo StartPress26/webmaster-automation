@@ -412,6 +412,7 @@ async def test_two_engines_and_openapi(inspection_api: AsyncClient) -> None:
 @pytest.mark.parametrize("engine_name,index_status", [
     ("naver", "indexed"),
     ("naver", "not_indexed"),
+    ("naver", "crawled"),
     ("bing", "indexed"),
 ])
 async def test_gui_inspection_roundtrip_and_stale_result(

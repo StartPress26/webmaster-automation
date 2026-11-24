@@ -151,7 +151,16 @@ test('GUI 결과의 필드·대상 ID를 저장 API에 전달하고 저장 완�
   const runner = (engine) => async (_, targets, hooks) => {
     for (const target of targets) {
       hooks.onStart(target);
-      await hooks.onResult(target, guiResult(engine, target));
+      const observation = guiResult(engine, target);
+      if (engine === 'naver' && target.id === 'p1') {
+        await hooks.onResult(target, {
+          ...observation,
+          indexStatus: 'crawled',
+          message: '문서가 성공적으로 수집됐습니다. 미색인 문서로 검색대상이 아닙니다.',
+        });
+      } else {
+        await hooks.onResult(target, observation);
+      }
     }
   };
   const controller = parallelController(runner('naver'), runner('bing'), {
@@ -171,6 +180,10 @@ test('GUI 결과의 필드·대상 ID를 저장 API에 전달하고 저장 완�
     gate.resolve();
     await running;
     assert.equal(calls.length, 6);
+    const naverCalls = calls.filter(([, data]) => data.engine === 'naver');
+    assert.deepEqual(naverCalls.map(([id, data]) => [id, data.index_status]), [
+      ['s1', 'unknown'], ['p1', 'crawled'], ['s2', 'unknown'],
+    ]);
     for (const [id, data] of calls) {
       const task = controller.getState().tasks.find((item) => item.target.id === id && item.engine === data.engine && item.route === 'gui');
       const observation = task.guiObservation;

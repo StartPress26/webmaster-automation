@@ -37,6 +37,19 @@ GET은 DB에 저장된 엔진별 최신 상태 조회를 수행합니다. 검사
 - 외부 조회 중에는 DB 트랜잭션을 열어두지 않습니다. Google의 동기 인증·조회는 스레드에서 실행합니다.
 - 조회 결과는 기존 site_engine_statuses에 저장합니다. 제출·사이트 등록·사이트맵 갱신은 실행하지 않습니다.
 
+## POST /sites/{site_id}/gui-inspections
+
+확장이 로그인된 작업 탭에서 새로 조회한 결과를 저장합니다. 서버가 검색엔진을 다시 조회하지 않습니다. `site_url`은 등록된 메인 사이트, `target_url`은 검사한 대상입니다. `queried_at`과 `observed_at`은 각각 조회 시작 시각과 결과 판독 시각입니다.
+
+| GUI 엔진 | 허용하는 `index_status` |
+|---|---|
+| 네이버 | `indexed`, `crawled`, `not_indexed`, `unknown` |
+| Bing | `indexed`, `not_indexed`, `unknown` |
+
+네이버가 **수집 완료·미색인**이라고 안내하면 확장은 `crawled`를 보냅니다. `not_indexed`도 서버가 받지만 이 화면에서는 사용하지 않습니다. Bing API의 `crawled` 판정은 위 GUI 계약과 별개입니다.
+
+새 확장을 배포하기 전에 네이버 GUI의 `crawled`를 허용하는 서버를 먼저 배포하세요. 이전 서버는 이 값을 HTTP 422로 거절합니다. 기존 상태 테이블을 그대로 사용하므로 이 변경에 DB 마이그레이션은 필요하지 않습니다.
+
 ## GET /sites/{site_id}/inspections
 
 ```json

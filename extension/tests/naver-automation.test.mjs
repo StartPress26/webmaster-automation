@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
-import { inspectNaverUrl, selectNaverSite, NAVER_BOARD_URL, NAVER_NO_RESULT_MESSAGE, NAVER_INDEXED_MESSAGE, canonicalNaverTarget } from '../src/engines/naver/observation.ts';
+import { inspectNaverUrl, NAVER_BOARD_URL, NAVER_CRAWLED_MESSAGE, NAVER_NO_RESULT_MESSAGE, NAVER_INDEXED_MESSAGE, canonicalNaverTarget } from '../src/engines/naver/observation.ts';
+import { selectNaverCollectionSite } from '../src/engines/naver/collection.ts';
 import { runNaverAutomation } from '../src/engines/naver/automation.ts';
 const site = 'https://one.example/';
 const target = { id: 'p1', siteId: 's1', siteName: '사이트 A', siteUrl: site, url: `${site}post`, name: '글' };
@@ -15,23 +16,31 @@ function screen(html, url = inspectionUrl) {
   return dom;
 }
 
-test('사이트 목록에서는 해당 사이트의 안전한 링크 하나만 클릭한다', () => {
+test('사이트 목록에서는 해당 사이트의 안전한 링크 하나만 클릭한다', async () => {
   const dom = screen(`<table><tr><td><a href="#">${site}</a></td></tr></table><button>삭제</button>`, NAVER_BOARD_URL);
+  const doc = dom.window.document;
+  const signal = new AbortController().signal;
   let clicks = 0;
 
-  dom.window.document.querySelector('a').onclick = (event) => { event.preventDefault(); clicks += 1; };
+  doc.querySelector('a').onclick = (event) => { event.preventDefault(); clicks += 1; };
 
   try {
-    selectNaverSite(dom.window.document, NAVER_BOARD_URL, site);
+    await selectNaverCollectionSite(doc, site, signal, 40);
     assert.equal(clicks, 1);
-    assert.throws(() => selectNaverSite(dom.window.document, NAVER_BOARD_URL, 'https://other.example/'), /찾지 못했습니다/);
-    dom.window.document.querySelector('a').href = 'https://evil.example/';
-    assert.throws(() => selectNaverSite(dom.window.document, NAVER_BOARD_URL, site), /찾지 못했습니다/);
+    // 다른 사이트이거나 네이버 밖을 가리키는 링크는 기다려도 선택하지 않습니다.
+    await assert.rejects(selectNaverCollectionSite(doc, 'https://other.example/', signal, 40), (error) => error.code === 'site_missing');
+    doc.querySelector('a').href = 'https://evil.example/';
+    await assert.rejects(selectNaverCollectionSite(doc, site, signal, 40), (error) => error.code === 'site_missing');
+    assert.equal(clicks, 1);
   } finally { dom.window.close(); }
 });
 
-test('확인 버튼으로 새 결과를 받고 결과 없음은 unknown으로 유지한다', async () => {
-  for (const message of [NAVER_INDEXED_MESSAGE, NAVER_NO_RESULT_MESSAGE]) {
+test('확인 버튼으로 새 결과를 받고 색인·수집·결과 없음을 구분한다', async () => {
+  for (const [message, expectedStatus] of [
+    [NAVER_INDEXED_MESSAGE, 'indexed'],
+    [NAVER_CRAWLED_MESSAGE, 'crawled'],
+    [NAVER_NO_RESULT_MESSAGE, 'unknown'],
+  ]) {
     const dom = screen('<input type="url"><button id="check">확인</button><button id="submit">수집 요청</button><div id="result"></div>');
     const doc = dom.window.document;
     let inputs = 0;
@@ -43,9 +52,26 @@ test('확인 버튼으로 새 결과를 받고 결과 없음은 unknown으로 �
     try {
       const result = await inspectNaverUrl(doc, site, target.url, new AbortController().signal, 1000);
       assert.equal(inputs, 1); assert.equal(result.targetUrl, target.url); assert.equal(result.targetVerified, true);
-      assert.equal(result.indexStatus, message === NAVER_INDEXED_MESSAGE ? 'indexed' : 'unknown');
+      assert.equal(result.indexStatus, expectedStatus);
     } finally { dom.window.close(); }
   }
+});
+
+test('두 글의 수집 판정이 같으면 이전 글의 결과를 재사용하지 않고 새 결과를 기다린다', async () => {
+  const dom = screen(`<input value="${site}"><button>확인</button><div id="result"><div>${NAVER_CRAWLED_MESSAGE}</div></div>`);
+  const doc = dom.window.document;
+  const signal = new AbortController().signal;
+
+  try {
+    await assert.rejects(inspectNaverUrl(doc, site, target.url, signal, 40), (error) => error.code === 'timeout');
+    doc.querySelector('button').onclick = () => {
+      doc.querySelector('#result').innerHTML = `<div>${NAVER_CRAWLED_MESSAGE}</div>`;
+    };
+    const next = await inspectNaverUrl(doc, site, target.url, signal, 1000);
+    assert.equal(next.targetUrl, target.url);
+    assert.equal(next.indexStatus, 'crawled');
+    assert.equal(next.targetVerified, true);
+  } finally { dom.window.close(); }
 });
 
 test('바뀌지 않은 기존 판정·취소·다른 사이트의 URL은 성공으로 처리하지 않는다', async () => {
@@ -60,7 +86,7 @@ test('바뀌지 않은 기존 판정·취소·다른 사이트의 URL은 성공�
 });
 
 // Chrome의 이동·메시지를 재현하고 실제 처리 순서를 기록합니다.
-function fakeClient() {
+function fakeClient(judgement = { indexStatus: 'unknown', message: NAVER_NO_RESULT_MESSAGE }) {
   let url = NAVER_BOARD_URL;
   const events = [];
 
@@ -75,7 +101,7 @@ function fakeClient() {
 
       if (request.action === 'select_site') { events.push(['select', request.siteUrl]); url = `https://searchadvisor.naver.com/console/site/summary?site=${encodeURIComponent(request.siteUrl)}`; }
 
-      if (request.action === 'inspect_url') { events.push(['inspect', request.targetUrl]); value = { kind: 'verified_gui', siteUrl: request.siteUrl, targetUrl: canonicalNaverTarget(request.targetUrl), indexStatus: 'unknown', message: NAVER_NO_RESULT_MESSAGE, queriedAt: new Date().toISOString(), readAt: new Date().toISOString(), targetVerified: true }; }
+      if (request.action === 'inspect_url') { events.push(['inspect', request.targetUrl]); value = { kind: 'verified_gui', siteUrl: request.siteUrl, targetUrl: canonicalNaverTarget(request.targetUrl), ...judgement, queriedAt: new Date().toISOString(), readAt: new Date().toISOString(), targetVerified: true }; }
 
       return { requestId: request.requestId, ok: true, value };
     },
@@ -83,7 +109,7 @@ function fakeClient() {
 }
 
 test('사이트 A의 URL들을 처리하고 목록으로 돌아가 사이트 B를 선택한다', async () => {
-  const fixture = fakeClient();
+  const fixture = fakeClient({ indexStatus: 'crawled', message: NAVER_CRAWLED_MESSAGE });
   const second = { ...target, id: 'p2', siteId: 's2', siteName: '사이트 B', siteUrl: 'https://two.example/', url: 'https://two.example/post' };
   const results = [];
 
@@ -91,7 +117,13 @@ test('사이트 A의 URL들을 처리하고 목록으로 돌아가 사이트 B�
   assert.deepEqual(fixture.events.filter(([action]) => action === 'select'), [['select', site], ['select', 'https://two.example/']]);
   assert.deepEqual(fixture.events.filter(([action]) => action === 'inspect').map(([, url]) => url), [target.url, `${site}second`, second.url]);
   assert.deepEqual(fixture.events.at(-1), ['navigate', '/console/board']);
-  assert.equal(results.length, 3);
+  assert.deepEqual(results, [['p1', 'crawled'], ['p1-2', 'crawled'], ['p2', 'crawled']]);
+});
+
+test('수집 문구를 색인 완료로 보낸 응답은 거부한다', async () => {
+  const fixture = fakeClient({ indexStatus: 'indexed', message: NAVER_CRAWLED_MESSAGE });
+  const hooks = { signal: new AbortController().signal, onStart: () => {}, onResult: () => assert.fail('잘못된 색인 완료') };
+  await assert.rejects(runNaverAutomation({ tabId: 7, engine: 'naver' }, [target], hooks, fixture.client), (error) => error.code === 'invalid_response');
 });
 
 test('네이버는 비동기 결과 저장이 끝나기 전 다음 URL을 검사하지 않는다', async () => {

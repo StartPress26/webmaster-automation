@@ -45,6 +45,7 @@ def gui_api() -> Iterator[tuple[TestClient, AsyncMock]]:
 @pytest.mark.parametrize("engine_name,index_status", [
     ("bing", "indexed"),
     ("naver", "not_indexed"),
+    ("naver", "crawled"),
 ])
 def test_gui_save_routes_validated_payload(
     gui_api: tuple[TestClient, AsyncMock], engine_name: str, index_status: str,
@@ -75,7 +76,7 @@ def test_gui_save_routes_validated_payload(
 def test_gui_save_rejects_invalid_payload(gui_api: tuple[TestClient, AsyncMock]) -> None:
     client, save = gui_api
     response = client.post(f"/sites/{uuid4()}/gui-inspections", json={
-        "engine": "naver", "site_url": "https://example.com/",
+        "engine": "bing", "site_url": "https://example.com/",
         "target_url": "https://example.com/post", "index_status": "crawled",
         "queried_at": "2026-11-08T03:00:00Z", "observed_at": "2026-11-08T03:00:02Z",
     })

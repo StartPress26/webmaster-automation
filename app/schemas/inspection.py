@@ -21,13 +21,15 @@ class GuiInspectionCreate(BaseModel):
     engine: Literal["naver", "bing"]
     site_url: HttpUrl
     target_url: HttpUrl
-    index_status: Literal["indexed", "not_indexed", "unknown"]
+    index_status: Literal["indexed", "crawled", "not_indexed", "unknown"]
     queried_at: AwareDatetime
     observed_at: AwareDatetime
 
-    # GUI 판정 범위는 필드 타입으로 제한하고 관측 시각의 순서를 검증합니다.
+    # 네이버 수집 완료를 허용하되 Bing GUI 판정 범위와 관측 시각 순서는 유지합니다.
     @model_validator(mode="after")
     def validate_observation(self) -> Self:
+        if self.engine == "bing" and self.index_status == "crawled":
+            raise ValueError("Bing GUI 판정은 indexed, not_indexed 또는 unknown이어야 합니다.")
         if self.observed_at < self.queried_at:
             raise ValueError("관측 시각은 검사 시작 시각보다 빠를 수 없습니다.")
         return self

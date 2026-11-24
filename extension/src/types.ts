@@ -103,7 +103,7 @@ export interface GuiInspectionCreate {
   readonly engine: 'naver' | 'bing';
   readonly site_url: string;
   readonly target_url: string;
-  readonly index_status: 'indexed' | 'not_indexed' | 'unknown';
+  readonly index_status: 'indexed' | 'crawled' | 'not_indexed' | 'unknown';
   readonly queried_at: string;
   readonly observed_at: string;
 }
