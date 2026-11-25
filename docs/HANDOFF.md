@@ -236,7 +236,7 @@
 
 - [x] 사이트별 인증 연결은 PR #8로 main에 병합됐다. 병합 커밋은 `f98566f`다. 에이전트가 11월 16일 GitHub의 MERGED 상태와 로컬 main 이력을 확인했다. 관련 구현·설정·문서 커밋은 `103ce1d`, `d408424`, `c21efe5`, `b4b137c`다.
 - [x] 사용자가 Lightsail에서 main 갱신, API 이미지 빌드, 마이그레이션 실행, 새 Google 파일 설치, API 실행을 진행했다고 보고했다. Docker 소켓 권한 때문에 서버 명령에는 `sudo docker compose`를 사용했다. 현재 운영 Alembic 리비전과 서버 HEAD의 원문 출력은 에이전트가 직접 확인하지 않았다.
-- [x] 서버 비밀폴더는 `/home/ubuntu/webmaster-secrets`이며 컨테이너 `/srv/startpress/.secrets`에 마운트한다. 하위 `google/<이메일>.json`은 Google OAuth JSON, `bing/<이메일>.json`은 `{"api_key":"..."}`다. Google 폴더에 실제 계정 파일명이 잘못 저장돼 있던 것을 확인한 뒤, 사용자가 재인증된 로컬 토큰을 서버에 설치했다. 비밀값은 문서·Git에 보존하지 않는다.
+- [x] 서버 비밀폴더는 `/home/example-user/webmaster-secrets`이며 컨테이너 `/srv/startpress/.secrets`에 마운트한다. 하위 `google/<이메일>.json`은 Google OAuth JSON, `bing/<이메일>.json`은 `{"api_key":"..."}`다. Google 폴더에 실제 계정 파일명이 잘못 저장돼 있던 것을 확인한 뒤, 사용자가 재인증된 로컬 토큰을 서버에 설치했다. 비밀값은 문서·Git에 보존하지 않는다.
 - [x] 사용자가 운영 계정 등록 201과 테스트 메인 사이트의 계정 PATCH 성공 응답을 제공했다. 이어 운영 Google `indexed`, Bing API `crawled` 응답을 제공해 계정별 인증·실조회·결과 저장 성공을 확인했다.
 - [x] 확장 최신 소스에서 테스트 **131 passed**, TypeScript 검사·관리 화면·네이버/Bing 콘텐츠 스크립트 빌드를 통과했다. 처음 만든 0.1.0 ZIP은 이미 게시된 버전과 같아 스토어에서 거절됐다. 이후 manifest·package·lockfile 루트 버전을 **0.1.1**로 일치시켜 재빌드하고 ZIP을 교체했다.
 - [x] 사용자가 0.1.1 업로드·심사 제출과 심사 통과를 보고했다. 에이전트가 스토어의 게시 상태·설치 버전을 직접 확인한 것은 아니다. 비공개 테스터 설치를 안내했고 스토어 설치본과 개발자 모드 로드본을 구분했다.
@@ -311,7 +311,7 @@
 ### 확정된 비밀파일 배치
 
 ```text
-Lightsail 호스트: /home/ubuntu/webmaster-secrets/
+Lightsail 호스트: /home/example-user/webmaster-secrets/
 컨테이너:        /srv/startpress/.secrets/
 로컬:            <프로젝트 루트>/.secrets/
 각 기준 폴더 아래:
@@ -322,8 +322,8 @@ DB 상대 참조:
   bing/<이메일>.json
 ```
 
-- 처음에는 Lightsail 프로젝트 내부 `.secrets` 배치를 논의했으나 **기존 `/home/ubuntu/webmaster-secrets`를 유지하기로 했다.** 현재 Compose 마운트도 유지했다. 서버 폴더를 컨테이너의 `.secrets`로 연결하는 바인드 마운트이므로 두 이름이 달라도 같은 파일이다.
-- 사용자가 제시한 서버 목록에서 비밀폴더는 소유자·그룹 `10001:10001`, 권한 0700이고 기존 `google-token.json`은 0600이었다. `ubuntu` 사용자의 `cd` 권한 없음은 이 권한 설정 때문이다. 엔진별 하위 폴더 생성·Google 파일 복사·기존 `.env.prod`의 Bing 키를 JSON에 저장하는 단계는 사용자 완료 보고다. 에이전트가 원격 파일 내용·권한을 직접 재확인한 것은 아니다.
+- 처음에는 Lightsail 프로젝트 내부 `.secrets` 배치를 논의했으나 **기존 `/home/example-user/webmaster-secrets`를 유지하기로 했다.** 현재 Compose 마운트도 유지했다. 서버 폴더를 컨테이너의 `.secrets`로 연결하는 바인드 마운트이므로 두 이름이 달라도 같은 파일이다.
+- 사용자가 제시한 서버 목록에서 비밀폴더는 소유자·그룹 `10001:10001`, 권한 0700이고 기존 `google-token.json`은 0600이었다. `example-user` 사용자의 `cd` 권한 없음은 이 권한 설정 때문이다. 엔진별 하위 폴더 생성·Google 파일 복사·기존 `.env.prod`의 Bing 키를 JSON에 저장하는 단계는 사용자 완료 보고다. 에이전트가 원격 파일 내용·권한을 직접 재확인한 것은 아니다.
 - Google은 갱신 후 파일 교체를 하므로 컨테이너 실행 UID 10001에 파일·상위 폴더 쓰기 권한이 필요하다. 서버의 기존 Google 파일·환경변수는 운영 전환 확인 전 삭제하지 않는다. 이번 코드의 `compose.prod.yaml`은 공통 `GOOGLE_TOKEN_FILE`·`BING_API_KEY` 필수 설정과 API 전달을 제거했으며 `.env.prod.example`도 계정별 파일 배치 안내로 바꿨다. 기존 서버의 Compose 반영 여부는 별도 확인이 필요하다.
 
 ### 실제 검증 결과
@@ -610,9 +610,9 @@ npm --prefix extension run build
 - 이번 대화의 실제 로컬 검증에서 Google 토큰 갱신과 파일 저장이 성공했고 Search Console 사이트 목록 GET이 HTTP 200, 접근 가능한 속성 1개였다. 인증정보·속성 URL은 출력하지 않았다. Google OAuth 앱의 Testing/Production 설정과 장기 유효성은 별도 확인이 필요하다.
 - 로컬 토큰은 `600`, 비공개 폴더는 `700`이었다. 클라이언트 JSON은 `644`에서 `600`으로 제한했다. 두 파일은 Git에서 제외되고 현재 추적되지 않는다. 인증파일·키·원본 오류를 커밋·로그·확장 빌드·Docker 이미지에 포함하지 않는다.
 - Bing은 서버 `.env.prod`의 `BING_API_KEY`를 사용한다. Bing Webmaster Tools 계정의 API 키이며 웹 로그인 쿠키·OAuth 토큰·IndexNow 공개 키와 별개다. 이번 대화에서 Bing 키의 실제 유효성은 확인하지 않았다.
-- **사용자는 Google 토큰의 Lightsail 전송을 완료했다고 확인했다.** 안내한 전용 위치는 `/home/ubuntu/webmaster-secrets/google-token.json`이다. 에이전트가 원격 파일·소유권·Bing 설정·컨테이너 상태를 직접 검증한 것은 아니다.
+- **사용자는 Google 토큰의 Lightsail 전송을 완료했다고 확인했다.** 안내한 전용 위치는 `/home/example-user/webmaster-secrets/google-token.json`이다. 에이전트가 원격 파일·소유권·Bing 설정·컨테이너 상태를 직접 검증한 것은 아니다.
 - 로컬 `compose.prod.yaml`은 API에 기존 `DATABASE_URL`과 `GOOGLE_TOKEN_FILE`, `BING_API_KEY`를 전달한다. 두 인증 설정이 비어 있으면 기동 전에 실패하도록 했다. `.env.prod.example`의 두 입력란은 비어 있으며 실제 값과 토큰 경로는 서버 `.env.prod`에 채운다. 작업 중 예시 파일이 간결한 형태로 바뀐 것을 확인해 그 형식을 보존했다.
-- API의 bind mount는 서버 `/home/ubuntu/webmaster-secrets` → 컨테이너 `/srv/startpress/.secrets`다. `create_host_path: false`이므로 서버 폴더가 없으면 실패한다. Google 토큰의 원자적 교체를 위해 폴더 전체에 쓰기 권한이 필요하며 폴더·파일 소유자는 `10001:10001`, 권한은 각각 `700`·`600`이어야 한다. 다른 비밀파일·브라우저 실행 기록은 이 전용 폴더에 함께 넣지 않는다.
+- API의 bind mount는 서버 `/home/example-user/webmaster-secrets` → 컨테이너 `/srv/startpress/.secrets`다. `create_host_path: false`이므로 서버 폴더가 없으면 실패한다. Google 토큰의 원자적 교체를 위해 폴더 전체에 쓰기 권한이 필요하며 폴더·파일 소유자는 `10001:10001`, 권한은 각각 `700`·`600`이어야 한다. 다른 비밀파일·브라우저 실행 기록은 이 전용 폴더에 함께 넣지 않는다.
 - 서버 `.env.prod`에는 `GOOGLE_TOKEN_FILE=.secrets/google-token.json`과 실제 `BING_API_KEY`를 별도로 설정하고 기존 DB 설정을 유지한다. `.env.prod`는 배포 사용자 소유·권한 `600`으로 관리한다. 실제 값은 Git으로 배포하지 않는다.
 - 현재 API에는 팀원 인증이 없으므로 `127.0.0.1:18000` 바인딩과 SSH 터널 접근을 유지한다. `/health`는 앱 응답만 확인하며 DB·검색엔진 인증 성공을 보장하지 않는다.
 
@@ -689,7 +689,7 @@ docker compose --env-file .env.prod -f compose.prod.yaml ps
 ### Lightsail의 실제 진행 상태
 
 - **사용자가 Lightsail에서 Docker·Compose 설치, main 클론, 서버용 환경변수 구성과 컨테이너 기동을 완료하고 API·DB 연결을 확인했다.** 이후 SSH 터널을 통한 대시보드 고객사 추가·새로고침 후 조회도 사용자 확인을 받았다. 에이전트가 원격 서버 상태를 직접 재조회한 결과와 구분한다.
-- 인스턴스 이름은 `startpress-webmaster-prod`, Ubuntu 24.04.4 LTS, 2GB RAM·2 vCPU·60GB SSD이며 **시드니 `ap-southeast-2`**에 생성됐다. 사용자가 마지막으로 전달한 공인 IPv4는 `13.239.37.152`다. 고정 IP 설정은 확인되지 않았으므로 재시작 후 주소를 확인한다.
+- 인스턴스 이름은 `startpress-webmaster-prod`, Ubuntu 24.04.4 LTS, 2GB RAM·2 vCPU·60GB SSD이며 **시드니 `ap-southeast-2`**에 생성됐다. 공인 IPv4 예시는 `203.0.113.10`이며, 접속 시에는 Lightsail 콘솔에서 확인한 주소를 사용한다. 고정 IP 설정은 확인되지 않았으므로 재시작 후 주소를 확인한다.
 - 계정은 새 AWS 프로젝트 가입 방식이며 프로젝트 리전이 시드니에 자동 배정된 것을 사용자가 확인했다. 이 가입 방식에서는 리전 선택에 제약이 있다. 서울로 이전하려면 가입 방식·플랜·고급 기능 활성화 조건부터 확인한다. 현재는 시드니에서 개발 검증을 진행한다.
 - 화면에서 신규 가입 Free Plan 크레딧 $100와 약 6개월 기간을 확인했다. 현재 잔액·만료일은 재확인해야 한다. 인스턴스 사용료가 누적되며 일반 Lightsail 인스턴스는 정지 상태에서도 요금이 발생한다.
 - 팀 GitHub 조직에서 Deploy keys가 처음에는 비활성화돼 있었다. 실제 정책 위치는 조직 Settings → Security and quality → Deploy keys다. 사용자가 허용 설정 후 저장소에 **읽기 전용 Deploy Key**를 등록하고 인증·클론을 완료했다.
@@ -704,12 +704,12 @@ docker compose --env-file .env.prod -f compose.prod.yaml ps
 - Mac에서 Lightsail 기본 키를 다운로드하고 권한을 제한한 뒤 터널을 열었다. 키 파일은 프로젝트나 Git에 넣지 않는다. 기본 키는 리전별이며 GitHub Deploy Key와 역할이 다르다.
 
 ```bash
-# Mac 터미널에서 실행하고 서버의 현재 공인 IP를 확인합니다.
-chmod 600 ~/Downloads/LightsailDefaultKey-ap-southeast-2.pem
-ssh -i ~/Downloads/LightsailDefaultKey-ap-southeast-2.pem \
+# 접속 예시입니다. 서버 IP, SSH 사용자명, 키 파일 경로를 실제 값으로 바꿉니다.
+chmod 600 ./example-key.pem
+ssh -i ./example-key.pem \
   -N -o ExitOnForwardFailure=yes \
   -L 127.0.0.1:18001:127.0.0.1:18000 \
-  ubuntu@13.239.37.152
+  example-user@203.0.113.10
 ```
 
 - 터널 터미널을 열어둔 상태에서 Mac의 `curl -fsS http://127.0.0.1:18001/health`를 확인했다. 로컬 Vite를 재시작하고 `http://127.0.0.1:5173/`에서 고객사를 추가했다. `?mode=demo`는 실제 저장 검증에 사용하지 않는다.
@@ -1547,7 +1547,7 @@ Notion은 요구사항·설계 자료다. 실제 구현·적용 여부는 이 �
 - `feat/site-auth-profiles`, HEAD `d6ed73b`. 공통 로더와 검사·사이트맵의 계정별 인증 전달은 구현했고 소스·테스트는 미커밋이다. 단위 655개·관련 PostgreSQL 통합 81개 통과. 개인 패키지 충돌을 피하려면 `PYTHONNOUSERSITE=1`로 실행한다.
 - 로컬 계정별 Google·Bing 파일은 생성했고 사용자 DB 참조 등록·사이트 계정 PATCH 완료 보고가 있다. Google 실제 검사는 503이며 직접 갱신 재현에서도 `invalid_grant`가 확인됐다. 새 토큰 발급과 실제 API 조회 성공은 미완료다.
 - 사용자가 요청한 Google 재인증은 클라이언트 파일·토큰 파일 존재 확인까지만 했다. `.env` 수정·토큰 백업·OAuth 실행·로그인·새 토큰 저장은 아직 하지 않았다. 이 작업 중단 후 사용자가 인계 문서 갱신을 요청했다.
-- 기존 Vite 프록시 변경·ZIP·사용자 작성 코드·비밀파일을 보존한다. 서버 비밀폴더는 `/home/ubuntu/webmaster-secrets`를 유지한다. 원격 Git·운영 DB 버전·실제 배포는 미확인이다. 이번 요청에서 문서만 갱신하고 커밋·push·배포는 하지 않는다.
+- 기존 Vite 프록시 변경·ZIP·사용자 작성 코드·비밀파일을 보존한다. 서버 비밀폴더는 `/home/example-user/webmaster-secrets`를 유지한다. 원격 Git·운영 DB 버전·실제 배포는 미확인이다. 이번 요청에서 문서만 갱신하고 커밋·push·배포는 하지 않는다.
 
 새 세션 시작 문구: **“docs/HANDOFF.md의 최상단과 맨 아래 사이트별 API 인증·재인증 인계를 읽고 이어서 진행해줘. 검사·사이트맵의 계정별 인증은 미커밋 상태로 구현됐고 단위 655개·통합 81개 통과했어. 로컬 Google refresh token이 invalid_grant로 거부돼 재인증이 필요해. 재인증은 아직 실행하지 않았으니 대상 계정 파일과 OAuth 클라이언트를 확인하고 사용자 로그인·동의를 받아 새 토큰 저장부터 진행해줘. 키·토큰은 출력하지 말고 Vite 프록시·ZIP·사용자 변경을 보존해줘. 서버 배포와 실제 API 성공은 아직 확인하지 않았어.”**
 
@@ -1557,7 +1557,7 @@ Notion은 요구사항·설계 자료다. 실제 구현·적용 여부는 이 �
 - `feat/site-auth-profiles`에서 로더·참조 조회 `103ce1d`, 검사·사이트맵 인증 전달 `d408424`, 운영 환경변수 정리 `c21efe5`를 커밋했고 이 문서를 네 번째 커밋으로 정리한다. 사용자는 리뷰 후 해당 계획 실행을 승인했다. 최종 HEAD·커밋 목록은 `git log -4 --oneline`으로 확인한다. push·PR·main 병합·배포는 하지 않는다.
 - Google 사용자 동의로 새 계정 토큰을 발급·저장했고 기존 파일은 비공개 백업했다. 에이전트가 계정별 파일로 Search Console 사이트 목록 HTTP 200을 확인했고 사용자가 Google·Bing 실제 검사 모두 성공했다고 보고했다. 실제 사이트맵 제출·운영 반영은 미검증이다.
 - 단위 655개·임시 PostgreSQL의 관련 통합 81개 통과. 운영 Compose의 공통 `GOOGLE_TOKEN_FILE`·`BING_API_KEY` 필수 설정을 제거하고 비밀폴더 마운트를 유지한다. 공통 인증 변수를 제외한 Compose 설정 검증과 로더·조회 단위 테스트 37개도 통과했다.
-- Vite 프록시 8000 변경·미추적 ZIP·`.env`·`.secrets`·실제 토큰과 키·백업·비공개 기록은 커밋 제외다. 서버 비밀폴더는 `/home/ubuntu/webmaster-secrets`를 유지한다.
+- Vite 프록시 8000 변경·미추적 ZIP·`.env`·`.secrets`·실제 토큰과 키·백업·비공개 기록은 커밋 제외다. 서버 비밀폴더는 `/home/example-user/webmaster-secrets`를 유지한다.
 
 새 세션 시작 문구: **“docs/HANDOFF.md의 최상단과 맨 아래 최신 요약을 읽고 이어서 진행해줘. 사이트별 인증 연결과 로컬 Google 재인증이 완료됐고 사용자가 Google·Bing 실제 검사를 확인했어. 승인된 4개 커밋의 완료 상태는 git log와 status로 확인해줘. push·PR·main 병합·Lightsail 배포는 아직 수행하지 않았어. 운영에서는 새 Google 파일과 DB 계정·참조·사이트 연결을 별도로 준비해야 해. Vite 프록시·ZIP·비밀파일은 커밋에서 제외해줘.”**
 
